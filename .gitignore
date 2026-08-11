@@ -1,0 +1,26 @@
+# Python 缓存与字节码
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.eggs/
+build/
+dist/
+
+# 运行产物
+output/
+*.log
+error.inp
+error.log
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
