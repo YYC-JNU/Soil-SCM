@@ -1,0 +1,55 @@
+# ============================================================
+# Soil-SCM: 土壤物理化学数值模式 主配置文件
+# 类似 WRF namelist.input
+# ============================================================
+
+simulation:
+  n_years: 50                    # 模拟年数 (default: 50)
+  time_step: monthly             # 主时间步长: monthly
+  sub_time_step_days: 0          # 子时间步长(天): 0=不启用, 1~7=启用
+  scenario: natural              # 情景: natural/fertilizer/fertilizer_lime/precip_increase/temp_increase
+  # 引擎模式:
+  #   simplified = 简化动力学模式(推荐, pH 随情景长期演变)
+  #   phreeqc    = PHREEQC 化学平衡模式(初始化学状态精确, 但受 phreeqpython
+  #                库限制, SOLUTION 指定 pH 后 pH 被锁定, 无长期演化)
+  #   auto       = PHREEQC 可用则用 PHREEQC, 否则简化模式
+  engine_mode: simplified
+
+soil_data:
+  input_file: data/soil_survey.csv
+  exchangeable_ions_file: data/exchangeable_ions.csv
+  soil_type: red_soil            # 土壤类型标识符(用于查矿物数据库)
+
+climate:
+  base_annual_precip: 1893.0     # 基准年降水量 (mm/yr)
+  base_annual_temp: 25.0         # 基准年平均温度 (°C)
+  precip_increase_rate: 0.02     # 情景3: 每年降水增加比例 (2%/yr)
+  temp_increase_rate: 0.05       # 情景4: 每年增温幅度 (°C/yr)
+
+fertilizer:
+  type: urea                     # 肥料类型: urea / compound
+  annual_amount: 300.0           # kg urea/ha/yr (default: 全国平均值)
+  apply_months: [3, 6, 9]        # 施肥月份
+  n_content: 0.46                # 尿素含氮量 46%
+
+lime:
+  annual_amount: 1000.0          # kg/ha/yr (default)
+  apply_month: 1                 # 施用月份(每年初)
+
+soil_co2:
+  pCO2_ref: 0.015                # 参考CO2分压 (atm)
+  T_ref: 25.0                    # 参考温度 (°C)
+  beta: 0.05                     # 温度响应系数 (1/°C)
+  # 参考文献:
+  #   Brook et al. (1983), Earth Surface Processes and Landforms, 8(1), 79-88.
+  #   Davidson & Trumbore (1995), Tellus B, 47(5), 550-565.
+
+precipitation_chemistry:
+  use_custom: false              # true=使用用户数据, false=使用default
+  input_file: null               # 用户降水化学数据文件路径
+
+output:
+  directory: ./output
+  format: csv                    # 输出格式: csv / netcdf
+  variables: [pH, base_saturation, CEC_occupied, exchangeable_Ca,
+              exchangeable_Al, mineral_mass, solution_ions]

@@ -1,0 +1,41 @@
+# ============================================================
+# SOIL_MINERAL.TBL
+# 土壤矿物组成数据库 (WRF TBL 风格)
+# 格式: 矿物名称  质量分数  分子量(g/mol)  比表面积(m2/g)
+# ============================================================
+#
+# 参考文献:
+#   熊毅, 李庆逵. 中国土壤. 科学出版社, 1987.
+#   龚子同. 中国土壤地理. 江苏科学技术出版社, 2004.
+#   Plummer L.N. et al. The kinetics of calcite dissolution.
+#     American Journal of Science, 1978, 278(2): 179-216.
+#
+# ============================================================
+&SOIL_MINERAL red_soil
+  kaolinite       0.35    258.16    10.0
+  goethite        0.15     88.85    50.0
+  hematite        0.08    159.69    20.0
+  quartz          0.25     60.08     0.5
+  gibbsite        0.05     78.00    15.0
+  illite          0.07    398.30    30.0
+  anatase         0.02     79.87     5.0
+  calcite         0.00    100.09     1.0
+/
+&SOIL_MINERAL black_soil
+  illite          0.30    398.30    30.0
+  montmorillonite 0.20    540.00    700.0
+  kaolinite       0.10    258.16    10.0
+  quartz          0.20     60.08     0.5
+  feldspar        0.10    278.30     2.0
+  goethite        0.05     88.85    50.0
+  calcite         0.05    100.09     1.0
+/
+&SOIL_MINERAL purple_soil
+  feldspar        0.25    278.30     2.0
+  quartz          0.20     60.08     0.5
+  calcite         0.15    100.09     1.0
+  illite          0.20    398.30    30.0
+  montmorillonite 0.10    540.00   700.0
+  goethite        0.05     88.85    50.0
+  hematite        0.05    159.69    20.0
+/

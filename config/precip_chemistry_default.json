@@ -1,0 +1,21 @@
+{
+  "description": "中国南方酸雨区降水化学组成默认值",
+  "unit": "mg/L",
+  "pH": 4.8,
+  "ions": {
+    "SO4": 10.0,
+    "NO3": 5.0,
+    "NH4": 3.0,
+    "Ca": 2.0,
+    "Mg": 1.0,
+    "K": 1.0,
+    "Na": 3.0,
+    "Cl": 3.0,
+    "Si": 0.5,
+    "Alkalinity": 0.0
+  },
+  "references": [
+    "张远辉, 王跃思, 辛金元等. 中国酸雨研究进展. 环境科学, 2003.",
+    "Tang D., Larssen T., Lange R.D. et al. Soil acidification and soil quality in China. European Journal of Soil Science, 2006, 57(1): 1-11."
+  ]
+}

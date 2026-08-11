@@ -1,0 +1,67 @@
+{
+  "red_soil": {
+    "description": "南方红壤（富铁土，中亚热带湿润气候发育）",
+    "pH_range": [4.0, 5.5],
+    "dominant_minerals": {
+      "kaolinite": 0.35,
+      "goethite": 0.15,
+      "hematite": 0.08,
+      "quartz": 0.25,
+      "gibbsite": 0.05,
+      "illite": 0.07,
+      "anatase": 0.02,
+      "calcite": 0.00
+    },
+    "cation_exchange_capacity_range": [5, 20],
+    "organic_matter_content_range": [1, 4],
+    "soil_CO2_pCO2_atm": 0.015,
+    "soil_CO2_beta": 0.05,
+    "references": [
+      "熊毅, 李庆逵. 中国土壤. 科学出版社, 1987.",
+      "龚子同. 中国土壤地理. 江苏科学技术出版社, 2004.",
+      "Brook G.A., Folkoff M.E., Box E.O. A world model of soil carbon dioxide. Earth Surface Processes and Landforms, 1983, 8(1): 79-88.",
+      "Davidson E.A., Trumbore S.E. Gas diffusivity and production of CO2 in deep soils of the eastern Amazon. Tellus B, 1995, 47(5): 550-565."
+    ]
+  },
+  "black_soil": {
+    "description": "东北黑土（温带半湿润气候发育）",
+    "pH_range": [5.5, 7.0],
+    "dominant_minerals": {
+      "illite": 0.30,
+      "montmorillonite": 0.20,
+      "kaolinite": 0.10,
+      "quartz": 0.20,
+      "feldspar": 0.10,
+      "goethite": 0.05,
+      "calcite": 0.05
+    },
+    "cation_exchange_capacity_range": [30, 50],
+    "organic_matter_content_range": [3, 8],
+    "soil_CO2_pCO2_atm": 0.020,
+    "soil_CO2_beta": 0.06,
+    "references": [
+      "熊毅, 李庆逵. 中国土壤. 科学出版社, 1987.",
+      "Brook G.A. et al. (1983)."
+    ]
+  },
+  "purple_soil": {
+    "description": "四川紫色土（亚热带湿润气候发育）",
+    "pH_range": [6.5, 8.0],
+    "dominant_minerals": {
+      "feldspar": 0.25,
+      "quartz": 0.20,
+      "calcite": 0.15,
+      "illite": 0.20,
+      "montmorillonite": 0.10,
+      "goethite": 0.05,
+      "hematite": 0.05
+    },
+    "cation_exchange_capacity_range": [15, 30],
+    "organic_matter_content_range": [1, 3],
+    "soil_CO2_pCO2_atm": 0.012,
+    "soil_CO2_beta": 0.04,
+    "references": [
+      "龚子同. 中国土壤地理. 江苏科学技术出版社, 2004."
+    ]
+  }
+}
