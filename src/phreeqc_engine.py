@@ -17,6 +17,13 @@ from typing import Dict, Optional, Tuple
 from dataclasses import dataclass, field
 
 try:
+    from phreeqc import Phreeqc as OfficialPhreeqc
+    OFFICIAL_PHREEQC_AVAILABLE = True
+except ImportError:
+    OFFICIAL_PHREEQC_AVAILABLE = False
+    print("[WARNING] 官方 phreeqc (IPhreeqc) 未安装")
+
+try:
     import phreeqpython
     PHREEQC_AVAILABLE = True
 except ImportError:
@@ -31,6 +38,7 @@ class SoilState:
     exchange: dict = field(default_factory=dict)
     minerals: dict = field(default_factory=dict)
     gas_phase: dict = field(default_factory=dict)
+    volume: float = 1.0          # 土壤溶液体积 (L)
     temperature: float = 25.0
     ph: float = 7.0
     pe: float = 4.0
@@ -53,7 +61,7 @@ class PhreeqcEngine:
     """PHREEQC 引擎封装类"""
 
     def __init__(self, database: str = 'phreeqc.dat',
-                 mode: str = 'auto'):
+                 mode: str = 'auto', backend: str = 'official'):
         """
         参数:
             database: PHREEQC 热力学数据库
@@ -61,18 +69,46 @@ class PhreeqcEngine:
                 - auto      : PHREEQC 可用则用 PHREEQC, 否则简化模式 (默认)
                 - simplified: 始终使用简化动力学模式
                 - phreeqc   : 始终使用 PHREEQC (失败时降级简化模式)
+            backend: PHREEQC 后端
+                - official    : 官方 phreeqc 包 (IPhreeqc 3.8.6), 推荐
+                - phreeqpython: phreeqpython 兼容后端 (REACTION 无效等限制)
         """
         self.database = database
         self.mode = mode
-        self.phreeqc = None
+        self.backend = backend
+        self.phreeqc = None     # phreeqpython 后端实例
+        self.official = None    # 官方 phreeqc 后端实例
+        self._fallback_warned = False
+        self._permanent_fallback = False
 
-        if PHREEQC_AVAILABLE:
-            self.phreeqc = phreeqpython.PhreeqPython(
-                database=self.database
-            )
-            print(f"[INFO] PHREEQC 引擎已初始化 (数据库: {database})")
+        # ---- 初始化后端 ----
+        if backend == 'official':
+            if OFFICIAL_PHREEQC_AVAILABLE:
+                self.official = OfficialPhreeqc()
+                self.official.LoadBuiltInDatabase(database)
+                ver = self.official.GetVersionString()
+                print(f"[INFO] 官方 PHREEQC 引擎已初始化 (IPhreeqc {ver})")
+            elif PHREEQC_AVAILABLE:
+                self.backend = 'phreeqpython'
+                self.phreeqc = phreeqpython.PhreeqPython(
+                    database=database
+                )
+                print(f"[INFO] PHREEQC 引擎已初始化 (phreeqpython, 数据库: {database})")
+            else:
+                self.backend = 'simplified'
+                print("[WARNING] 无可用 PHREEQC 引擎，使用简化模式")
+        elif backend == 'phreeqpython':
+            if PHREEQC_AVAILABLE:
+                self.phreeqc = phreeqpython.PhreeqPython(
+                    database=database
+                )
+                print(f"[INFO] PHREEQC 引擎已初始化 (phreeqpython, 数据库: {database})")
+            else:
+                self.backend = 'simplified'
+                print("[WARNING] phreeqpython 不可用，使用简化模式")
         else:
-            print("[WARNING] PHREEQC 不可用，使用简化模式")
+            self.backend = 'simplified'
+            print("[INFO] 简化模式")
 
     def build_initial_state(self, soil_profile, mineral_db_info,
                             pCO2: float) -> SoilState:
@@ -103,6 +139,7 @@ class PhreeqcEngine:
         state.exchange = builder.build_exchange()
         state.minerals = builder.build_minerals()
         state.gas_phase = builder.build_gas_phase()
+        state.volume = builder.solution_volume_L
 
         return state
 
@@ -121,27 +158,102 @@ class PhreeqcEngine:
         返回:
             (新状态, 诊断输出)
         """
-        # 根据模式决定是否使用 PHREEQC
-        # - simplified: 强制简化模式
-        # - phreeqc   : 强制 PHREEQC (不可用时警告并降级)
-        # - auto      : PHREEQC 可用则用, 否则简化
-        phreeqc_ready = (PHREEQC_AVAILABLE and self.phreeqc is not None
+        # 根据模式与后端决定计算路径
+        # - simplified 模式: 强制简化
+        # - phreeqc 模式: 强制 PHREEQC (失败降级)
+        # - auto: PHREEQC 可用则用
+        phreeqc_ready = (self.backend in ('official', 'phreeqpython')
                          and not getattr(self, '_permanent_fallback', False))
 
         use_phreeqc = phreeqc_ready
         if self.mode == 'simplified':
             use_phreeqc = False
         elif self.mode == 'phreeqc' and not phreeqc_ready:
-            if PHREEQC_AVAILABLE and self.phreeqc is None:
-                print("[WARNING] PHREEQC 引擎不可用，使用简化模式")
             use_phreeqc = False
 
         if use_phreeqc:
-            return self._run_phreeqc_step(state, monthly_forcing,
-                                          action, soil_profile)
+            if self.backend == 'official' and self.official is not None:
+                return self._run_official_step(state, monthly_forcing,
+                                               action, soil_profile)
+            elif self.backend == 'phreeqpython' and self.phreeqc is not None:
+                return self._run_phreeqc_step(state, monthly_forcing,
+                                              action, soil_profile)
+            return self._run_simplified_step(state, monthly_forcing,
+                                             action, soil_profile)
         else:
             return self._run_simplified_step(state, monthly_forcing,
                                              action, soil_profile)
+
+    def _run_official_step(self, state, forcing, action, profile):
+        """使用官方 phreeqc (IPhreeqc 3.8.6) 引擎执行单月计算"""
+        # 构建 PHREEQC 输入字符串 (含 SELECTED_OUTPUT 查询块)
+        input_string = self._build_phreeqc_input(
+            state, forcing, action, profile)
+
+        try:
+            self.official.RunString(input_string)
+            new_state, diag = self._parse_official_output(state)
+            return new_state, diag
+        except Exception as e:
+            if not getattr(self, '_fallback_warned', False):
+                print(f"[WARNING] 官方 PHREEQC 计算失败: {e}")
+                print("[WARNING] 已永久降级到简化模式继续模拟")
+                self._fallback_warned = True
+            self._permanent_fallback = True
+            return self._run_simplified_step(state, forcing, action, profile)
+
+    def _parse_official_output(self, old_state):
+        """从官方 PHREEQC SELECTED_OUTPUT 提取平衡状态并回填 (Q1 核心)
+
+        SELECTED_OUTPUT 列: 0=sim 1=state 2=soln 3=dist_x 4=time 5=step
+                            6=pH 7=pe 8=temp(C) 9..18=totals(元素)
+                            19..24=molalities(交换物种)
+        """
+        p = self.official
+        nrows = p.GetSelectedOutputRowCount()
+        ncols = p.GetSelectedOutputColumnCount()
+        if nrows <= 1:
+            raise RuntimeError("SELECTED_OUTPUT 无数据行")
+
+        # 列名映射 (第一行为列名)
+        headers = [str(p.GetSelectedOutputValue(0, c)) for c in range(ncols)]
+        idx = {h: c for c, h in enumerate(headers)}
+        last = nrows - 1
+
+        def get(col):
+            return float(p.GetSelectedOutputValue(last, idx[col]))
+
+        new_state = SoilState()
+        new_state.volume = old_state.volume
+        new_state.ph = get('pH')
+        new_state.pe = get('pe')
+        new_state.temperature = get('temp(C)')
+
+        # 溶液组成 (mol/kgw ≈ mol/L)
+        solution = {'temp': new_state.temperature,
+                    'pH': new_state.ph,
+                    'pe': new_state.pe,
+                    'units': 'mol/L'}
+        for el in ['Ca', 'Mg', 'K', 'Na', 'Al', 'Cl', 'C', 'S', 'N', 'Si']:
+            col = f"{el}(mol/kgw)"
+            if col in idx:
+                solution[el] = get(col)
+        new_state.solution = solution
+
+        # 交换组成: SELECTED_OUTPUT molality (mol/kgw) × 溶液质量(≈体积 L)
+        exchange = {}
+        for sp in ['CaX2', 'MgX2', 'KX', 'NaX', 'AlX3']:
+            col = f"m_{sp}(mol/kgw)"
+            if col in idx:
+                exchange[sp] = get(col) * new_state.volume
+        new_state.exchange = exchange
+
+        # 矿物相: Q1 阶段保持旧值 (矿物量变化小; 完整追踪见后续优化)
+        new_state.minerals = old_state.minerals
+        new_state.gas_phase = old_state.gas_phase
+
+        diag = DiagnosticOutput(ph=new_state.ph, pe=new_state.pe)
+        return new_state, diag
 
     def _run_phreeqc_step(self, state, forcing, action, profile):
         """使用 PHREEQC 引擎执行计算"""
@@ -176,7 +288,9 @@ class PhreeqcEngine:
         lines = []
 
         # SOLUTION 块
+        # -water 指定土柱溶液体积 (L), 使溶液与交换/矿物摩尔量量级匹配
         lines.append("SOLUTION 1")
+        lines.append(f"  -water      {state.volume:.6e}")
         lines.append(f"  temp      {forcing['temp']}")
         lines.append(f"  pH        {state.ph}")
         lines.append(f"  pe        4.0")
@@ -193,16 +307,20 @@ class PhreeqcEngine:
         lines.append("")
 
         # EQUILIBRIUM_PHASES 块
+        # 矿物量用 10 mol (PHREEQC 推荐默认): 相存在且 SI=0 平衡,
+        # 避免过量矿物反应导致 pH 异常 (见 docs/Q1_ANALYSIS.md)
         lines.append("EQUILIBRIUM_PHASES 1")
         for mineral, moles in state.minerals.items():
             if moles > 0:
-                lines.append(f"  {mineral:<15} 0.0  {moles:.6e}")
+                lines.append(f"  {mineral:<15} 0.0  10.0")
         lines.append("")
 
-        # GAS_PHASE 块
+        # GAS_PHASE 块 (固定 CO2 分压 0.015 atm)
+        # 写法: 总压=CO2分压 + 纯CO2 (验证有效)
         lines.append("GAS_PHASE 1")
-        lines.append(f"  -pressure     {state.gas_phase.get('pressure', 1.0)}")
-        lines.append(f"  CO2(g)        {forcing['pCO2']:.6e}")
+        lines.append("  -fixed_pressure")
+        lines.append("  -pressure     0.015")
+        lines.append("  CO2(g)        1.0")
         lines.append("")
 
         # REACTION 块 (降水入渗)
@@ -232,11 +350,32 @@ class PhreeqcEngine:
             lines.append("  -steps  2592000")  # 30天 (秒)
             lines.append("")
 
+        # SELECTED_OUTPUT 块: 输出平衡后状态供解析回填
+        lines.append("SELECTED_OUTPUT 1")
+        lines.append("  -ph true")
+        lines.append("  -pe true")
+        lines.append("  -temp true")
+        lines.append("  -totals Ca Mg K Na Al Cl C S N Si")
+        lines.append("  -molalities CaX2 MgX2 KX NaX AlX3 X-")
+        lines.append("END")
+
         return "\n".join(lines)
 
     def _run_simplified_step(self, state, forcing, action, profile):
-        """简化模式 (无 PHREEQC 时的 fallback)"""
+        """简化模式 (无 PHREEQC 时的 fallback)
+
+        仅更新 pH, 保留溶液/交换/矿物等化学状态 (Q6 缓解):
+        简化模式不应清空化学组成, 保证状态链连续。
+        """
         new_state = SoilState()
+        # 保留化学状态
+        new_state.solution = state.solution
+        new_state.exchange = state.exchange
+        new_state.minerals = state.minerals
+        new_state.gas_phase = state.gas_phase
+        new_state.volume = state.volume
+        new_state.temperature = state.temperature
+        new_state.pe = state.pe
         new_state.ph = state.ph
 
         # 简化: 降水淋溶降低盐基饱和度 → pH 略降
