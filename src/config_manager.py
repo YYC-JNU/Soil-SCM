@@ -13,6 +13,7 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 from src.logging_config import get_logger
+from src.constants import PRECIP_INFILTRATION_DEFAULT
 
 logger = get_logger("config_manager")
 
@@ -25,7 +26,7 @@ class SimulationConfig:
     sub_time_step_days: int = 0  # 0=不启用子时间步
     scenario: str = "natural"
     engine_mode: str = "auto"  # auto / phreeqc / simplified (v0.2.1 默认官方引擎)
-    precip_infiltration: float = 0.05  # 降水入渗系数 0~1 (T3 参数化)
+    precip_infiltration: float = PRECIP_INFILTRATION_DEFAULT  # 降水入渗系数 0~1 (T3)
 
 
 @dataclass
@@ -139,7 +140,7 @@ class ConfigManager:
                 sub_time_step_days=s.get('sub_time_step_days', 0),
                 scenario=s.get('scenario', 'natural'),
                 engine_mode=s.get('engine_mode', 'auto'),
-                precip_infiltration=s.get('precip_infiltration', 0.05)
+                precip_infiltration=s.get('precip_infiltration', PRECIP_INFILTRATION_DEFAULT)
             )
 
         # 解析 soil_data

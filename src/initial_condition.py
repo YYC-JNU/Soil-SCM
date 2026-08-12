@@ -27,14 +27,9 @@ import numpy as np
 from typing import Dict, Optional, Tuple
 from dataclasses import dataclass, field
 from src.logging_config import get_logger
+from src.constants import MINERAL_SCALE
 
 logger = get_logger("initial_condition")
-
-
-# 矿物量缩放系数 (F2 修复: 统一为 0.001, 与 phreeqc_engine 保持一致)
-# 折中方案说明见 docs/Q1_plus_ANALYSIS.md:
-# 物理值(1e6-1e7 mol)会导致碱性突变(pH~9.9), 需取较小值保留区分度
-MINERAL_SCALE = 0.001
 
 
 class InitialConditionBuilder:
