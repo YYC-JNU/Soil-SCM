@@ -27,14 +27,18 @@ climate:
   temp_increase_rate: 0.05       # 情景4: 每年增温幅度 (°C/yr)
 
 fertilizer:
-  type: urea                     # 肥料类型: urea / compound
-  annual_amount: 300.0           # kg urea/ha/yr (default: 全国平均值)
+  # 农业农村部 2021 春季主要农作物科学施肥指导意见 (水稻, 产量 500 kg/ha)
+  # 每次施用量 (kg/ha), 每年 3/6/9 月各施用一次
+  n: 12.0              # 氮肥 (按 N 元素计, 推荐 10~13)
+  p2o5: 4.0            # 磷肥 (按 P2O5 计, 推荐 3~4)
+  k2o: 9.0             # 钾肥 (按 K2O 计, 推荐 8~10)
+  mgo: 3.0             # 镁肥 (按 MgO 计, 推荐 2~3)
+  znso4: 1.0           # 硫酸锌 (按 ZnSO4 计, 推荐 1~2)
   apply_months: [3, 6, 9]        # 施肥月份
-  n_content: 0.46                # 尿素含氮量 46%
 
 lime:
-  annual_amount: 1000.0          # kg/ha/yr (default)
-  apply_month: 1                 # 施用月份(每年初)
+  amount_per_apply: 45.0         # 生石灰 (按 CaO 计, 推荐 40~50), kg/ha/次
+  apply_months: [3, 6, 9]        # 施用月份(与肥料一致)
 
 soil_co2:
   pCO2_ref: 0.015                # 参考CO2分压 (atm)
