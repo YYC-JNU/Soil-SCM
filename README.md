@@ -22,11 +22,25 @@ soil_scm/
 │   ├── scenario_controller.py
 │   ├── phreeqc_engine.py
 │   ├── output_writer.py
+│   ├── initial_condition.py
+│   ├── precip_chemistry.py    # 降水化学 (Q7)
+│   ├── logging_config.py      # 日志 (Q15)
 │   └── utils.py
 ├── data/
 │   ├── soil_survey.csv
 │   └── exchangeable_ions.csv
-├── output/
+├── tests/                     # pytest 测试 (36 用例)
+│   ├── conftest.py
+│   └── test_*.py
+├── docs/                      # 项目文档
+│   ├── ROADMAP.md
+│   ├── OPTIMIZATION_PLAN.md
+│   ├── Q1_ANALYSIS.md
+│   ├── Q1_plus_ANALYSIS.md
+│   ├── Q7_PRECIP_CHEMISTRY.md
+│   ├── V0_2_0_ENGINEERING_REPORT.md
+│   └── GIT_GUIDE.md
+├── output/                    # 运行产物 (gitignore)
 ├── main.py
 ├── requirements.txt
 └── README.md
@@ -47,10 +61,12 @@ pip install -r requirements.txt
 - matplotlib>=3.4.0
 - pyyaml>=5.4.0
 - netCDF4>=1.5.0
+- pytest>=9.0        （测试框架，v0.2.0 起）
 
 > **说明**
 > - 化学计算依赖官方 `phreeqc` 包（IPhreeqc 3.8.6，USGS 官方引擎）；`phreeqpython` 兼容后端已于 v0.1.3 废弃移除。
 > - 若 `phreeqc` 未安装或 PHREEQC 计算块与数据库不兼容导致计算失败，引擎会自动**降级到内置简化模式**，保证模拟流程稳定运行。
+> - v0.2.0 起建立 pytest 测试框架（`tests/`，36 用例），运行 `pytest tests/` 验证。
 
 ## 三、运行模拟
 
@@ -132,9 +148,10 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 - Parton W.J. et al. Analysis of factors controlling soil organic matter levels in Great Plains grasslands. SSSAJ, 1987, 51(5): 1173-1179.
 - Tang D., Larssen T., Lange R.D. et al. Soil acidification and soil quality in China. European Journal of Soil Science, 2006, 57(1): 1-11.
 
-## 十、已知模型局限（v0.1.1）
+## 十、已知模型局限（v0.2.0）
 
 1. **交换性 Al 缓冲库耗尽 → pH 突变**：单层模型 + 排水使交换性 Al 被淋洗耗尽（约第 8 年，AlX3→0），土壤失去主要产酸源后 pH 突升至 ~10。真实红壤 Al 会下移累积，需**多分层模型**解决。
-2. **保守离子（Cl⁻）持续淋失**：降水为纯水（无 Cl⁻ 输入），Cl⁻ 被排水逐年淋洗（30 年 10⁻³→10⁻¹⁷）。需集成**降水化学**（Q7）。
-3. **Al(OH)₄⁻ 两性溶解**：pH 升高后总 Al 浓度反而上升——Al 以铝酸根（Al(OH)₄⁻）形态碱性溶解，Al³⁺ 实际剧降（pH 10 时 ~10⁻²³）。
-4. **矿物量折中**：矿物量取物理值 0.001（`mineral_scale`），以避免矿物量大导致的碱性突变，但压缩了矿物缓冲容量（详见 `docs/Q1_plus_ANALYSIS.md`）。
+2. **Al(OH)₄⁻ 两性溶解**：pH 升高后总 Al 浓度反而上升——Al 以铝酸根（Al(OH)₄⁻）形态碱性溶解，Al³⁺ 实际剧降（pH 10 时 ~10⁻²³）。
+3. **矿物量折中**：矿物量取物理值 0.001（`mineral_scale`），以避免矿物量大导致的碱性突变，但压缩了矿物缓冲容量（详见 `docs/Q1_plus_ANALYSIS.md`）。
+
+> ✅ **v0.1.4 已解决**：**降水化学集成（Q7）**——降水含 Cl⁻/SO₄²⁻/NO₃⁻/NH₄⁺ 等离子（据《2025年广东省生态环境状况公报》），原"保守离子 Cl⁻ 持续淋失"局限已解决（详见 `docs/Q7_PRECIP_CHEMISTRY.md`）。
