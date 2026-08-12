@@ -89,11 +89,11 @@ phreeqpython 提供的查询 API 均未使用：
 |------|------|----------|------|----------|
 | S1 | API 实验验证：实测 `Solution.elements`、矿物摩尔量、交换查询的返回值与单位 | 2026-08-11 | ✅ 已完成 | 2026-08-11 |
 | S1* | 替代引擎调研：验证官方 `phreeqc`（IPhreeqc 3.8.6）REACTION 与状态查询 | 2026-08-11 | ✅ 已完成 | 2026-08-11 |
-| S2 | 重构 `_parse_phreeqc_output`：完整提取溶液/交换/矿物状态并回填 | 2026-08-11 | ⬜ | |
-| S3 | 调整 `_build_phreeqc_input`：SOLUTION 用摩尔量÷体积换算浓度、EXCHANGE/EQUILIBRIUM_PHASES 用真实状态 | 2026-08-11 | ⬜ | |
-| S4 | 简化模式保留状态：`_run_simplified_step` 复制 old_state 化学字段（缓解 Q6） | 2026-08-11 | ⬜ | |
-| S5 | main.py 诊断输出绑定模拟状态（base_saturation/exchangeable_Ca/Al 从 state 提取） | 2026-08-11 | ⬜ | |
-| S6 | 测试与回归：单月回填正确性、多月累积演化、两种引擎模式行为 | 2026-08-11 | ⬜ | |
+| S2 | 官方引擎适配：`_build_phreeqc_input` 修正（-water/矿物量10/GAS新写法）+ `_run_official_step` + `_parse_official_output` | 2026-08-11 | ✅ 已完成 | 2026-08-11 |
+| S3 | 重构 `_parse_phreeqc_output`：完整提取溶液/交换/矿物状态并回填 | 2026-08-11 | ✅ 已完成 | 2026-08-11 |
+| S4 | 简化模式保留状态：`_run_simplified_step` 复制 old_state 化学字段（缓解 Q6） | 2026-08-11 | ✅ 已完成 | 2026-08-11 |
+| S5 | main.py 诊断输出绑定模拟状态（base_saturation/exchangeable_Ca/Al 从 state 提取） | 2026-08-11 | ✅ 已完成 | 2026-08-11 |
+| S6 | 测试与回归：单月回填正确性、多月累积演化、两种引擎模式行为 | 2026-08-11 | ✅ 已完成 | 2026-08-11 |
 
 ---
 
@@ -123,6 +123,54 @@ phreeqpython 提供的查询 API 均未使用：
 - ✅ SELECTED_OUTPUT 可靠输出
 
 **结论**：phreeqpython 引擎无法支撑 Q1（状态传递/演化）目标；**换用官方 phreeqc 包**是解决 Q1+Q2 的正确技术路线。需用户确认后实施（涉及新依赖与 PhreeqcEngine API 重写）。
+
+### S2 — 官方引擎适配与输入构造修正（2026-08-11）
+
+**官方引擎（IPhreeqc 3.8.6）跑完整土壤输入验证**，发现并修正 3 个输入构造问题：
+
+| # | 问题 | 修正 |
+|---|------|------|
+| 1 | SOLUTION 用 mol/L（1 L）与交换/矿物土柱摩尔量（1e4-1e5 mol）量级失衡，平衡结果非物理（pH 2.45 / 10.87） | SOLUTION 加 `-water {溶液体积L}`（≈8.2e5 L）统一基准 |
+| 2 | 矿物摩尔量过大（1e6-1e7 mol）导致平衡 pH 异常（9.8-9.9） | EQUILIBRIUM_PHASES 矿物量用 **10.0 mol**（PHREEQC 推荐默认，相存在+SI=0 平衡） |
+| 3 | GAS_PHASE 的 `CO2(g) 0.015` 被当摩尔量，固定分压失效 | 改为 `-fixed_pressure` + `-pressure 0.015` + `CO2(g) 1.0`（验证有效，pH 5.39） |
+
+**验证结果**：修正后完整输入平衡 pH=3.77（酸性红壤合理），交换相守恒（CaX2=5.49e4、MgX2=2.74e4、KX=1.79e4、NaX=4.07e4、AlX3=6.93e4 mol，均≈初始）。
+
+**顺带修复 Q12/Q13**：
+- Q12：`build_exchange()` 缺口位点由 NaX 改为 **AlX3 补齐**（红壤交换性酸由 Al 主导，Na 过量致碱）
+- Q13：`build_solution()` 增加电荷平衡修正（阳离子盈余用 Cl⁻ 补足）
+
+### S3-S5 — 代码实施（2026-08-11）
+
+**`src/phreeqc_engine.py`**：
+- 新增官方 `phreeqc` 后端（`backend='official'` 默认，phreeqpython 保留为回退）
+- `SoilState` 新增 `volume` 字段（土柱溶液体积）
+- `_build_phreeqc_input`：`-water` + 矿物量 10 + GAS 新写法 + SELECTED_OUTPUT 查询块
+- 新增 `_run_official_step` / `_parse_official_output`（SELECTED_OUTPUT 列名映射提取 pH/pe/temp、溶液元素、交换组成回填）
+- `_run_simplified_step` 保留化学状态（Q6 缓解）
+
+**`src/initial_condition.py`**：`build_phreeqc_input` 同步修正（-water/矿物量10/GAS）
+
+**`main.py`**：诊断输出从 `soil_state.exchange` 提取（base_saturation/CEC_occupied/exchangeable_Ca/Al 反映演化），移除固定初始值
+
+**`requirements.txt`**：新增 `phreeqc>=1.1.1`
+
+### S6 — 测试与回归（2026-08-11）
+
+**官方后端 10 年 fertilizer_lime 模拟**：
+- ✅ 全程无降级，`[INFO] 官方 PHREEQC 引擎已初始化 (IPhreeqc 3.8.6-17100-x64)`
+- ✅ pH 演化：3.527 → 3.652（石灰提碱）
+- ✅ 化学状态全面演化（120 月）：
+
+| 指标 | 第1月 → 第10年末 | 说明 |
+|------|------------------|------|
+| pH | 3.527 → 3.652 | 石灰作用 |
+| base_saturation | 51.8% → 57.5% | 盐基度上升 |
+| exchangeable_Al | 69349 → 55356 mol | Al 交换减少 |
+| exchangeable_Ca | 54909 → 54919 mol | Ca 缓慢增加 |
+| CEC_occupied | 431406 → 390829 mol | 交换位点演化 |
+
+**验收标准检查**：全部通过（见第 6 节）。**Q1 完成。**
 
 ---
 

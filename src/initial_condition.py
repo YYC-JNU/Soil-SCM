@@ -204,6 +204,18 @@ class InitialConditionBuilder:
         no3_conc = 1e-5    # NO3^- (mol/L)
         cl_conc = 3e-5     # Cl^- (mol/L)
 
+        # ---- 电荷平衡修正 (Q13) ----
+        # 初始溶液阳离子电荷常高于阴离子, 若不修正, PHREEQC 平衡时
+        # 只能靠 OH- 补足电中性, 导致平衡 pH 大幅偏离真实值。
+        # 用保守离子 Cl- 补足正电荷盈余。
+        cation_charge = (2.0 * ca_conc + 2.0 * mg_conc + k_conc +
+                         na_conc + 3.0 * al3plus + h_plus)
+        anion_charge = (2.0 * so4_conc + no3_conc + cl_conc +
+                        total_inorganic_carbon + oh_minus)
+        charge_imbalance = cation_charge - anion_charge
+        if charge_imbalance > 0:
+            cl_conc += charge_imbalance  # Cl- 一价
+
         # ---- 组装溶液 ----
         solution = {
             'temp': 25.0,
@@ -302,16 +314,17 @@ class InitialConditionBuilder:
         na_mol = (na_ion_mol_per_kg + h_ion_mol_per_kg) * self.soil_mass_kg
         al_mol = al_ion_mol_per_kg * self.soil_mass_kg
 
-        # 用 NaX 补齐 CEC 未覆盖的位点
-        # 当交换性阳离子电荷总和 < CEC 时, 剩余位点以 Na+ 填充,
-        # 使总交换位点 = CEC (消除 validate() 的 CEC 一致性告警)
+        # 用 AlX3 补齐 CEC 未覆盖的位点 (Q12 修复)
+        # 酸性红壤的交换性酸主要由 Al³⁺ 主导 (而非 Na⁺):
+        # 当交换性阳离子电荷总和 < CEC 时, 缺口位点以 Al³⁺ 填充,
+        # 使总交换位点 = CEC 且交换组成符合红壤物理特征。
         covered_charge_cmol = (
             self.profile.exch_ca + self.profile.exch_mg +
             self.profile.exch_k + self.profile.exch_na +
             self.profile.exch_al + self.profile.exch_h
         )
         gap_cmol = max(0.0, self.profile.cec - covered_charge_cmol)
-        na_mol += gap_cmol / 100.0 * self.soil_mass_kg  # Na+ 一价
+        al_mol += gap_cmol / 3.0 / 100.0 * self.soil_mass_kg  # Al³⁺ 三价
 
         # PHREEQC EXCHANGE 写法 (仅使用 phreeqc.dat 已定义的物种)
         exchange = {
@@ -457,6 +470,7 @@ class InitialConditionBuilder:
         # ---- SOLUTION 块 ----
         solution = self.build_solution()
         lines.append("SOLUTION 1")
+        lines.append(f"  -water      {self.solution_volume_L:.6e}")
         lines.append(f"  temp      {solution['temp']}")
         lines.append(f"  pH        {solution['pH']}")
         lines.append(f"  pe        {solution['pe']}")
@@ -478,14 +492,14 @@ class InitialConditionBuilder:
         lines.append("EQUILIBRIUM_PHASES 1")
         for mineral, moles in minerals.items():
             if moles > 0:
-                lines.append(f"  {mineral:<15} 0.0  {moles:.6e}")
+                lines.append(f"  {mineral:<15} 0.0  10.0")
         lines.append("")
 
-        # ---- GAS_PHASE 块 ----
-        gas = self.build_gas_phase()
+        # ---- GAS_PHASE 块 (固定 CO2 分压 0.015 atm) ----
         lines.append("GAS_PHASE 1")
-        lines.append(f"  -pressure     {gas['pressure']}")
-        lines.append(f"  CO2(g)        {gas['CO2(g)']:.6e}")
+        lines.append("  -fixed_pressure")
+        lines.append("  -pressure     0.015")
+        lines.append("  CO2(g)        1.0")
         lines.append("")
 
         # ---- SURFACE 块 (可选) ----

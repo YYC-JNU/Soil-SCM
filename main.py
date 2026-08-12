@@ -29,7 +29,6 @@ from src.scenario_controller import ScenarioController
 from src.phreeqc_engine import PhreeqcEngine
 from src.output_writer import OutputWriter
 from src.initial_condition import InitialConditionBuilder
-from src.utils import estimate_base_saturation
 
 
 def run_simulation(config_path: str = "config/config.yaml"):
@@ -182,17 +181,19 @@ def run_simulation(config_path: str = "config/config.yaml"):
                 soil_state, diag = engine.run_monthly_step(
                     soil_state, forcing, action, soil_profile)
 
-            # 记录诊断量
+            # 记录诊断量 (从模拟状态提取, 反映化学演化)
+            ex = soil_state.exchange
+            base_charge = (ex.get('CaX2', 0) * 2.0 + ex.get('MgX2', 0) * 2.0 +
+                           ex.get('KX', 0) + ex.get('NaX', 0))
+            total_charge = base_charge + ex.get('AlX3', 0) * 3.0
+            base_sat = (base_charge / total_charge * 100.0
+                        if total_charge > 0 else 0.0)
             diagnostics = {
                 'pH': soil_state.ph,
-                'base_saturation': estimate_base_saturation(
-                    soil_profile.exch_ca, soil_profile.exch_mg,
-                    soil_profile.exch_k, soil_profile.exch_na,
-                    soil_profile.cec
-                ),
-                'CEC_occupied': soil_profile.cec,
-                'exchangeable_Ca': soil_profile.exch_ca,
-                'exchangeable_Al': soil_profile.exch_al,
+                'base_saturation': base_sat,
+                'CEC_occupied': total_charge,
+                'exchangeable_Ca': ex.get('CaX2', 0),
+                'exchangeable_Al': ex.get('AlX3', 0),
             }
             output_writer.record_step(year + 1, month + 1, diagnostics)
 
