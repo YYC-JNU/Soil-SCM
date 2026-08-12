@@ -42,18 +42,22 @@ class ClimateConfig:
 
 @dataclass
 class FertilizerConfig:
-    """肥料配置"""
-    type: str = "urea"
-    annual_amount: float = 300.0         # kg urea/ha/yr
+    """肥料配置 (农业农村部2021指导意见, 水稻500kg/ha)
+    每次施用量 (kg/ha), 每年 3/6/9 月各一次
+    """
+    n: float = 12.0          # 氮肥 (按N元素)
+    p2o5: float = 4.0        # 磷肥 (按P2O5)
+    k2o: float = 9.0         # 钾肥 (按K2O)
+    mgo: float = 3.0         # 镁肥 (按MgO)
+    znso4: float = 1.0       # 硫酸锌 (按ZnSO4)
     apply_months: List[int] = field(default_factory=lambda: [3, 6, 9])
-    n_content: float = 0.46              # 尿素含氮量
 
 
 @dataclass
 class LimeConfig:
-    """石灰配置"""
-    annual_amount: float = 1000.0        # kg/ha/yr
-    apply_month: int = 1
+    """生石灰配置 (按CaO, 每次施用量kg/ha)"""
+    amount_per_apply: float = 45.0       # kg CaO/ha/次 (推荐 40~50)
+    apply_months: List[int] = field(default_factory=lambda: [3, 6, 9])
 
 
 @dataclass
@@ -155,18 +159,20 @@ class ConfigManager:
         if 'fertilizer' in raw:
             f = raw['fertilizer']
             config.fertilizer = FertilizerConfig(
-                type=f.get('type', 'urea'),
-                annual_amount=f.get('annual_amount', 300.0),
-                apply_months=f.get('apply_months', [3, 6, 9]),
-                n_content=f.get('n_content', 0.46)
+                n=f.get('n', 12.0),
+                p2o5=f.get('p2o5', 4.0),
+                k2o=f.get('k2o', 9.0),
+                mgo=f.get('mgo', 3.0),
+                znso4=f.get('znso4', 1.0),
+                apply_months=f.get('apply_months', [3, 6, 9])
             )
 
         # 解析 lime
         if 'lime' in raw:
             l = raw['lime']
             config.lime = LimeConfig(
-                annual_amount=l.get('annual_amount', 1000.0),
-                apply_month=l.get('apply_month', 1)
+                amount_per_apply=l.get('amount_per_apply', 45.0),
+                apply_months=l.get('apply_months', [3, 6, 9])
             )
 
         # 解析 soil_co2
@@ -240,9 +246,12 @@ class ConfigManager:
         print(f"  土壤类型: {self.config.soil_data.soil_type}")
         print(f"  基准降水: {self.config.climate.base_annual_precip} mm/yr")
         print(f"  基准温度: {self.config.climate.base_annual_temp} °C")
-        print(f"  肥料类型: {self.config.fertilizer.type}")
-        print(f"  施肥量: {self.config.fertilizer.annual_amount} kg/ha/yr")
-        print(f"  石灰量: {self.config.lime.annual_amount} kg/ha/yr")
+        print(f"  氮肥: {self.config.fertilizer.n} kg N/ha/次")
+        print(f"  磷肥: {self.config.fertilizer.p2o5} kg P2O5/ha/次")
+        print(f"  钾肥: {self.config.fertilizer.k2o} kg K2O/ha/次")
+        print(f"  镁肥: {self.config.fertilizer.mgo} kg MgO/ha/次")
+        print(f"  硫酸锌: {self.config.fertilizer.znso4} kg ZnSO4/ha/次")
+        print(f"  生石灰: {self.config.lime.amount_per_apply} kg CaO/ha/次")
         print(f"  土壤pCO2: {self.config.soil_co2.pCO2_ref} atm")
         print(f"  输出格式: {self.config.output.format}")
         print("=" * 60)

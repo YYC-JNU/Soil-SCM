@@ -242,7 +242,8 @@ class PhreeqcEngine:
                     'pH': new_state.ph,
                     'pe': new_state.pe,
                     'units': 'mol/L'}
-        for el in ['Ca', 'Mg', 'K', 'Na', 'Al', 'Cl', 'C', 'S', 'N', 'Si']:
+        for el in ['Ca', 'Mg', 'K', 'Na', 'Al', 'P', 'Zn',
+                   'Cl', 'C', 'S', 'N', 'Si']:
             col = f"{el}(mol/kgw)"
             if col in idx:
                 solution[el] = get(col)
@@ -359,16 +360,35 @@ class PhreeqcEngine:
             reaction_lines.append(f"  H2O    {water_mol:.6e}  # 降水入渗")
 
         if action.apply_fertilizer:
-            fert_mol = self._calc_fertilizer_moles(action)
-            if fert_mol > 0:
-                reaction_lines.append(f"  NO3-   {fert_mol:.6e}  # 尿素硝化")
-                reaction_lines.append(f"  H+     {2*fert_mol:.6e}  # 产酸")
+            # 氮肥 (N): 尿素硝化产 NO3- + 2H+ (按 N 元素计)
+            n_mol = action.n_amount * 1000.0 / 14.007
+            if n_mol > 0:
+                reaction_lines.append(f"  NO3-   {n_mol:.6e}  # 氮肥硝化")
+                reaction_lines.append(f"  H+     {2*n_mol:.6e}  # 产酸")
+            # 磷肥 (P2O5 → 2 H2PO4-)
+            p_mol = action.p2o5_amount * 1000.0 / 141.94 * 2.0
+            if p_mol > 0:
+                reaction_lines.append(f"  H2PO4- {p_mol:.6e}  # 磷肥")
+            # 钾肥 (K2O → 2 K+)
+            k_mol = action.k2o_amount * 1000.0 / 94.20 * 2.0
+            if k_mol > 0:
+                reaction_lines.append(f"  K+     {k_mol:.6e}  # 钾肥")
+            # 镁肥 (MgO → Mg+2)
+            mg_mol = action.mgo_amount * 1000.0 / 40.30
+            if mg_mol > 0:
+                reaction_lines.append(f"  Mg+2   {mg_mol:.6e}  # 镁肥")
+            # 硫酸锌 (ZnSO4 → Zn+2 + SO4-2)
+            zn_mol = action.znso4_amount * 1000.0 / 161.47
+            if zn_mol > 0:
+                reaction_lines.append(f"  Zn+2   {zn_mol:.6e}  # 硫酸锌")
+                reaction_lines.append(f"  SO4-2  {zn_mol:.6e}  # 硫酸锌")
 
         if action.apply_lime:
-            # 生石灰 CaO: kg → g → mol (M=56.08), 水化产 Ca2+ + 2OH-
+            # 生石灰 CaO: 水化产 Ca2+ + 2OH- (移除 2H)
             lime_mol = action.lime_amount * 1000.0 / 56.08
-            reaction_lines.append(f"  Ca     {lime_mol:.6e}  # 生石灰Ca2+")
-            reaction_lines.append(f"  H      {-2*lime_mol:.6e}  # 水化OH-")
+            if lime_mol > 0:
+                reaction_lines.append(f"  Ca     {lime_mol:.6e}  # 生石灰Ca2+")
+                reaction_lines.append(f"  H      {-2*lime_mol:.6e}  # 水化OH-")
 
         if reaction_lines:
             lines.append("REACTION 1")
@@ -382,7 +402,7 @@ class PhreeqcEngine:
         lines.append("  -pe true")
         lines.append("  -temp true")
         lines.append("  -water true")
-        lines.append("  -totals Ca Mg K Na Al Cl C S N Si")
+        lines.append("  -totals Ca Mg K Na Al P Zn Cl C S N Si")
         lines.append("  -molalities CaX2 MgX2 KX NaX AlX3 X-")
         lines.append("END")
 
@@ -421,16 +441,6 @@ class PhreeqcEngine:
 
         diag = DiagnosticOutput(ph=new_state.ph)
         return new_state, diag
-
-    def _calc_fertilizer_moles(self, action) -> float:
-        """计算施肥摩尔量"""
-        if action.fertilizer_type == 'urea':
-            # 尿素 CO(NH2)2, M=60.06 g/mol
-            # 每公顷 kg → mol
-            mass_kg = action.fertilizer_amount  # kg/ha
-            moles = mass_kg * 1000.0 / 60.06   # mol/ha
-            return moles
-        return 0.0
 
     def _parse_phreeqc_output(self, result, old_state):
         """解析 PHREEQC 输出"""

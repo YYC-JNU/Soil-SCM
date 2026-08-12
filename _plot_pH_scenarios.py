@@ -30,15 +30,18 @@ N_YEARS = 5
 def make_action(scenario, month):
     """构造月度干预指令 (month 为 1-12)"""
     action = MonthlyAction()
-    # 尿素: 300 kg/ha/年, 3/6/9 月各 100 kg/ha
+    # 氮磷钾镁锌肥: 3/6/9 月各一次 (农业农村部2021指导意见, 每次量 kg/ha)
     if scenario in ('fertilizer', 'fertilizer_lime') and month in (3, 6, 9):
         action.apply_fertilizer = True
-        action.fertilizer_amount = 100.0
-        action.fertilizer_type = 'urea'
-    # 生石灰: 1000 kg/ha/年, 1 月施
-    if scenario in ('lime_only', 'fertilizer_lime') and month == 1:
+        action.n_amount = 12.0
+        action.p2o5_amount = 4.0
+        action.k2o_amount = 9.0
+        action.mgo_amount = 3.0
+        action.znso4_amount = 1.0
+    # 生石灰 (CaO): 3/6/9 月各一次, 45 kg/ha/次
+    if scenario in ('lime_only', 'fertilizer_lime') and month in (3, 6, 9):
         action.apply_lime = True
-        action.lime_amount = 1000.0
+        action.lime_amount = 45.0
     return action
 
 

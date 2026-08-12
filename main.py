@@ -116,13 +116,16 @@ def run_simulation(config_path: str = "config/config.yaml"):
     scenario_ctrl = ScenarioController(
         scenario=cfg.simulation.scenario,
         fertilizer_config={
-            'type': cfg.fertilizer.type,
-            'annual_amount': cfg.fertilizer.annual_amount,
+            'n': cfg.fertilizer.n,
+            'p2o5': cfg.fertilizer.p2o5,
+            'k2o': cfg.fertilizer.k2o,
+            'mgo': cfg.fertilizer.mgo,
+            'znso4': cfg.fertilizer.znso4,
             'apply_months': cfg.fertilizer.apply_months,
         },
         lime_config={
-            'annual_amount': cfg.lime.annual_amount,
-            'apply_month': cfg.lime.apply_month,
+            'amount_per_apply': cfg.lime.amount_per_apply,
+            'apply_months': cfg.lime.apply_months,
         }
     )
     scenario_ctrl.print_scenario_info()

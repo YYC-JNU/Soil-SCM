@@ -30,8 +30,9 @@ def run_sim(backend, n_years=N_YEARS):
                              n_years, 'fertilizer_lime')
     ctrl = ScenarioController(
         'fertilizer_lime',
-        {'type': 'urea', 'annual_amount': 300.0, 'apply_months': [3, 6, 9]},
-        {'annual_amount': 1000.0, 'apply_month': 1})
+        {'n': 12.0, 'p2o5': 4.0, 'k2o': 9.0, 'mgo': 3.0, 'znso4': 1.0,
+         'apply_months': [3, 6, 9]},
+        {'amount_per_apply': 45.0, 'apply_months': [3, 6, 9]})
     rec = {'year': [], 'ph': [], 'bs': [], 'al': [], 'ca': [],
            'falls': 0}
     for y in range(n_years):
