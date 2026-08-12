@@ -15,6 +15,7 @@ Soil-SCM: 土壤物理化学数值模式
 
 import sys
 import argparse
+import json
 import numpy as np
 from pathlib import Path
 
@@ -163,7 +164,8 @@ def run_simulation(config_path: str = "config/config.yaml"):
     output_writer = OutputWriter(
         output_dir=cfg.output.directory,
         output_format=cfg.output.format,
-        scenario=cfg.simulation.scenario
+        scenario=cfg.simulation.scenario,
+        variables=cfg.output.variables  # Q11: 按配置输出变量
     )
 
     n_years = cfg.simulation.n_years
@@ -205,6 +207,11 @@ def run_simulation(config_path: str = "config/config.yaml"):
                 'exchangeable_Ca': ex.get('CaX2', 0),
                 'exchangeable_Al': ex.get('AlX3', 0),
             }
+            # Q11: 按 config.output.variables 补充可选字段 (dict 以 JSON 序列化)
+            if 'mineral_mass' in cfg.output.variables and diag.mineral_masses:
+                diagnostics['mineral_mass'] = json.dumps(diag.mineral_masses)
+            if 'solution_ions' in cfg.output.variables and diag.solution_ions:
+                diagnostics['solution_ions'] = json.dumps(diag.solution_ions)
             output_writer.record_step(year + 1, month + 1, diagnostics)
 
         # 每年打印进度

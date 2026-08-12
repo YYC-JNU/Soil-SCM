@@ -21,10 +21,11 @@ class OutputWriter:
     """输出写入器"""
 
     def __init__(self, output_dir: str, output_format: str = 'csv',
-                 scenario: str = 'natural'):
+                 scenario: str = 'natural', variables: List[str] = None):
         self.output_dir = Path(output_dir)
         self.output_format = output_format
         self.scenario = scenario
+        self.variables = variables  # 输出变量列表 (Q11), None=全部
         os.makedirs(self.output_dir, exist_ok=True)
 
         # 存储时间序列数据
@@ -59,6 +60,11 @@ class OutputWriter:
             all_data.append(row)
 
         df = pd.DataFrame(all_data)
+        # Q11: 按 config.output.variables 过滤输出列 (保留时间列)
+        if self.variables:
+            time_cols = [c for c in ('year', 'month', 'time_decimal') if c in df.columns]
+            var_cols = [v for v in self.variables if v in df.columns]
+            df = df[time_cols + var_cols]
         filename = f"soil_scm_{self.scenario}_output.csv"
         filepath = self.output_dir / filename
         df.to_csv(filepath, index=False, encoding='utf-8')
@@ -90,8 +96,11 @@ class OutputWriter:
             time_var.units = 'years since 2000-01-01'
 
             # 创建数据变量
-            for key in self.data_records[0].keys():
-                if isinstance(self.data_records[0][key], (int, float)):
+            keys = [k for k in self.data_records[0].keys()
+                    if isinstance(self.data_records[0][k], (int, float))]
+            if self.variables:
+                keys = [k for k in keys if k in self.variables]
+            for key in keys:
                     var = ds.createVariable(key, 'f8', ('time',))
                     var[:] = [d.get(key, 0.0) for d in self.data_records]
 
