@@ -15,7 +15,9 @@
 import numpy as np
 from typing import Dict, Optional, Tuple
 from dataclasses import dataclass, field
-from src.initial_condition import MINERAL_SCALE
+from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
+                           SIMPLIFIED_K_PRECIP, SIMPLIFIED_K_FERT,
+                           SIMPLIFIED_K_LIME, PH_LOWER, PH_UPPER)
 from src.logging_config import get_logger
 
 logger = get_logger("phreeqc_engine")
@@ -59,7 +61,8 @@ class PhreeqcEngine:
 
     def __init__(self, database: str = 'phreeqc.dat',
                  mode: str = 'auto', backend: str = 'official',
-                 precip_chem=None, precip_infiltration: float = 0.05):
+                 precip_chem=None,
+                 precip_infiltration: float = PRECIP_INFILTRATION_DEFAULT):
         """
         参数:
             database: PHREEQC 热力学数据库
@@ -395,7 +398,7 @@ class PhreeqcEngine:
         # 简化: 降水淋溶 → pH 缓降 (S4 物理量级校准 v0.2.1)
         #   k_precip=1.5e-5 → 年降 ~0.03 (30 年 ~0.9, 保持淋溶酸化物理方向;
         #   官方引擎 natural 前 7 年升碱是单层 Al 淋洗局限, 不作为匹配目标)
-        precip_effect = forcing['precip'] * 1.5e-5
+        precip_effect = forcing['precip'] * SIMPLIFIED_K_PRECIP
         new_state.ph = state.ph - precip_effect
 
         # 简化: 施肥产酸 (P4 修复: fertilizer_amount 字段不存在, 改用各肥料量之和)
@@ -403,16 +406,16 @@ class PhreeqcEngine:
             fert_total = (action.n_amount + action.p2o5_amount +
                           action.k2o_amount + action.mgo_amount +
                           action.znso4_amount)
-            fert_acid = fert_total * 0.0007    # ~0.02 pH/次施肥
+            fert_acid = fert_total * SIMPLIFIED_K_FERT    # ~0.02 pH/次施肥
             new_state.ph = new_state.ph - fert_acid
 
         # 简化: 石灰提碱
         if action.apply_lime:
-            lime_alk = action.lime_amount * 0.002   # ~0.09 pH/次石灰
+            lime_alk = action.lime_amount * SIMPLIFIED_K_LIME   # ~0.09 pH/次石灰
             new_state.ph = new_state.ph + lime_alk
 
         # Q5 修复 (v0.2.1): 移除硬编码 3.5/9.0 界限, 放宽至物理合理范围
-        new_state.ph = min(12.0, max(2.0, new_state.ph))
+        new_state.ph = min(PH_UPPER, max(PH_LOWER, new_state.ph))
 
         diag = DiagnosticOutput(ph=new_state.ph)
         return new_state, diag
