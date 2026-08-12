@@ -21,6 +21,8 @@ git -c credential.helper=store push origin v0.1.0
 ```
 
 > **注意**：本机系统级 Git Credential Manager 会干扰认证，推送时**必须带** `-c credential.helper=store` 参数。Token 已存入 `~/.git-credentials`，无需重复输入。
+>
+> **⚠️ 推送确认约定（2026-08-11 起）**：**所有 `git push` 操作前，必须先征得项目负责人明确确认，确认后才可推送。** 本地 `git add` / `git commit` 无需确认，仅 `git push` 需要。
 
 ## 3. Token 管理
 
