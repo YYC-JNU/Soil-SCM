@@ -35,6 +35,9 @@ Soil-SCM 是基于 PHREEQC 引擎的土壤物理化学单点模式，模拟长�
 | F1 | GAS_PHASE pCO₂ 传递：气候强迫逐月 pCO₂ 生效（0.0117~0.0235 atm） | ✅ |
 | F2 | mineral_scale 双路径统一（MINERAL_SCALE=0.001） | ✅ |
 | 废弃 | phreeqpython 移除，统一官方引擎 | ✅ |
+| Q15 | logging 日志系统（console+file 双输出，Q18 联动） | ✅ |
+| Q16 | pytest 单元测试框架（tests/ 36 用例） | ✅ |
+| Q18 | 异常分级：降级时记录错误 + 完整输入可复现 | ✅ |
 
 ---
 
@@ -83,9 +86,6 @@ Soil-SCM 是基于 PHREEQC 引擎的土壤物理化学单点模式，模拟长�
 | Q8 | phreeqc_initial_input 割裂 | 集成到引擎 |
 | Q9 | SURFACE 表面络合未启用 | Hfo_s/Hfo_w 重构 |
 | Q13* | 电荷平衡警告 | HCO₃ 缓冲替代保守 Cl |
-| Q15 | 无 logging | 引入 logging |
-| Q16 | 无单元测试 | pytest 框架 |
-| Q18 | 异常静默降级 | 分级日志 |
 | Q25 | Token 明文存储 | 凭据管理 |
 
 ### 🟢 低优先级
@@ -137,3 +137,4 @@ Q10 子时间步、Q11 输出变量、Q14 anatase、Q17 包结构、Q19 魔法�
 | v0.1.2 | 2026-08-11 | 多肥料方案（2021指导意见）、30年诊断（Al缓冲耗尽/Cl淋洗）、文档更新 |
 | v0.1.3 | 2026-08-12 | 废弃 phreeqpython（统一官方引擎）；降水化学默认值更新（广东2025公报 pH 5.75） |
 | v0.1.4 | 2026-08-12 | Q7 降水化学集成 + F1 pCO₂传递 + F2 矿物量统一；30 年模拟验证（docs/Q7_PRECIP_CHEMISTRY.md） |
+| v0.2.0 | 2026-08-12 | 工程化地基：Q16 pytest 框架（36用例）+ Q15 logging + Q18 异常分级 |

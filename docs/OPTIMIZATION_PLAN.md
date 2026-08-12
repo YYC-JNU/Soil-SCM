@@ -156,10 +156,10 @@
 
 | 编号 | 问题 | 位置 | 影响 | 优先级 |
 |------|------|------|------|--------|
-| Q15 | 全部用 `print` 输出，无 `logging` 模块 | 全局 | 无法分级、持久化日志 | 中 |
-| Q16 | 无单元测试：`InitialConditionBuilder` 单位换算、`PhreeqcEngine` 降级逻辑等无回归保护 | 全局 | 修改易引入回归 | 中 |
+| Q15 | 全部用 `print` 输出，无 `logging` 模块 | 全局 | 无法分级、持久化日志 | ✅ 已完成 (v0.2.0) |
+| Q16 | 无单元测试：`InitialConditionBuilder` 单位换算、`PhreeqcEngine` 降级逻辑等无回归保护 | 全局 | 修改易引入回归 | ✅ 已完成 (v0.2.0, tests/ 36用例) |
 | Q17 | main.py 用 `sys.path.insert(0, ...)` hack，非正规包结构 | `main.py` | 无法 `pip install` 或从别处 import | 低 |
-| Q18 | `_run_phreeqc_step` 捕获所有异常静默降级，PHREEQC 失败真实原因被掩盖 | `src/phreeqc_engine.py` | 不利于排查 | 中 |
+| Q18 | `_run_phreeqc_step` 捕获所有异常静默降级，PHREEQC 失败真实原因被掩盖 | `src/phreeqc_engine.py` | 不利于排查 | ✅ 已完成 (v0.2.0) |
 | Q19 | 魔法数字过多：简化模式系数、pH 上下限、热力学常数散落 | `src/phreeqc_engine.py` / `src/initial_condition.py` | 维护困难 | 低 |
 | Q20 | requirements.txt 无版本上限，未来 `phreeqpython`/`numpy` 升级可能破坏兼容 | `requirements.txt` | 兼容性风险 | 低 |
 
@@ -198,12 +198,25 @@
 
 ---
 
+### Q15+Q16+Q18 — 工程化地基（2026-08-12, v0.2.0）
+
+**改动**：
+- 新增 `src/logging_config.py`：`setup_logging()`（console+file 双输出、幂等）+ `get_logger()`
+- Q16：新增 `tests/` pytest 框架，36 用例全绿（锁定 Q7 换算、F1 pCO₂、F2 矿物量、T3 异常诊断）
+- Q15：5 个模块 print→logger（`[WARNING]/[INFO]/[OUTPUT]/[PLOT]` 0 残留；`print_summary` 用户界面保留）
+- Q18：`_run_official_step` 失败时记录 `last_error_message`/`last_error_input`（完整输入落盘）+ `logger.error(exc_info)`
+- main.py 阶段 1 接入 `setup_logging()`，生成 `output/soil_scm.log`
+
+**验证**：pytest 36 passed；main.py 运行生成 soil_scm.log（INFO 分级）
+
+---
+
 ### 优先级统计
 
 | 优先级 | 数量 | 编号 |
 |--------|------|------|
 | 高 | 5 | Q1 Q2 Q3 Q4 Q12 |
-| 中 | 9 | Q5 Q6 Q8 Q9 Q13 Q15 Q16 Q18 Q25 |
+| 中 | 6 | Q5 Q6 Q8 Q9 Q13 Q25 |
 | 低 | 11 | Q10 Q11 Q14 Q17 Q19 Q20 Q21 Q22 Q23 Q24 Q26 |
 
 > 合计 26 项。
