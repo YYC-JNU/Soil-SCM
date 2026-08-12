@@ -1,6 +1,6 @@
 # Soil-SCM: 土壤物理化学数值模式
 
-> **版本：v0.2.1**（2026-08-12）
+> **版本：v0.2.2**（2026-08-12）
 
 基于 PHREEQC 地球化学引擎的土壤单点物理化学数值模式，用于模拟长期（数十年）施肥、酸化、淋溶与改良条件下的土壤化学演变（pH、盐基饱和度、交换性阳离子等）。
 
@@ -25,11 +25,12 @@ soil_scm/
 │   ├── initial_condition.py
 │   ├── precip_chemistry.py    # 降水化学 (Q7)
 │   ├── logging_config.py      # 日志 (Q15)
+│   ├── constants.py           # 全局常量 (Q19)
 │   └── utils.py
 ├── data/
 │   ├── soil_survey.csv
 │   └── exchangeable_ions.csv
-├── tests/                     # pytest 测试 (36 用例)
+├── tests/                     # pytest 测试 (38 用例)
 │   ├── conftest.py
 │   └── test_*.py
 ├── docs/                      # 项目文档
@@ -39,6 +40,7 @@ soil_scm/
 │   ├── Q1_plus_ANALYSIS.md
 │   ├── Q7_PRECIP_CHEMISTRY.md
 │   ├── V0_2_0_ENGINEERING_REPORT.md
+│   ├── V0_2_2_SHORT_TERM_REPORT.md
 │   └── GIT_GUIDE.md
 ├── output/                    # 运行产物 (gitignore)
 ├── main.py
@@ -66,9 +68,18 @@ pip install -r requirements.txt
 > **说明**
 > - 化学计算依赖官方 `phreeqc` 包（IPhreeqc 3.8.6，USGS 官方引擎）；`phreeqpython` 兼容后端已于 v0.1.3 废弃移除。
 > - 若 `phreeqc` 未安装或 PHREEQC 计算块与数据库不兼容导致计算失败，引擎会自动**降级到内置简化模式**，保证模拟流程稳定运行。
-> - v0.2.0 起建立 pytest 测试框架（`tests/`，36 用例），运行 `pytest tests/` 验证。
+> - v0.2.0 起建立 pytest 测试框架（`tests/`，38 用例），运行 `pytest tests/` 验证。
 
 ## 三、运行模拟
+
+### 引擎与入渗配置（v0.2.2）
+
+`config.yaml` 中 `simulation` 关键参数：
+
+- `engine_mode`：`auto`（默认，官方 PHREEQC 引擎优先，不可用自动降级简化模式）/ `phreeqc` / `simplified`
+- `precip_infiltration`：降水入渗系数（默认 0.05），实际进入土壤溶液的比例（其余径流/排水）
+- `scenario`：情景选择（见下节）
+
 
 ```bash
 # 运行模拟
@@ -148,7 +159,7 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 - Parton W.J. et al. Analysis of factors controlling soil organic matter levels in Great Plains grasslands. SSSAJ, 1987, 51(5): 1173-1179.
 - Tang D., Larssen T., Lange R.D. et al. Soil acidification and soil quality in China. European Journal of Soil Science, 2006, 57(1): 1-11.
 
-## 十、已知模型局限（v0.2.0）
+## 十、已知模型局限（v0.2.2）
 
 1. **交换性 Al 缓冲库耗尽 → pH 突变**：单层模型 + 排水使交换性 Al 被淋洗耗尽（约第 8 年，AlX3→0），土壤失去主要产酸源后 pH 突升至 ~10。真实红壤 Al 会下移累积，需**多分层模型**解决。
 2. **Al(OH)₄⁻ 两性溶解**：pH 升高后总 Al 浓度反而上升——Al 以铝酸根（Al(OH)₄⁻）形态碱性溶解，Al³⁺ 实际剧降（pH 10 时 ~10⁻²³）。

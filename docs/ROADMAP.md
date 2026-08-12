@@ -41,6 +41,11 @@ Soil-SCM 是基于 PHREEQC 引擎的土壤物理化学单点模式，模拟长�
 | Q4 | 默认引擎 auto + 简化系数物理量级校准 | ✅ |
 | Q5 | pH 界限物理化（移除 3.5/9.0 硬编码） | ✅ |
 | P4 | simplified+施肥崩溃修复（fertilizer_amount） | ✅ |
+| T3 | 石灰/入渗校准：precip_infiltration 参数化（石灰量 45kg 验证保留） | ✅ |
+| Q19 | 魔法数字收敛：src/constants.py 统一常量 | ✅ |
+| Q8 | 输入割裂清理：main.py 移除仅打印不用的 phreeqc_initial_input | ✅ |
+| Q10 | 子时间步验证（与月步长一致） | ✅ |
+| Q11 | output.variables 配置生效（JSON 序列化可选诊断） | ✅ |
 
 ---
 
@@ -84,7 +89,6 @@ Soil-SCM 是基于 PHREEQC 引擎的土壤物理化学单点模式，模拟长�
 ### 🟡 中优先级
 | 编号 | 问题 | 方案方向 |
 |------|------|----------|
-| Q8 | phreeqc_initial_input 割裂 | 集成到引擎 |
 | Q9 | SURFACE 表面络合未启用 | Hfo_s/Hfo_w 重构 |
 | Q13* | 电荷平衡警告 | HCO₃ 缓冲替代保守 Cl |
 | Q25 | Token 明文存储 | 凭据管理 |
@@ -103,10 +107,10 @@ Q10 子时间步、Q11 输出变量、Q14 anatase、Q17 包结构、Q19 魔法�
 - [x] 离子浓度图（30 年，含 P/Zn）✅
 - [x] **T1-Q4 简化模式校准** ✅（v0.2.1）：默认引擎改 `auto`；简化系数物理量级校准（k_precip 1.5e-5）
 - [x] **T2-Q5 pH 下限物理化** ✅（v0.2.1）：移除 3.5/9.0 硬编码，放宽至 2.0~12.0
-- [ ] **T3 石灰/入渗校准**：Q7 数据重标定避免 pH 12+；`precip_infiltration` 参数化
-- [ ] **T4-Q19 魔法数字收敛**：简化系数/pH 界限/热力学常数 → `src/constants.py`
-- [ ] **T5-Q8 输入割裂清理**：main.py 阶段 4 `phreeqc_initial_input` 诊断化
-- [ ] **T6-Q10/Q11 顺带**：子时间步验证、`output.variables` 配置生效
+- [x] **T3 石灰/入渗校准** ✅（v0.2.2）：`precip_infiltration` 参数化；石灰量 45kg 扫描验证保留
+- [x] **T4-Q19 魔法数字收敛** ✅（v0.2.2）：`src/constants.py` 统一简化系数/pH 界限/入渗/矿物量
+- [x] **T5-Q8 输入割裂清理** ✅（v0.2.2）：main.py 移除仅打印不用的 phreeqc_initial_input
+- [x] **T6-Q10/Q11 顺带** ✅（v0.2.2）：子时间步验证（与月步长一致）、output.variables 生效
 
 ### 中期（模型物理化，优先级）
 - [x] **降水化学集成（Q7）** ✅（v0.1.4）：酸雨组分 REACTION 并入，Cl⁻ 不再异常淋失（30 年稳定于 3.27e-5 mol/kgw）
@@ -144,3 +148,4 @@ Q10 子时间步、Q11 输出变量、Q14 anatase、Q17 包结构、Q19 魔法�
 | v0.1.4 | 2026-08-12 | Q7 降水化学集成 + F1 pCO₂传递 + F2 矿物量统一；30 年模拟验证（docs/Q7_PRECIP_CHEMISTRY.md） |
 | v0.2.0 | 2026-08-12 | 工程化地基：Q16 pytest 框架（36用例）+ Q15 logging + Q18 异常分级 |
 | v0.2.1 | 2026-08-12 | Step 2 物理校准：默认引擎 auto、Q4 简化系数校准、Q5 pH 界限物理化、P4 bug 修复 |
+| v0.2.2 | 2026-08-12 | 短期收尾：T3 入渗参数化 + Q19 常量收敛 + Q8 输入清理 + Q10/Q11 验证 |

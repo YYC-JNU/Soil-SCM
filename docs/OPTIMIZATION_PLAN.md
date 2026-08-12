@@ -139,10 +139,10 @@
 | 编号 | 问题 | 位置 | 影响 | 优先级 |
 |------|------|------|------|--------|
 | Q7 | 降水化学从未生效：`precip_chemistry_default.json`（酸雨 SO₄/NO₃/NH₄ 离子）与 `PrecipChemConfig` 仅被解析，无代码加载使用 | 全局（`src/config_manager.py`） | 酸雨驱动土壤酸化的核心机制缺失 | ✅ 已完成 (v0.1.4, 见 docs/Q7_PRECIP_CHEMISTRY.md) |
-| Q8 | `phreeqc_initial_input` 生成后只打印不用：阶段 4 生成的 PHREEQC 输入与阶段 7 引擎是两条独立路径 | `main.py` | 功能割裂 | 中 |
+| Q8 | `phreeqc_initial_input` 生成后只打印不用：阶段 4 生成的 PHREEQC 输入与阶段 7 引擎是两条独立路径 | `main.py` | 功能割裂 | ✅ 已完成 (v0.2.2) |
 | Q9 | SURFACE 表面络合未启用：有机质（Som）/铁氧化物（Hfo_s/Hfo_w）吸附缓冲未模拟，`include_surface=False` 硬编码 | `main.py` / `src/initial_condition.py` | 养分离子吸附缓冲缺失 | 中 |
-| Q10 | 子时间步长未验证：`sub_time_step_days` 配置与循环存在但从未实测（`n_sub=int(30/sub_steps)` 假设每月 30 天） | `main.py` / `config.yaml` | 功能可信度未知 | 低 |
-| Q11 | `output.variables` 配置未生效：config 中 `[pH, ..., mineral_mass, solution_ions]` 与代码默认值不一致，输出列写死 | `config.yaml` vs `src/output_writer.py` | 配置项为摆设 | 低 |
+| Q10 | 子时间步长未验证：`sub_time_step_days` 配置与循环存在但从未实测（`n_sub=int(30/sub_steps)` 假设每月 30 天） | `main.py` / `config.yaml` | 功能可信度未知 | ✅ 已完成 (v0.2.2, 与月步长一致) |
+| Q11 | `output.variables` 配置未生效：config 中 `[pH, ..., mineral_mass, solution_ions]` 与代码默认值不一致，输出列写死 | `config.yaml` vs `src/output_writer.py` | 配置项为摆设 | ✅ 已完成 (v0.2.2) |
 
 ### 三、数据与物理一致性
 
@@ -160,7 +160,7 @@
 | Q16 | 无单元测试：`InitialConditionBuilder` 单位换算、`PhreeqcEngine` 降级逻辑等无回归保护 | 全局 | 修改易引入回归 | ✅ 已完成 (v0.2.0, tests/ 36用例) |
 | Q17 | main.py 用 `sys.path.insert(0, ...)` hack，非正规包结构 | `main.py` | 无法 `pip install` 或从别处 import | 低 |
 | Q18 | `_run_phreeqc_step` 捕获所有异常静默降级，PHREEQC 失败真实原因被掩盖 | `src/phreeqc_engine.py` | 不利于排查 | ✅ 已完成 (v0.2.0) |
-| Q19 | 魔法数字过多：简化模式系数、pH 上下限、热力学常数散落 | `src/phreeqc_engine.py` / `src/initial_condition.py` | 维护困难 | 低 |
+| Q19 | 魔法数字过多：简化模式系数、pH 上下限、热力学常数散落 | `src/phreeqc_engine.py` / `src/initial_condition.py` | 维护困难 | ✅ 已完成 (v0.2.2, src/constants.py) |
 | Q20 | requirements.txt 无版本上限，未来 `phreeqpython`/`numpy` 升级可能破坏兼容 | `requirements.txt` | 兼容性风险 | 低 |
 
 ### 五、文档与配置不一致
@@ -225,12 +225,24 @@
 
 ---
 
+### T3+T4+T5+T6 — 短期收尾（2026-08-12, v0.2.2）
+
+**改动**：
+- T3: `precip_infiltration` 参数化（config + 引擎）；石灰量 30/45/60 kg 扫描验证（pH 差异 +0.6，默认 45kg 保留，pH 偏高归因单层 Al 淋洗局限）
+- T4(Q19): 新增 `src/constants.py` 统一 `SIMPLIFIED_K_*/PH_*/PRECIP_INFILTRATION_DEFAULT/MINERAL_SCALE`
+- T5(Q8): main.py 移除 `build_phreeqc_input` 只打印不用的调用（引擎经阶段 7 build_initial_state 复用 InitialConditionBuilder）
+- T6(Q10/Q11): 子时间步验证（max diff=0）；`output.variables` 配置生效 + JSON 序列化可选诊断（mineral_mass/solution_ions）
+
+**验证**：pytest 38 passed；编译 OK；Q10 三种步长（0/7/1）结果完全一致
+
+---
+
 ### 优先级统计
 
 | 优先级 | 数量 | 编号 |
 |--------|------|------|
 | 高 | 2 | Q3 Q12 |
-| 中 | 4 | Q8 Q9 Q13 Q25 |
-| 低 | 11 | Q10 Q11 Q14 Q17 Q19 Q20 Q21 Q22 Q23 Q24 Q26 |
+| 中 | 3 | Q9 Q13 Q25 |
+| 低 | 8 | Q14 Q17 Q20 Q21 Q22 Q23 Q24 Q26 |
 
 > 合计 26 项。
