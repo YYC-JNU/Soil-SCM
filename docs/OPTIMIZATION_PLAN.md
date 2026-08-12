@@ -130,8 +130,8 @@
 | Q1 | PHREEQC 状态不传递、无化学演化：`_parse_phreeqc_output` 只提取 pH，溶液/交换/矿物每月用初始值重建，平衡结果被丢弃 | `src/phreeqc_engine.py` | phreeqc 模式下无累积演化 | 高 |
 | Q2 | phreeqpython 内置引擎 pH 锁定：SOLUTION 指定 pH 后加酸/碱/水均无法改变；`-charge` 选项不可用（实验证实） | 库限制（viphreeqc.dll） | phreeqc 模式 pH 恒定 5.0，`fertilizer`/`lime` 情景无差异 | 高 |
 | Q3 | 数值收敛窗口窄：CO₂ 偏离 0.015 atm、初始 pH 偏离 5.0 即 Al/Ca 不收敛 | `src/initial_condition.py` / PHREEQC 输入 | 气候情景（precip/temp increase）下 PHREEQC 易降级 | 高 |
-| Q4 | 简化模式物理近似粗糙：pH 变化由经验系数驱动（`precip×0.0001`、`fert×0.0005`、`lime×0.0003`），无真实化学平衡/缓冲 | `src/phreeqc_engine._run_simplified_step` | 结果仅具演示意义 | 高 |
-| Q5 | pH 下限硬编码 3.5：长期淋溶触底"封底"，后期曲线无区分度 | `src/phreeqc_engine._run_simplified_step` | natural/fertilizer 结局相同 | 中 |
+| Q4 | 简化模式物理近似粗糙：pH 变化由经验系数驱动（`precip×0.0001`、`fert×0.0005`、`lime×0.0003`），无真实化学平衡/缓冲 | `src/phreeqc_engine._run_simplified_step` | 结果仅具演示意义 | ✅ 已完成 (v0.2.1, 默认auto+物理量级校准) |
+| Q5 | pH 下限硬编码 3.5：长期淋溶触底"封底"，后期曲线无区分度 | `src/phreeqc_engine._run_simplified_step` | natural/fertilizer 结局相同 | ✅ 已完成 (v0.2.1, 放宽至2.0~12.0) |
 | Q6 | 简化模式状态丢失：`_run_simplified_step` 返回的 `new_state` 只含 `ph`，溶液/交换/矿物被清空 | `src/phreeqc_engine.py` | 架构不完整 | 中 |
 
 ### 二、功能未集成 / 半成品
@@ -211,12 +211,26 @@
 
 ---
 
+### Q4+Q5+P4 — T1 物理校准（2026-08-12, v0.2.1）
+
+**改动**：
+- S3 默认引擎改 `auto`（config.yaml + config_manager 默认值）
+- P4 修复：`_run_simplified_step` 引用不存在的 `fertilizer_amount` → 改用各肥料量之和（simplified+施肥不再崩溃）
+- S4 简化系数物理量级校准：k_precip 1.5e-5 / k_fert 0.0007 / k_lime 0.002（natural 30 年不再触底 3.5）
+- S5 Q5 修复：移除 3.5/9.0 硬编码，放宽至 2.0~12.0
+
+**验证**：pytest 38 passed（新增 P4 回归 + auto 默认断言）；simplified 30 年曲线方向物理合理
+
+**说明**：official natural 前 7 年 pH 上升是单层 Al 淋洗局限，故简化模式采用物理量级校准而非对标
+
+---
+
 ### 优先级统计
 
 | 优先级 | 数量 | 编号 |
 |--------|------|------|
-| 高 | 5 | Q1 Q2 Q3 Q4 Q12 |
-| 中 | 6 | Q5 Q6 Q8 Q9 Q13 Q25 |
+| 高 | 4 | Q1 Q2 Q3 Q12 |
+| 中 | 5 | Q6 Q8 Q9 Q13 Q25 |
 | 低 | 11 | Q10 Q11 Q14 Q17 Q19 Q20 Q21 Q22 Q23 Q24 Q26 |
 
 > 合计 26 项。
