@@ -12,6 +12,9 @@ import pandas as pd
 from pathlib import Path
 from typing import List, Dict
 from datetime import datetime
+from src.logging_config import get_logger
+
+logger = get_logger("output_writer")
 
 
 class OutputWriter:
@@ -59,14 +62,14 @@ class OutputWriter:
         filename = f"soil_scm_{self.scenario}_output.csv"
         filepath = self.output_dir / filename
         df.to_csv(filepath, index=False, encoding='utf-8')
-        print(f"[OUTPUT] 已保存: {filepath}")
+        logger.info("已保存: %s", filepath)
 
     def _save_netcdf(self):
         """保存为 NetCDF (需要 netCDF4 库)"""
         try:
             import netCDF4 as nc
         except ImportError:
-            print("[WARNING] netCDF4 未安装，回退到 CSV 格式")
+            logger.warning("netCDF4 未安装，回退到 CSV 格式")
             self._save_csv()
             return
 
@@ -92,14 +95,14 @@ class OutputWriter:
                     var = ds.createVariable(key, 'f8', ('time',))
                     var[:] = [d.get(key, 0.0) for d in self.data_records]
 
-        print(f"[OUTPUT] 已保存: {filepath}")
+        logger.info("已保存: %s", filepath)
 
     def plot_results(self, save_path: str = None):
         """绘制结果图"""
         try:
             import matplotlib.pyplot as plt
         except ImportError:
-            print("[WARNING] matplotlib 未安装，跳过绘图")
+            logger.warning("matplotlib 未安装，跳过绘图")
             return
 
         if not self.time_records:
@@ -120,4 +123,4 @@ class OutputWriter:
             save_path = self.output_dir / f"pH_{self.scenario}.png"
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
         plt.close()
-        print(f"[PLOT] 已保存: {save_path}")
+        logger.info("已保存: %s", save_path)

@@ -12,6 +12,9 @@ import os
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
+from src.logging_config import get_logger
+
+logger = get_logger("config_manager")
 
 
 @dataclass
@@ -118,7 +121,7 @@ class ConfigManager:
     def _load_config(self) -> Config:
         """从 YAML 文件加载配置"""
         if not self.config_path.exists():
-            print(f"[WARNING] 配置文件 {self.config_path} 不存在，使用默认配置")
+            logger.warning("配置文件 %s 不存在，使用默认配置", self.config_path)
             return Config()
 
         with open(self.config_path, 'r', encoding='utf-8') as f:
@@ -198,9 +201,9 @@ class ConfigManager:
                     with open(data_file, 'r', encoding='utf-8') as f:
                         data = json.load(f)
                 else:
-                    print(f"[WARNING] 降水化学数据文件不存在: {data_file}")
+                    logger.warning("降水化学数据文件不存在: %s", data_file)
             except Exception as e:
-                print(f"[WARNING] 降水化学数据加载失败: {e}")
+                logger.warning("降水化学数据加载失败: %s", e)
             config.precip_chemistry = PrecipChemConfig(
                 use_custom=use_custom, input_file=input_file, data=data)
 

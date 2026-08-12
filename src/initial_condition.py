@@ -26,6 +26,9 @@
 import numpy as np
 from typing import Dict, Optional, Tuple
 from dataclasses import dataclass, field
+from src.logging_config import get_logger
+
+logger = get_logger("initial_condition")
 
 
 # 矿物量缩放系数 (F2 修复: 统一为 0.001, 与 phreeqc_engine 保持一致)
@@ -591,18 +594,17 @@ class InitialConditionBuilder:
         total_sites = self._calc_exchange_site_total(exchange)
         cec_diff = abs(total_sites - self.cec_total_mol)
         if cec_diff > 0.01 * self.cec_total_mol:
-            print(f"[WARNING] CEC 不一致: 交换位点总量={total_sites:.4e}, "
-                  f"CEC={self.cec_total_mol:.4e}")
+            logger.warning("CEC 不一致: 交换位点总量=%.4e, CEC=%.4e", total_sites, self.cec_total_mol)
 
         # 检查溶液电荷平衡
         solution = self.build_solution()
         imbalance = self._check_charge_balance(solution)
         if abs(imbalance) > 1e-4:
-            print(f"[WARNING] 溶液电荷不平衡: {imbalance:.4e} mol/L")
+            logger.warning("溶液电荷不平衡: %.4e mol/L", imbalance)
 
         # 检查 pH 范围
         if self.profile.ph < 3.0 or self.profile.ph > 10.0:
-            print(f"[WARNING] pH 超出合理范围: {self.profile.ph}")
+            logger.warning("pH 超出合理范围: %s", self.profile.ph)
 
         return True
 

@@ -10,6 +10,9 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from dataclasses import dataclass
+from src.logging_config import get_logger
+
+logger = get_logger("input_reader")
 from typing import Optional
 
 
@@ -77,7 +80,7 @@ class InputReader:
     def read_soil_survey(self) -> dict:
         """读取土壤普查数据"""
         if not self.soil_file.exists():
-            print(f"[WARNING] 土壤普查文件 {self.soil_file} 不存在，使用默认值")
+            logger.warning("土壤普查文件 %s 不存在，使用默认值", self.soil_file)
             return self._default_soil_survey()
 
         df = pd.read_csv(self.soil_file)
@@ -105,7 +108,7 @@ class InputReader:
     def read_exchangeable_ions(self) -> dict:
         """读取交换性阳离子数据"""
         if not self.exchangeable_file.exists():
-            print(f"[WARNING] 交换性阳离子文件不存在，使用估算值")
+            logger.warning("交换性阳离子文件不存在，使用估算值")
             return self._default_exchangeable()
 
         df = pd.read_csv(self.exchangeable_file)

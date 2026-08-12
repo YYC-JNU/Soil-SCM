@@ -11,12 +11,12 @@ def test_backend_official_default():
     assert e.backend == "official"
 
 
-def test_backend_legacy_forced_to_official(capsys):
+def test_backend_legacy_forced_to_official(caplog):
     e = PhreeqcEngine(database="phreeqc.dat", mode="auto",
                       backend="phreeqpython")
-    out = capsys.readouterr().out
     assert e.backend == "official"
-    assert "已废弃" in out
+    # Q15 改造: 警告走 logging, 由 pytest caplog 捕获
+    assert any("已废弃" in rec.message for rec in caplog.records)
 
 
 def test_build_initial_state(profile, soil_info):
@@ -73,3 +73,22 @@ def test_monthly_step_no_fallback(profile, soil_info):
 def test_mineral_scale_consistent(profile, soil_info):
     e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
     assert e.mineral_scale == 0.001
+
+
+def test_error_diagnostics_on_failure(profile, soil_info, monkeypatch):
+    """T3/Q18: 引擎失败时记录 last_error_message / last_error_input"""
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    assert e.last_error_message is None
+    assert e.last_error_input is None
+
+    state = e.build_initial_state(profile, soil_info, 0.015)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated phreeqc failure")
+
+    monkeypatch.setattr(e.official, "RunString", boom)
+    new_state, _ = e.run_monthly_step(state, FORCING, MonthlyAction(), profile)
+
+    assert e._permanent_fallback
+    assert e.last_error_message == "simulated phreeqc failure"
+    assert "SELECTED_OUTPUT" in e.last_error_input  # 完整输入已落盘

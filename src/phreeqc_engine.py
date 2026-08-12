@@ -16,13 +16,16 @@ import numpy as np
 from typing import Dict, Optional, Tuple
 from dataclasses import dataclass, field
 from src.initial_condition import MINERAL_SCALE
+from src.logging_config import get_logger
+
+logger = get_logger("phreeqc_engine")
 
 try:
     from phreeqc import Phreeqc as OfficialPhreeqc
     OFFICIAL_PHREEQC_AVAILABLE = True
 except ImportError:
     OFFICIAL_PHREEQC_AVAILABLE = False
-    print("[WARNING] 官方 phreeqc (IPhreeqc) 未安装")
+    logger.warning("官方 phreeqc (IPhreeqc) 未安装")
 
 
 @dataclass
@@ -73,12 +76,14 @@ class PhreeqcEngine:
         self.mode = mode
         # phreeqpython 后端已废弃 (v0.1.3): 统一使用官方引擎
         if backend != 'official':
-            print(f"[WARNING] backend '{backend}' 已废弃, 强制使用官方引擎")
+            logger.warning("backend '%s' 已废弃, 强制使用官方引擎", backend)
         self.backend = 'official'
         self.official = None    # 官方 phreeqc 后端实例
         self.precip_chem = precip_chem  # 降水化学 (Q7)
         self._fallback_warned = False
         self._permanent_fallback = False
+        self.last_error_message = None    # Q18: 最近一次引擎失败信息
+        self.last_error_input = None     # Q18: 最近一次失败输入字符串
         # 降水入渗系数 (0~1): 实际进入土壤溶液的比例, 其余径流/排水
         self.precip_infiltration = 0.05
         # 矿物量缩放系数: EQUILIBRIUM_PHASES 矿物量 = 物理摩尔量 × 此系数
@@ -92,10 +97,10 @@ class PhreeqcEngine:
             self.official = OfficialPhreeqc()
             self.official.LoadBuiltInDatabase(database)
             ver = self.official.GetVersionString()
-            print(f"[INFO] 官方 PHREEQC 引擎已初始化 (IPhreeqc {ver})")
+            logger.info("官方 PHREEQC 引擎已初始化 (IPhreeqc %s)", ver)
         else:
             self.backend = 'simplified'
-            print("[WARNING] 无可用 PHREEQC 引擎，使用简化模式")
+            logger.warning("无可用 PHREEQC 引擎，使用简化模式")
 
     def build_initial_state(self, soil_profile, mineral_db_info,
                             pCO2: float) -> SoilState:
@@ -176,9 +181,13 @@ class PhreeqcEngine:
             new_state, diag = self._parse_official_output(state)
             return new_state, diag
         except Exception as e:
+            # Q18 修复: 记录完整诊断 (错误详情 + 输入字符串落盘可复现)
+            self.last_error_message = str(e)
+            self.last_error_input = input_string
             if not getattr(self, '_fallback_warned', False):
-                print(f"[WARNING] 官方 PHREEQC 计算失败: {e}")
-                print("[WARNING] 已永久降级到简化模式继续模拟")
+                logger.error("PHREEQC 计算失败: %s", e, exc_info=True)
+                logger.debug("失败输入:\n%s", input_string)
+                logger.warning("已永久降级到简化模式继续模拟")
                 self._fallback_warned = True
             self._permanent_fallback = True
             return self._run_simplified_step(state, forcing, action, profile)
