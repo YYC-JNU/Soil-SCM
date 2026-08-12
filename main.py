@@ -29,6 +29,7 @@ from src.scenario_controller import ScenarioController
 from src.phreeqc_engine import PhreeqcEngine
 from src.output_writer import OutputWriter
 from src.initial_condition import InitialConditionBuilder
+from src.logging_config import setup_logging
 
 
 def run_simulation(config_path: str = "config/config.yaml"):
@@ -43,6 +44,8 @@ def run_simulation(config_path: str = "config/config.yaml"):
 
     cfg_mgr = ConfigManager(config_path)
     cfg = cfg_mgr.config
+    # Q15: 初始化日志 (console + output/soil_scm.log)
+    setup_logging(cfg.output.directory)
     cfg_mgr.print_summary()
 
     # ============================================================
