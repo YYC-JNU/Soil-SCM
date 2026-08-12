@@ -87,15 +87,10 @@ def run_simulation(config_path: str = "config/config.yaml"):
     ic_builder.print_summary()
     ic_builder.validate()
 
-    # 生成 PHREEQC 初始输入字符串
-    # 注意: 默认关闭 SURFACE 块(include_surface=False)——
-    # phreeqc.dat 仅定义 Hfo_s/Hfo_w 表面物种, 文档代码生成的
-    # Som/Hfo 位点与该数据库不兼容 (见 docs/OPTIMIZATION_PLAN.md P3)
-    phreeqc_initial_input = ic_builder.build_phreeqc_input(
-        include_surface=False
-    )
-    print("\nPHREEQC 初始输入:")
-    print(phreeqc_initial_input)
+    # T5-Q8 修复: 不再单独生成/打印初始输入串 (仅打印不用, 与引擎路径割裂)。
+    # 引擎实际初始状态由阶段 7 build_initial_state() 复用 InitialConditionBuilder 生成。
+    # SURFACE 默认关闭: phreeqc.dat 仅定义 Hfo_s/Hfo_w 表面物种, 文档代码生成的
+    # Som/Hfo 位点与该数据库不兼容 (见 docs/OPTIMIZATION_PLAN.md P3)。
 
     # ============================================================
     # 阶段 5: 生成气候强迫
