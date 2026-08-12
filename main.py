@@ -133,8 +133,16 @@ def run_simulation(config_path: str = "config/config.yaml"):
     # ============================================================
     # 阶段 7: 初始化 PHREEQC 引擎
     # ============================================================
+    # Q7: 加载降水化学 (默认华南数据, 见 config/precip_chemistry_default.json)
+    from src.precip_chemistry import PrecipChemistry
+    precip_chem = (PrecipChemistry(data=cfg.precip_chemistry.data)
+                   if cfg.precip_chemistry.data else None)
+    if precip_chem is not None:
+        precip_chem.print_summary()
+
     engine = PhreeqcEngine(database='phreeqc.dat',
-                           mode=cfg.simulation.engine_mode)
+                           mode=cfg.simulation.engine_mode,
+                           precip_chem=precip_chem)
 
     # 构建初始状态 (initial_pCO2 已在阶段 4 中计算)
     soil_state = engine.build_initial_state(
