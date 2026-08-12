@@ -2,7 +2,7 @@
 
 > **文档编号**：ROADMAP
 > **创建日期**：2026-08-11
-> **当前版本**：v0.1.1
+> **当前版本**：v0.2.1
 
 ---
 
@@ -11,13 +11,13 @@
 Soil-SCM 是基于 PHREEQC 引擎的土壤物理化学单点模式，模拟长期施肥、酸化、淋溶与改良下的土壤化学演变（pH、盐基饱和度、交换性阳离子等）。
 
 **当前技术栈**：
-- PHREEQC 引擎：官方 `phreeqc` 包（IPhreeqc 3.8.6），phreeqpython 保留为回退
+- PHREEQC 引擎：官方 `phreeqc` 包（IPhreeqc 3.8.6），简化模式兜底（phreeqpython 已废弃）
 - 状态传递：SELECTED_OUTPUT + 排水模型
 - 初始条件：`InitialConditionBuilder`（溶液/交换/矿物/气相）
 
 ---
 
-## 2. 已完成优化（v0.1.0 → v0.1.4）
+## 2. 已完成优化（v0.1.0 → v0.2.1）
 
 | 项 | 内容 | 状态 |
 |----|------|------|
@@ -36,7 +36,7 @@ Soil-SCM 是基于 PHREEQC 引擎的土壤物理化学单点模式，模拟长�
 | F2 | mineral_scale 双路径统一（MINERAL_SCALE=0.001） | ✅ |
 | 废弃 | phreeqpython 移除，统一官方引擎 | ✅ |
 | Q15 | logging 日志系统（console+file 双输出，Q18 联动） | ✅ |
-| Q16 | pytest 单元测试框架（tests/ 36 用例） | ✅ |
+| Q16 | pytest 单元测试框架（tests/ 38 用例） | ✅ |
 | Q18 | 异常分级：降级时记录错误 + 完整输入可复现 | ✅ |
 | Q4 | 默认引擎 auto + 简化系数物理量级校准 | ✅ |
 | Q5 | pH 界限物理化（移除 3.5/9.0 硬编码） | ✅ |
@@ -84,7 +84,6 @@ Soil-SCM 是基于 PHREEQC 引擎的土壤物理化学单点模式，模拟长�
 ### 🟡 中优先级
 | 编号 | 问题 | 方案方向 |
 |------|------|----------|
-| Q5 | pH 下限硬编码 3.5 | 物理化 |
 | Q8 | phreeqc_initial_input 割裂 | 集成到引擎 |
 | Q9 | SURFACE 表面络合未启用 | Hfo_s/Hfo_w 重构 |
 | Q13* | 电荷平衡警告 | HCO₃ 缓冲替代保守 Cl |
