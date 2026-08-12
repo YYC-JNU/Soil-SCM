@@ -304,15 +304,17 @@ class InitialConditionBuilder:
         al_ion_mol_per_kg = self.profile.exch_al / 3.0 / 100.0  # Al³⁺
         # 注意: phreeqc.dat 未定义 HX 交换物种(见 EXCHANGE_SPECIES 段,
         #       "H+ + X- = HX" 已被注释禁用)。交换性 H+ 的酸度效应
-        #       由溶液 pH 与 Al 缓冲体现，此处将交换性 H 位点并入 Na。
+        #       由 Al 缓冲体现: 交换性 H 的电荷并入 Al³⁺ (红壤交换性
+        #       酸以 Al 为主, 而非 Na — 修正 Q12 中 NaX 过量致碱的问题)。
         h_ion_mol_per_kg = self.profile.exch_h / 1.0 / 100.0    # H⁺
 
         # 转换为整个土柱的摩尔数
         ca_mol = ca_ion_mol_per_kg * self.soil_mass_kg
         mg_mol = mg_ion_mol_per_kg * self.soil_mass_kg
         k_mol = k_ion_mol_per_kg * self.soil_mass_kg
-        na_mol = (na_ion_mol_per_kg + h_ion_mol_per_kg) * self.soil_mass_kg
-        al_mol = al_ion_mol_per_kg * self.soil_mass_kg
+        na_mol = na_ion_mol_per_kg * self.soil_mass_kg           # Na 不含 H
+        al_mol = (al_ion_mol_per_kg +
+                  h_ion_mol_per_kg / 3.0) * self.soil_mass_kg   # H 并入 Al
 
         # 用 AlX3 补齐 CEC 未覆盖的位点 (Q12 修复)
         # 酸性红壤的交换性酸主要由 Al³⁺ 主导 (而非 Na⁺):
@@ -488,11 +490,13 @@ class InitialConditionBuilder:
         lines.append("")
 
         # ---- EQUILIBRIUM_PHASES 块 ----
+        # 矿物量 = 物理摩尔量 × 缩放系数 (折中方案, 见 docs/Q1_plus_ANALYSIS.md)
         minerals = self.build_minerals()
         lines.append("EQUILIBRIUM_PHASES 1")
         for mineral, moles in minerals.items():
             if moles > 0:
-                lines.append(f"  {mineral:<15} 0.0  10.0")
+                scaled = moles * 0.1
+                lines.append(f"  {mineral:<15} 0.0  {scaled:.6e}")
         lines.append("")
 
         # ---- GAS_PHASE 块 (固定 CO2 分压 0.015 atm) ----
