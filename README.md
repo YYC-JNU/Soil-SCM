@@ -66,12 +66,30 @@ python main.py --config config/config.yaml
 | 情景 | 说明 |
 |------|------|
 | `natural` | 自然状态，无任何干预 |
-| `fertilizer` | 定期施肥（尿素，默认每年 3/6/9 月，300 kg/ha/yr） |
-| `fertilizer_lime` | 施肥 + 石灰改良 |
+| `fertilizer` | 定期施肥（氮磷钾镁锌，按农业农村部2021指导意见，3/6/9 月） |
+| `fertilizer_lime` | 施肥 + 生石灰改良 |
 | `precip_increase` | 降水逐年增加（默认 2%/yr） |
 | `temp_increase` | 温度逐年升高（默认 0.05°C/yr） |
 
-## 五、数据文件
+## 五、施肥方案（默认）
+
+依据农业农村部《2021年春季主要农作物科学施肥指导意见》（水稻，产量 500 kg/ha），
+**每次施用量**（每年 3/6/9 月各施用一次）：
+
+| 肥料 | 按元素计 | 每次施用量 (kg/ha) |
+|------|----------|--------------------|
+| 氮肥 | N | 12 |
+| 磷肥 | P₂O₅ | 4 |
+| 钾肥 | K₂O | 9 |
+| 镁肥 | MgO | 3 |
+| 硫酸锌 | ZnSO₄ | 1 |
+| 生石灰 | CaO | 45 |
+
+对应 PHREEQC 输入换算：
+- 氮：`NO₃⁻` + `H⁺`（硝化产酸）；磷：`H₂PO₄⁻`；钾：`K⁺`；镁：`Mg⁺²`；锌：`Zn⁺²`+`SO₄⁻²`
+- 生石灰：`Ca` + `OH⁻`（CaO 水化）
+
+## 六、数据文件
 
 ### `data/soil_survey.csv`
 
@@ -87,12 +105,12 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 3.0,1.5,0.5,0.2,2.0,1.0
 ```
 
-## 六、输出
+## 七、输出
 
 - CSV / NetCDF 时间序列：`output/soil_scm_<scenario>_output.csv|.nc`
 - pH 演变图：`output/pH_<scenario>.png`
 
-## 七、后续扩展建议
+## 八、后续扩展建议
 
 | 扩展方向 | 说明 |
 |----------|------|
@@ -103,7 +121,7 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 | WRF 耦合 | 通过 IPhreeqc 接口与 WRF 气候输出耦合 |
 | 参数敏感性分析 | 自动化扫描参数空间 |
 
-## 八、主要参考文献
+## 九、主要参考文献
 
 - 熊毅, 李庆逵. 中国土壤. 科学出版社, 1987.
 - 龚子同. 中国土壤地理. 江苏科学技术出版社, 2004.
@@ -113,3 +131,10 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 - Lindsay W.L. Chemical Equilibria in Soils. John Wiley & Sons, 1979.
 - Parton W.J. et al. Analysis of factors controlling soil organic matter levels in Great Plains grasslands. SSSAJ, 1987, 51(5): 1173-1179.
 - Tang D., Larssen T., Lange R.D. et al. Soil acidification and soil quality in China. European Journal of Soil Science, 2006, 57(1): 1-11.
+
+## 十、已知模型局限（v0.1.1）
+
+1. **交换性 Al 缓冲库耗尽 → pH 突变**：单层模型 + 排水使交换性 Al 被淋洗耗尽（约第 8 年，AlX3→0），土壤失去主要产酸源后 pH 突升至 ~10。真实红壤 Al 会下移累积，需**多分层模型**解决。
+2. **保守离子（Cl⁻）持续淋失**：降水为纯水（无 Cl⁻ 输入），Cl⁻ 被排水逐年淋洗（30 年 10⁻³→10⁻¹⁷）。需集成**降水化学**（Q7）。
+3. **Al(OH)₄⁻ 两性溶解**：pH 升高后总 Al 浓度反而上升——Al 以铝酸根（Al(OH)₄⁻）形态碱性溶解，Al³⁺ 实际剧降（pH 10 时 ~10⁻²³）。
+4. **矿物量折中**：矿物量取物理值 0.001（`mineral_scale`），以避免矿物量大导致的碱性突变，但压缩了矿物缓冲容量（详见 `docs/Q1_plus_ANALYSIS.md`）。
