@@ -15,6 +15,11 @@ def test_default_n_years(cfg):
     assert cfg.config.simulation.n_years > 0
 
 
+def test_default_engine_auto(cfg):
+    """T1-S3: 默认引擎应为 auto (官方引擎优先)"""
+    assert cfg.config.simulation.engine_mode == "auto"
+
+
 def test_precip_data_loaded(cfg):
     data = cfg.config.precip_chemistry.data
     assert data, "降水数据未加载"

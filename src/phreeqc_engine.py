@@ -391,22 +391,27 @@ class PhreeqcEngine:
         new_state.pe = state.pe
         new_state.ph = state.ph
 
-        # 简化: 降水淋溶降低盐基饱和度 → pH 略降
-        precip_effect = forcing['precip'] * 0.0001
-        new_state.ph = max(3.5, state.ph - precip_effect)
+        # 简化: 降水淋溶 → pH 缓降 (S4 物理量级校准 v0.2.1)
+        #   k_precip=1.5e-5 → 年降 ~0.03 (30 年 ~0.9, 保持淋溶酸化物理方向;
+        #   官方引擎 natural 前 7 年升碱是单层 Al 淋洗局限, 不作为匹配目标)
+        precip_effect = forcing['precip'] * 1.5e-5
+        new_state.ph = state.ph - precip_effect
 
         # 简化: 施肥产酸 (P4 修复: fertilizer_amount 字段不存在, 改用各肥料量之和)
         if action.apply_fertilizer:
             fert_total = (action.n_amount + action.p2o5_amount +
                           action.k2o_amount + action.mgo_amount +
                           action.znso4_amount)
-            fert_acid = fert_total * 0.0005
-            new_state.ph = max(3.5, new_state.ph - fert_acid)
+            fert_acid = fert_total * 0.0007    # ~0.02 pH/次施肥
+            new_state.ph = new_state.ph - fert_acid
 
         # 简化: 石灰提碱
         if action.apply_lime:
-            lime_alk = action.lime_amount * 0.0003
-            new_state.ph = min(9.0, new_state.ph + lime_alk)
+            lime_alk = action.lime_amount * 0.002   # ~0.09 pH/次石灰
+            new_state.ph = new_state.ph + lime_alk
+
+        # Q5 修复 (v0.2.1): 移除硬编码 3.5/9.0 界限, 放宽至物理合理范围
+        new_state.ph = min(12.0, max(2.0, new_state.ph))
 
         diag = DiagnosticOutput(ph=new_state.ph)
         return new_state, diag
