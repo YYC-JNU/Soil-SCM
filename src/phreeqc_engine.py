@@ -81,8 +81,11 @@ class PhreeqcEngine:
         self._fallback_warned = False
         self._permanent_fallback = False
         # 降水入渗系数 (0~1): 实际进入土壤溶液的比例, 其余径流/排水
-        # 参考: 红壤区降水约 5% 有效入渗(大量径流+蒸散+深层渗漏)
         self.precip_infiltration = 0.05
+        # 矿物量缩放系数: EQUILIBRIUM_PHASES 矿物量 = 物理摩尔量 × 此系数
+        # (折中方案, 见 docs/Q1_plus_ANALYSIS.md):
+        # 物理值(1e6-1e7 mol)会导致碱性突变(pH~9.9), 10% 提供真实缓冲且 pH 合理
+        self.mineral_scale = 0.1
 
         # ---- 初始化后端 ----
         if backend == 'official':
@@ -296,6 +299,12 @@ class PhreeqcEngine:
         """构建 PHREEQC 输入字符串"""
         lines = []
 
+        # KNOBS: 提高收敛鲁棒性 (物理矿物量较大时数值更难收敛)
+        lines.append("KNOBS")
+        lines.append("  -iterations 500")
+        lines.append("  -tolerance 1e-12")
+        lines.append("")
+
         # SOLUTION 块
         # -water 指定土柱溶液体积 (L), 使溶液与交换/矿物摩尔量量级匹配
         lines.append("SOLUTION 1")
@@ -316,12 +325,13 @@ class PhreeqcEngine:
         lines.append("")
 
         # EQUILIBRIUM_PHASES 块
-        # 矿物量用 10 mol (PHREEQC 推荐默认): 相存在且 SI=0 平衡,
-        # 避免过量矿物反应导致 pH 异常 (见 docs/Q1_ANALYSIS.md)
+        # 矿物量 = 物理摩尔量 × 缩放系数 (折中方案, 见 docs/Q1_plus_ANALYSIS.md):
+        # 物理值会导致碱性突变(pH~9.9), 10% 提供真实缓冲且 pH 合理(4.4-4.5)
         lines.append("EQUILIBRIUM_PHASES 1")
         for mineral, moles in state.minerals.items():
             if moles > 0:
-                lines.append(f"  {mineral:<15} 0.0  10.0")
+                scaled = moles * self.mineral_scale
+                lines.append(f"  {mineral:<15} 0.0  {scaled:.6e}")
         lines.append("")
 
         # GAS_PHASE 块 (固定 CO2 分压 0.015 atm)
