@@ -108,3 +108,78 @@
 2. **SURFACE 络合**：按 phreeqc.dat 的 `Hfo_s`/`Hfo_w`（强/弱位点 10%/90%）重构 `build_surface()`，启用表面络合
 3. **扩展数据库**：为 `anatase`（及更多 TiO₂/有机质相）在自定义 .dat 中补充 `PHASES`/`SURFACE_SPECIES` 定义
 4. **收敛稳健性**：为 EXCHANGE 增加 `-gamma`、为矿物相设置 `-tolerance`，扩大收敛窗口
+
+---
+
+## 六、现存问题清单（v0.1.0，暂未修复）
+
+> 记录日期：2026-08-11。以下问题已完成诊断确认，**仅登记备查，暂不修改代码**。
+> 优先级：高 = 影响科研可用性；中 = 影响架构完整性；低 = 完善项。
+
+### 一、模型核心限制
+
+| 编号 | 问题 | 位置 | 影响 | 优先级 |
+|------|------|------|------|--------|
+| Q1 | PHREEQC 状态不传递、无化学演化：`_parse_phreeqc_output` 只提取 pH，溶液/交换/矿物每月用初始值重建，平衡结果被丢弃 | `src/phreeqc_engine.py` | phreeqc 模式下无累积演化 | 高 |
+| Q2 | phreeqpython 内置引擎 pH 锁定：SOLUTION 指定 pH 后加酸/碱/水均无法改变；`-charge` 选项不可用（实验证实） | 库限制（viphreeqc.dll） | phreeqc 模式 pH 恒定 5.0，`fertilizer`/`lime` 情景无差异 | 高 |
+| Q3 | 数值收敛窗口窄：CO₂ 偏离 0.015 atm、初始 pH 偏离 5.0 即 Al/Ca 不收敛 | `src/initial_condition.py` / PHREEQC 输入 | 气候情景（precip/temp increase）下 PHREEQC 易降级 | 高 |
+| Q4 | 简化模式物理近似粗糙：pH 变化由经验系数驱动（`precip×0.0001`、`fert×0.0005`、`lime×0.0003`），无真实化学平衡/缓冲 | `src/phreeqc_engine._run_simplified_step` | 结果仅具演示意义 | 高 |
+| Q5 | pH 下限硬编码 3.5：长期淋溶触底"封底"，后期曲线无区分度 | `src/phreeqc_engine._run_simplified_step` | natural/fertilizer 结局相同 | 中 |
+| Q6 | 简化模式状态丢失：`_run_simplified_step` 返回的 `new_state` 只含 `ph`，溶液/交换/矿物被清空 | `src/phreeqc_engine.py` | 架构不完整 | 中 |
+
+### 二、功能未集成 / 半成品
+
+| 编号 | 问题 | 位置 | 影响 | 优先级 |
+|------|------|------|------|--------|
+| Q7 | 降水化学从未生效：`precip_chemistry_default.json`（酸雨 SO₄/NO₃/NH₄ 离子）与 `PrecipChemConfig` 仅被解析，无代码加载使用 | 全局（`src/config_manager.py`） | 酸雨驱动土壤酸化的核心机制缺失 | 高 |
+| Q8 | `phreeqc_initial_input` 生成后只打印不用：阶段 4 生成的 PHREEQC 输入与阶段 7 引擎是两条独立路径 | `main.py` | 功能割裂 | 中 |
+| Q9 | SURFACE 表面络合未启用：有机质（Som）/铁氧化物（Hfo_s/Hfo_w）吸附缓冲未模拟，`include_surface=False` 硬编码 | `main.py` / `src/initial_condition.py` | 养分离子吸附缓冲缺失 | 中 |
+| Q10 | 子时间步长未验证：`sub_time_step_days` 配置与循环存在但从未实测（`n_sub=int(30/sub_steps)` 假设每月 30 天） | `main.py` / `config.yaml` | 功能可信度未知 | 低 |
+| Q11 | `output.variables` 配置未生效：config 中 `[pH, ..., mineral_mass, solution_ions]` 与代码默认值不一致，输出列写死 | `config.yaml` vs `src/output_writer.py` | 配置项为摆设 | 低 |
+
+### 三、数据与物理一致性
+
+| 编号 | 问题 | 位置 | 影响 | 优先级 |
+|------|------|------|------|--------|
+| Q12 | 交换性阳离子与 CEC 不匹配：`exchangeable_ions.csv` 电荷总和 8.2 cmol/kg < CEC 12，差额被强制用 `NaX` 填充——真实红壤剩余位点应主要由 Ca/Al/H 占据，Na 通常很少 | `data/exchangeable_ions.csv` / `src/initial_condition.build_exchange` | 物理不严谨 | 高 |
+| Q13 | 电荷平衡检查仍报警告：`_check_charge_balance` 把 C(4) 按一价简化，阳离子估算偏高 | `src/initial_condition.py` | `validate()` 输出 3.07e-3 mol/L 不平衡 | 中 |
+| Q14 | anatase（TiO₂）被排除：phreeqc.dat 无此相，红壤矿物组成中 TiO₂ 贡献被静默忽略 | `src/initial_condition.build_minerals` | 矿物相不完整（2% 质量） | 低 |
+
+### 四、代码质量与工程化
+
+| 编号 | 问题 | 位置 | 影响 | 优先级 |
+|------|------|------|------|--------|
+| Q15 | 全部用 `print` 输出，无 `logging` 模块 | 全局 | 无法分级、持久化日志 | 中 |
+| Q16 | 无单元测试：`InitialConditionBuilder` 单位换算、`PhreeqcEngine` 降级逻辑等无回归保护 | 全局 | 修改易引入回归 | 中 |
+| Q17 | main.py 用 `sys.path.insert(0, ...)` hack，非正规包结构 | `main.py` | 无法 `pip install` 或从别处 import | 低 |
+| Q18 | `_run_phreeqc_step` 捕获所有异常静默降级，PHREEQC 失败真实原因被掩盖 | `src/phreeqc_engine.py` | 不利于排查 | 中 |
+| Q19 | 魔法数字过多：简化模式系数、pH 上下限、热力学常数散落 | `src/phreeqc_engine.py` / `src/initial_condition.py` | 维护困难 | 低 |
+| Q20 | requirements.txt 无版本上限，未来 `phreeqpython`/`numpy` 升级可能破坏兼容 | `requirements.txt` | 兼容性风险 | 低 |
+
+### 五、文档与配置不一致
+
+| 编号 | 问题 | 位置 | 影响 | 优先级 |
+|------|------|------|------|--------|
+| Q21 | README 目录结构过时：`src/` 缺少 `initial_condition.py`；未列 `docs/` 目录 | `README.md` | 文档与代码不一致 | 低 |
+| Q22 | README 未说明 `engine_mode`（simplified/phreeqc/auto）配置项与 PHREEQC 库限制 | `README.md` | 用户不知三种模式差异 | 低 |
+| Q23 | NetCDF 输出静默回退：未安装 netCDF4 时回退 CSV 且无提示 | `src/output_writer._save_netcdf` | 输出格式与预期不符 | 低 |
+
+### 六、安全与运维
+
+| 编号 | 问题 | 位置 | 影响 | 优先级 |
+|------|------|------|------|--------|
+| Q24 | commit 作者邮箱 `yycfab@sina.com` 含用户名 | git 配置 | 身份信息暴露（可改用 GitHub noreply 邮箱） | 低 |
+| Q25 | GitHub Token 明文存于 `~/.git-credentials` | 本机 `~/.git-credentials` | 本机安全风险，30 天过期 | 中 |
+| Q26 | GitHub 服务器可能残留旧 commit blob（已被 force push 覆盖、无引用） | GitHub 远端 | 风险低，但无法完全清除 | 低 |
+
+---
+
+### 优先级统计
+
+| 优先级 | 数量 | 编号 |
+|--------|------|------|
+| 高 | 6 | Q1 Q2 Q3 Q4 Q7 Q12 |
+| 中 | 9 | Q5 Q6 Q8 Q9 Q13 Q15 Q16 Q18 Q25 |
+| 低 | 11 | Q10 Q11 Q14 Q17 Q19 Q20 Q21 Q22 Q23 Q24 Q26 |
+
+> 合计 26 项。
