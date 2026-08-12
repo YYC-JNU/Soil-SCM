@@ -24,7 +24,7 @@ class SimulationConfig:
     time_step: str = "monthly"
     sub_time_step_days: int = 0  # 0=不启用子时间步
     scenario: str = "natural"
-    engine_mode: str = "simplified"  # simplified / phreeqc / auto
+    engine_mode: str = "auto"  # auto / phreeqc / simplified (v0.2.1 默认官方引擎)
 
 
 @dataclass
@@ -137,7 +137,7 @@ class ConfigManager:
                 time_step=s.get('time_step', 'monthly'),
                 sub_time_step_days=s.get('sub_time_step_days', 0),
                 scenario=s.get('scenario', 'natural'),
-                engine_mode=s.get('engine_mode', 'simplified')
+                engine_mode=s.get('engine_mode', 'auto')
             )
 
         # 解析 soil_data
