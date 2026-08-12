@@ -1,6 +1,6 @@
 """
 模块: phreeqc_engine.py
-功能: PHREEQC 引擎封装 (通过 phreeqpython 调用)
+功能: PHREEQC 引擎封装 (通过官方 phreeqc / IPhreeqc 调用)
 
 输入: 土壤状态、当月强迫条件
 输出: 更新后的土壤状态、诊断量
@@ -22,13 +22,6 @@ try:
 except ImportError:
     OFFICIAL_PHREEQC_AVAILABLE = False
     print("[WARNING] 官方 phreeqc (IPhreeqc) 未安装")
-
-try:
-    import phreeqpython
-    PHREEQC_AVAILABLE = True
-except ImportError:
-    PHREEQC_AVAILABLE = False
-    print("[WARNING] phreeqpython 未安装，将使用简化模式")
 
 
 @dataclass
@@ -69,14 +62,16 @@ class PhreeqcEngine:
                 - auto      : PHREEQC 可用则用 PHREEQC, 否则简化模式 (默认)
                 - simplified: 始终使用简化动力学模式
                 - phreeqc   : 始终使用 PHREEQC (失败时降级简化模式)
-            backend: PHREEQC 后端
-                - official    : 官方 phreeqc 包 (IPhreeqc 3.8.6), 推荐
-                - phreeqpython: phreeqpython 兼容后端 (REACTION 无效等限制)
+            backend: PHREEQC 后端 (v0.1.3 起仅支持官方引擎)
+                - official    : 官方 phreeqc 包 (IPhreeqc 3.8.6), 默认
+                - 其他取值    : 已废弃 (phreeqpython 等), 自动视为 official
         """
         self.database = database
         self.mode = mode
-        self.backend = backend
-        self.phreeqc = None     # phreeqpython 后端实例
+        # phreeqpython 后端已废弃 (v0.1.3): 统一使用官方引擎
+        if backend != 'official':
+            print(f"[WARNING] backend '{backend}' 已废弃, 强制使用官方引擎")
+        self.backend = 'official'
         self.official = None    # 官方 phreeqc 后端实例
         self._fallback_warned = False
         self._permanent_fallback = False
@@ -87,34 +82,15 @@ class PhreeqcEngine:
         # 物理值(1e6-1e7 mol)会导致碱性突变(pH~9.9), 需取较小值保留区分度
         self.mineral_scale = 0.001
 
-        # ---- 初始化后端 ----
-        if backend == 'official':
-            if OFFICIAL_PHREEQC_AVAILABLE:
-                self.official = OfficialPhreeqc()
-                self.official.LoadBuiltInDatabase(database)
-                ver = self.official.GetVersionString()
-                print(f"[INFO] 官方 PHREEQC 引擎已初始化 (IPhreeqc {ver})")
-            elif PHREEQC_AVAILABLE:
-                self.backend = 'phreeqpython'
-                self.phreeqc = phreeqpython.PhreeqPython(
-                    database=database
-                )
-                print(f"[INFO] PHREEQC 引擎已初始化 (phreeqpython, 数据库: {database})")
-            else:
-                self.backend = 'simplified'
-                print("[WARNING] 无可用 PHREEQC 引擎，使用简化模式")
-        elif backend == 'phreeqpython':
-            if PHREEQC_AVAILABLE:
-                self.phreeqc = phreeqpython.PhreeqPython(
-                    database=database
-                )
-                print(f"[INFO] PHREEQC 引擎已初始化 (phreeqpython, 数据库: {database})")
-            else:
-                self.backend = 'simplified'
-                print("[WARNING] phreeqpython 不可用，使用简化模式")
+        # ---- 初始化后端 (v0.1.3: 仅官方引擎, phreeqpython 已废弃) ----
+        if OFFICIAL_PHREEQC_AVAILABLE:
+            self.official = OfficialPhreeqc()
+            self.official.LoadBuiltInDatabase(database)
+            ver = self.official.GetVersionString()
+            print(f"[INFO] 官方 PHREEQC 引擎已初始化 (IPhreeqc {ver})")
         else:
             self.backend = 'simplified'
-            print("[INFO] 简化模式")
+            print("[WARNING] 无可用 PHREEQC 引擎，使用简化模式")
 
     def build_initial_state(self, soil_profile, mineral_db_info,
                             pCO2: float) -> SoilState:
@@ -168,7 +144,7 @@ class PhreeqcEngine:
         # - simplified 模式: 强制简化
         # - phreeqc 模式: 强制 PHREEQC (失败降级)
         # - auto: PHREEQC 可用则用
-        phreeqc_ready = (self.backend in ('official', 'phreeqpython')
+        phreeqc_ready = (self.backend == 'official' and self.official is not None
                          and not getattr(self, '_permanent_fallback', False))
 
         use_phreeqc = phreeqc_ready
@@ -178,14 +154,8 @@ class PhreeqcEngine:
             use_phreeqc = False
 
         if use_phreeqc:
-            if self.backend == 'official' and self.official is not None:
-                return self._run_official_step(state, monthly_forcing,
-                                               action, soil_profile)
-            elif self.backend == 'phreeqpython' and self.phreeqc is not None:
-                return self._run_phreeqc_step(state, monthly_forcing,
-                                              action, soil_profile)
-            return self._run_simplified_step(state, monthly_forcing,
-                                             action, soil_profile)
+            return self._run_official_step(state, monthly_forcing,
+                                           action, soil_profile)
         else:
             return self._run_simplified_step(state, monthly_forcing,
                                              action, soil_profile)
@@ -267,34 +237,6 @@ class PhreeqcEngine:
 
         diag = DiagnosticOutput(ph=new_state.ph, pe=new_state.pe)
         return new_state, diag
-
-    def _run_phreeqc_step(self, state, forcing, action, profile):
-        """使用 PHREEQC 引擎执行计算"""
-        # 构建 PHREEQC 输入字符串
-        input_string = self._build_phreeqc_input(
-            state, forcing, action, profile)
-
-        # 执行计算
-        # 说明: phreeqpython 高层 API (PhreeqPython) 没有 run_string 方法，
-        # 需要通过底层 VIPhreeqc (self.phreeqc.ip) 调用
-        try:
-            run_func = getattr(self.phreeqc, 'run_string', None)
-            if run_func is None:
-                run_func = self.phreeqc.ip.run_string
-            result = run_func(input_string)
-            # 解析结果
-            new_state, diagnostics = self._parse_phreeqc_output(
-                result, state)
-            return new_state, diagnostics
-        except Exception as e:
-            # 计算失败(如输入块与数据库不匹配)时永久降级到简化模式，
-            # 保证模拟流程稳定运行且 pH 演变连续
-            if not getattr(self, '_fallback_warned', False):
-                print(f"[WARNING] PHREEQC 计算失败: {e}")
-                print("[WARNING] 已永久降级到简化模式继续模拟")
-                self._fallback_warned = True
-            self._permanent_fallback = True
-            return self._run_simplified_step(state, forcing, action, profile)
 
     def _build_phreeqc_input(self, state, forcing, action, profile) -> str:
         """构建 PHREEQC 输入字符串"""
@@ -442,22 +384,5 @@ class PhreeqcEngine:
         diag = DiagnosticOutput(ph=new_state.ph)
         return new_state, diag
 
-    def _parse_phreeqc_output(self, result, old_state):
-        """解析 PHREEQC 输出"""
-        new_state = SoilState()
-        diag = DiagnosticOutput()
-
-        # 从 PHREEQC 结果中提取 pH 等诊断量
-        # 通过 phreeqpython 高层 API 查询溶液状态
-        try:
-            sol = self.phreeqc.get_solution(1)
-            new_state.ph = float(sol.pH)
-        except Exception:
-            new_state.ph = old_state.ph  # fallback
-
-        diag.ph = new_state.ph
-        diag.pe = old_state.pe
-
-        return new_state, diag
 
 

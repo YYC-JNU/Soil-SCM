@@ -1,6 +1,6 @@
 # Soil-SCM: 土壤物理化学数值模式
 
-> **版本：v0.1.2**（2026-08-11）
+> **版本：v0.1.3**（2026-08-12）
 
 基于 PHREEQC 地球化学引擎的土壤单点物理化学数值模式，用于模拟长期（数十年）施肥、酸化、淋溶与改良条件下的土壤化学演变（pH、盐基饱和度、交换性阳离子等）。
 
@@ -41,7 +41,7 @@ pip install -r requirements.txt
 
 依赖清单：
 
-- phreeqpython>=3.7.0  （PHREEQC 引擎封装；未安装时自动使用简化模式）
+- phreeqc>=1.1.1    （官方 IPhreeqc 引擎封装）
 - numpy>=1.20.0
 - pandas>=1.3.0
 - matplotlib>=3.4.0
@@ -49,8 +49,8 @@ pip install -r requirements.txt
 - netCDF4>=1.5.0
 
 > **说明**
-> - phreeqpython 1.6.2 目前只发布 cp312 预编译 wheel，在 Python 3.13 下 pip 会自动选择源码包安装——该包以"纯 Python + 预编译 viphreeqc.dll"方式分发，**无需编译工具链**，可正常安装。
-> - 若 `phreeqpython` 未安装或 PHREEQC 计算块与数据库不兼容导致计算失败，引擎会自动**降级到内置简化模式**，保证模拟流程稳定运行。
+> - 化学计算依赖官方 `phreeqc` 包（IPhreeqc 3.8.6，USGS 官方引擎）；`phreeqpython` 兼容后端已于 v0.1.3 废弃移除。
+> - 若 `phreeqc` 未安装或 PHREEQC 计算块与数据库不兼容导致计算失败，引擎会自动**降级到内置简化模式**，保证模拟流程稳定运行。
 
 ## 三、运行模拟
 
