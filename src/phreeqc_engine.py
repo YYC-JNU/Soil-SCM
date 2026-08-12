@@ -59,7 +59,7 @@ class PhreeqcEngine:
 
     def __init__(self, database: str = 'phreeqc.dat',
                  mode: str = 'auto', backend: str = 'official',
-                 precip_chem=None):
+                 precip_chem=None, precip_infiltration: float = 0.05):
         """
         参数:
             database: PHREEQC 热力学数据库
@@ -71,6 +71,7 @@ class PhreeqcEngine:
                 - official    : 官方 phreeqc 包 (IPhreeqc 3.8.6), 默认
                 - 其他取值    : 已废弃 (phreeqpython 等), 自动视为 official
             precip_chem: 降水化学对象 (PrecipChemistry) 或 None (Q7)
+            precip_infiltration: 降水入渗系数 0~1 (T3 参数化, 默认 0.05)
         """
         self.database = database
         self.mode = mode
@@ -84,8 +85,8 @@ class PhreeqcEngine:
         self._permanent_fallback = False
         self.last_error_message = None    # Q18: 最近一次引擎失败信息
         self.last_error_input = None     # Q18: 最近一次失败输入字符串
-        # 降水入渗系数 (0~1): 实际进入土壤溶液的比例, 其余径流/排水
-        self.precip_infiltration = 0.05
+        # 降水入渗系数 (0~1): 实际进入土壤溶液的比例, 其余径流/排水 (T3 参数化)
+        self.precip_infiltration = precip_infiltration
         # 矿物量缩放系数: EQUILIBRIUM_PHASES 矿物量 = 物理摩尔量 × 此系数
         # (折中方案, 见 docs/Q1_plus_ANALYSIS.md):
         # 物理值(1e6-1e7 mol)会导致碱性突变(pH~9.9), 需取较小值保留区分度

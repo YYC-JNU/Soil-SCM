@@ -13,6 +13,7 @@ simulation:
   #   phreeqc    = 强制使用 PHREEQC (失败时降级简化模式)
   #   simplified = 始终使用简化动力学模式 (兜底)
   engine_mode: auto
+  precip_infiltration: 0.05          # 降水入渗系数 (0~1): 实际进入土壤溶液的比例 (T3)
 
 soil_data:
   input_file: data/soil_survey.csv
