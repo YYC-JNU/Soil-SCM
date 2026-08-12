@@ -75,6 +75,15 @@ def test_mineral_scale_consistent(profile, soil_info):
     assert e.mineral_scale == 0.001
 
 
+def test_simplified_with_fertilizer_no_crash(profile, soil_info):
+    """P4 回归: simplified 模式 + 施肥指令不崩溃 (fertilizer_amount 已修复)"""
+    e = PhreeqcEngine(database="phreeqc.dat", mode="simplified")
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    act = MonthlyAction(apply_fertilizer=True, n_amount=12.0)
+    new_state, _ = e.run_monthly_step(state, FORCING, act, profile)
+    assert new_state.ph > 0
+
+
 def test_error_diagnostics_on_failure(profile, soil_info, monkeypatch):
     """T3/Q18: 引擎失败时记录 last_error_message / last_error_input"""
     e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
