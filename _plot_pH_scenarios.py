@@ -24,7 +24,7 @@ db = SoilDatabase(json_path='config/soil_mineral_db.json',
 info = db.get_soil_info('red_soil')
 pco2 = db.get_pCO2('red_soil')
 
-N_YEARS = 30
+N_YEARS = 5
 
 
 def make_action(scenario, month):
@@ -76,7 +76,7 @@ for key, label, color, ls in SCENARIOS:
     results[key] = (years, phs)
 
 # ---- 绘图 ----
-fig, ax = plt.subplots(figsize=(11, 7))
+fig, ax = plt.subplots(figsize=(11, 8))
 for key, label, color, ls in SCENARIOS:
     years, phs = results[key]
     ax.plot(years, phs, color=color, linestyle=ls, lw=2,
@@ -84,11 +84,22 @@ for key, label, color, ls in SCENARIOS:
 
 ax.set_xlabel('Year', fontsize=12)
 ax.set_ylabel('Soil pH', fontsize=12)
-ax.set_title('Soil pH Evolution under 4 Scenarios (50 years)',
+ax.set_title(f'Soil pH Evolution under 4 Scenarios ({N_YEARS} years)',
              fontsize=14)
 ax.legend(loc='best', fontsize=10)
 ax.grid(True, alpha=0.3)
 ax.set_ylim(bottom=2.5)
+
+# 模型局限说明 (natural 的 Al 淋洗脱酸现象)
+ax.annotate(
+    'Model limitation note:\n'
+    'Scenario 1 (rainfall only) rises to alkaline pH because exchangeable\n'
+    'Al is leached/mineralized in the single-layer model (no vertical\n'
+    'Al accumulation). Real red-soil leaching should acidify (base loss).',
+    xy=(0.5, 0.02), xycoords='axes fraction', ha='center',
+    fontsize=9, color='dimgray',
+    bbox=dict(boxstyle='round,pad=0.4', facecolor='lightyellow',
+              alpha=0.8))
 
 plt.tight_layout()
 out = 'output/pH_4scenarios.png'

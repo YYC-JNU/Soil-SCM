@@ -84,8 +84,8 @@ class PhreeqcEngine:
         self.precip_infiltration = 0.05
         # 矿物量缩放系数: EQUILIBRIUM_PHASES 矿物量 = 物理摩尔量 × 此系数
         # (折中方案, 见 docs/Q1_plus_ANALYSIS.md):
-        # 物理值(1e6-1e7 mol)会导致碱性突变(pH~9.9), 10% 提供真实缓冲且 pH 合理
-        self.mineral_scale = 0.1
+        # 物理值(1e6-1e7 mol)会导致碱性突变(pH~9.9), 需取较小值保留区分度
+        self.mineral_scale = 0.001
 
         # ---- 初始化后端 ----
         if backend == 'official':
@@ -300,8 +300,9 @@ class PhreeqcEngine:
         lines = []
 
         # KNOBS: 提高收敛鲁棒性 (物理矿物量较大时数值更难收敛)
+        # 迭代数取 100 平衡速度与收敛 (500 会使长模拟显著变慢)
         lines.append("KNOBS")
-        lines.append("  -iterations 500")
+        lines.append("  -iterations 100")
         lines.append("  -tolerance 1e-12")
         lines.append("")
 
