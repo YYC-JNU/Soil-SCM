@@ -80,6 +80,9 @@ class PhreeqcEngine:
         self.official = None    # 官方 phreeqc 后端实例
         self._fallback_warned = False
         self._permanent_fallback = False
+        # 降水入渗系数 (0~1): 实际进入土壤溶液的比例, 其余径流/排水
+        # 参考: 红壤区降水约 5% 有效入渗(大量径流+蒸散+深层渗漏)
+        self.precip_infiltration = 0.05
 
         # ---- 初始化后端 ----
         if backend == 'official':
@@ -224,12 +227,14 @@ class PhreeqcEngine:
             return float(p.GetSelectedOutputValue(last, idx[col]))
 
         new_state = SoilState()
+        # 排水模型: 降水入渗+平衡后, 多余水分排水, 溶液体积恢复初始值
+        # (淋溶损失由浓度稀释体现: 下月用恢复体积×稀释后浓度)
         new_state.volume = old_state.volume
         new_state.ph = get('pH')
         new_state.pe = get('pe')
         new_state.temperature = get('temp(C)')
 
-        # 溶液组成 (mol/kgw ≈ mol/L)
+        # 溶液组成 (mol/kgw ≈ mol/L, 直接保存)
         solution = {'temp': new_state.temperature,
                     'pH': new_state.ph,
                     'pe': new_state.pe,
@@ -240,12 +245,16 @@ class PhreeqcEngine:
                 solution[el] = get(col)
         new_state.solution = solution
 
-        # 交换组成: SELECTED_OUTPUT molality (mol/kgw) × 溶液质量(≈体积 L)
+        # 交换组成: SELECTED_OUTPUT molality (mol/kgw) × 实际水质量(kg)
+        # 必须用实际水质量(含降水 mass_H2O)而非初始体积, 否则交换相
+        # 会被错误稀释耗尽 (见 Q1_ANALYSIS.md 诊断)
+        water_mass = get('mass_H2O') if 'mass_H2O' in idx \
+            else new_state.volume
         exchange = {}
         for sp in ['CaX2', 'MgX2', 'KX', 'NaX', 'AlX3']:
             col = f"m_{sp}(mol/kgw)"
             if col in idx:
-                exchange[sp] = get(col) * new_state.volume
+                exchange[sp] = get(col) * water_mass
         new_state.exchange = exchange
 
         # 矿物相: Q1 阶段保持旧值 (矿物量变化小; 完整追踪见后续优化)
@@ -323,31 +332,37 @@ class PhreeqcEngine:
         lines.append("  CO2(g)        1.0")
         lines.append("")
 
-        # REACTION 块 (降水入渗)
+        # 单一 REACTION 块: 降水入渗 + 施肥(尿素硝化) + 石灰(CaO水化)
+        # 注意:
+        #   1) PHREEQC 多 REACTION 块共存时仅第一个生效 (phreeqc 包行为),
+        #      故所有干预合并到同一 REACTION 块;
+        #   2) REACTION 物质名不支持括号价态写法(N(5)/H(1) 会 Parsing error),
+        #      必须用元素名或具体物种名 (见 docs/Q1_ANALYSIS.md);
+        #   3) 降水: mm → L → mol (1 L H2O ≈ 55.5 mol), 乘以入渗系数
         precip_mm = forcing['precip']
-        if precip_mm > 0:
-            # 将降水转化为溶液混合
-            lines.append("REACTION 1")
-            lines.append(f"  H2O    {precip_mm / 1000.0:.6e}  # 降水入渗(m)")
-            lines.append("")
+        reaction_lines = []
 
-        # 施肥 (REACTION)
+        if precip_mm > 0:
+            water_mol = (precip_mm * 10000.0 * 55.5
+                         * self.precip_infiltration)
+            reaction_lines.append(f"  H2O    {water_mol:.6e}  # 降水入渗")
+
         if action.apply_fertilizer:
             fert_mol = self._calc_fertilizer_moles(action)
             if fert_mol > 0:
-                lines.append("REACTION 2")
-                lines.append(f"  N(5)    {fert_mol:.6e}  # 尿素硝化产NO3-")
-                lines.append(f"  H(1)    {-2*fert_mol:.6e}  # 产酸")
-                lines.append("")
+                reaction_lines.append(f"  NO3-   {fert_mol:.6e}  # 尿素硝化")
+                reaction_lines.append(f"  H+     {2*fert_mol:.6e}  # 产酸")
 
-        # 石灰 (KINETICS)
         if action.apply_lime:
-            lime_mol = action.lime_amount / 100.09  # kg → mol CaCO3
-            lines.append("KINETICS 1")
-            lines.append("  Calcite")
-            lines.append(f"  -m0     {lime_mol:.6e}")
-            lines.append("  -parms  1e-7  1.0")
-            lines.append("  -steps  2592000")  # 30天 (秒)
+            # 生石灰 CaO: kg → g → mol (M=56.08), 水化产 Ca2+ + 2OH-
+            lime_mol = action.lime_amount * 1000.0 / 56.08
+            reaction_lines.append(f"  Ca     {lime_mol:.6e}  # 生石灰Ca2+")
+            reaction_lines.append(f"  H      {-2*lime_mol:.6e}  # 水化OH-")
+
+        if reaction_lines:
+            lines.append("REACTION 1")
+            lines.extend(reaction_lines)
+            lines.append("  1.0")
             lines.append("")
 
         # SELECTED_OUTPUT 块: 输出平衡后状态供解析回填
@@ -355,6 +370,7 @@ class PhreeqcEngine:
         lines.append("  -ph true")
         lines.append("  -pe true")
         lines.append("  -temp true")
+        lines.append("  -water true")
         lines.append("  -totals Ca Mg K Na Al Cl C S N Si")
         lines.append("  -molalities CaX2 MgX2 KX NaX AlX3 X-")
         lines.append("END")
