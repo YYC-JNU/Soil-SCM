@@ -51,6 +51,10 @@ soil_co2:
 precipitation_chemistry:
   use_custom: false              # true=使用用户数据, false=使用default
   input_file: null               # 用户降水化学数据文件路径
+  # 默认数据 (2026-08-12 更新, 据《2025年广东省生态环境状况公报》):
+  #   pH=5.75, 离子当量占比%: Cl 18.4 / SO4 12.5 / NO3 10.8 / F 2.1 /
+  #   Ca 20.9 / NH4 15.8 / Na 11.5 / Mg 5.1 / K 1.9 / H 1.0
+  #   文件: config/precip_chemistry_default.json (unit=percent)
 
 output:
   directory: ./output

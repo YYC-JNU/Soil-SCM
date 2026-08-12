@@ -138,7 +138,7 @@
 
 | 编号 | 问题 | 位置 | 影响 | 优先级 |
 |------|------|------|------|--------|
-| Q7 | 降水化学从未生效：`precip_chemistry_default.json`（酸雨 SO₄/NO₃/NH₄ 离子）与 `PrecipChemConfig` 仅被解析，无代码加载使用 | 全局（`src/config_manager.py`） | 酸雨驱动土壤酸化的核心机制缺失 | 高 |
+| Q7 | 降水化学从未生效：`precip_chemistry_default.json`（酸雨 SO₄/NO₃/NH₄ 离子）与 `PrecipChemConfig` 仅被解析，无代码加载使用 | 全局（`src/config_manager.py`） | 酸雨驱动土壤酸化的核心机制缺失 | ✅ 已完成 (v0.1.4, 见 docs/Q7_PRECIP_CHEMISTRY.md) |
 | Q8 | `phreeqc_initial_input` 生成后只打印不用：阶段 4 生成的 PHREEQC 输入与阶段 7 引擎是两条独立路径 | `main.py` | 功能割裂 | 中 |
 | Q9 | SURFACE 表面络合未启用：有机质（Som）/铁氧化物（Hfo_s/Hfo_w）吸附缓冲未模拟，`include_surface=False` 硬编码 | `main.py` / `src/initial_condition.py` | 养分离子吸附缓冲缺失 | 中 |
 | Q10 | 子时间步长未验证：`sub_time_step_days` 配置与循环存在但从未实测（`n_sub=int(30/sub_steps)` 假设每月 30 天） | `main.py` / `config.yaml` | 功能可信度未知 | 低 |
@@ -181,11 +181,28 @@
 
 ---
 
+### Q7+F1+F2 — 降水化学集成与引擎修复（2026-08-12）
+
+**改动**：
+- 新增 `src/precip_chemistry.py`：占比→浓度换算（pH 自洽总当量 1.7783e-4 eq/L）、`reaction_amounts()`
+- `phreeqc_engine._build_phreeqc_input`：REACTION 追加降水离子（× 入渗系数）、GAS_PHASE pCO₂ 用 `forcing['pCO2']`（F1）、SELECTED_OUTPUT 加 F
+- `initial_condition`：`MINERAL_SCALE=0.001` 常量统一（F2）、GAS_PHASE 用 `self.pCO2`
+- `config_manager`/`main.py`：降水数据加载与引擎传递；config.yaml 补充说明
+- 默认数据：广东2025公报 pH=5.75（v0.1.3 已更新）
+
+**验证**（30 年 natural，官方引擎）：
+- 全程无降级
+- Cl⁻ 从"跌至 10⁻¹⁷"改善为"稳定于降水浓度 3.27e-5 mol/kgw"（Q7 核心目标达成）
+- F/N 持续输入；pCO₂ 季节波动 0.0117~0.0208 atm（F1 生效）
+- pH 第 8 年突升 10.3（单层模型已知局限，需 Phase 3 多分层）
+
+---
+
 ### 优先级统计
 
 | 优先级 | 数量 | 编号 |
 |--------|------|------|
-| 高 | 6 | Q1 Q2 Q3 Q4 Q7 Q12 |
+| 高 | 5 | Q1 Q2 Q3 Q4 Q12 |
 | 中 | 9 | Q5 Q6 Q8 Q9 Q13 Q15 Q16 Q18 Q25 |
 | 低 | 11 | Q10 Q11 Q14 Q17 Q19 Q20 Q21 Q22 Q23 Q24 Q26 |
 

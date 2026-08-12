@@ -15,6 +15,7 @@
 import numpy as np
 from typing import Dict, Optional, Tuple
 from dataclasses import dataclass, field
+from src.initial_condition import MINERAL_SCALE
 
 try:
     from phreeqc import Phreeqc as OfficialPhreeqc
@@ -54,7 +55,8 @@ class PhreeqcEngine:
     """PHREEQC 引擎封装类"""
 
     def __init__(self, database: str = 'phreeqc.dat',
-                 mode: str = 'auto', backend: str = 'official'):
+                 mode: str = 'auto', backend: str = 'official',
+                 precip_chem=None):
         """
         参数:
             database: PHREEQC 热力学数据库
@@ -65,6 +67,7 @@ class PhreeqcEngine:
             backend: PHREEQC 后端 (v0.1.3 起仅支持官方引擎)
                 - official    : 官方 phreeqc 包 (IPhreeqc 3.8.6), 默认
                 - 其他取值    : 已废弃 (phreeqpython 等), 自动视为 official
+            precip_chem: 降水化学对象 (PrecipChemistry) 或 None (Q7)
         """
         self.database = database
         self.mode = mode
@@ -73,6 +76,7 @@ class PhreeqcEngine:
             print(f"[WARNING] backend '{backend}' 已废弃, 强制使用官方引擎")
         self.backend = 'official'
         self.official = None    # 官方 phreeqc 后端实例
+        self.precip_chem = precip_chem  # 降水化学 (Q7)
         self._fallback_warned = False
         self._permanent_fallback = False
         # 降水入渗系数 (0~1): 实际进入土壤溶液的比例, 其余径流/排水
@@ -80,7 +84,8 @@ class PhreeqcEngine:
         # 矿物量缩放系数: EQUILIBRIUM_PHASES 矿物量 = 物理摩尔量 × 此系数
         # (折中方案, 见 docs/Q1_plus_ANALYSIS.md):
         # 物理值(1e6-1e7 mol)会导致碱性突变(pH~9.9), 需取较小值保留区分度
-        self.mineral_scale = 0.001
+        # F2 修复: 与 initial_condition.MINERAL_SCALE 统一 (双路径一致)
+        self.mineral_scale = MINERAL_SCALE
 
         # ---- 初始化后端 (v0.1.3: 仅官方引擎, phreeqpython 已废弃) ----
         if OFFICIAL_PHREEQC_AVAILABLE:
@@ -213,7 +218,7 @@ class PhreeqcEngine:
                     'pe': new_state.pe,
                     'units': 'mol/L'}
         for el in ['Ca', 'Mg', 'K', 'Na', 'Al', 'P', 'Zn',
-                   'Cl', 'C', 'S', 'N', 'Si']:
+                   'Cl', 'C', 'S', 'N', 'Si', 'F']:
             col = f"{el}(mol/kgw)"
             if col in idx:
                 solution[el] = get(col)
@@ -278,11 +283,12 @@ class PhreeqcEngine:
                 lines.append(f"  {mineral:<15} 0.0  {scaled:.6e}")
         lines.append("")
 
-        # GAS_PHASE 块 (固定 CO2 分压 0.015 atm)
+        # GAS_PHASE 块 (CO2 分压来自气候强迫, F1 修复: 不再硬编码 0.015)
         # 写法: 总压=CO2分压 + 纯CO2 (验证有效)
+        pco2 = forcing.get('pCO2', 0.015)
         lines.append("GAS_PHASE 1")
         lines.append("  -fixed_pressure")
-        lines.append("  -pressure     0.015")
+        lines.append(f"  -pressure     {pco2:.6f}")
         lines.append("  CO2(g)        1.0")
         lines.append("")
 
@@ -300,6 +306,15 @@ class PhreeqcEngine:
             water_mol = (precip_mm * 10000.0 * 55.5
                          * self.precip_infiltration)
             reaction_lines.append(f"  H2O    {water_mol:.6e}  # 降水入渗")
+            # Q7: 降水化学离子 (酸雨组分) 随入渗水进入溶液
+            # 入渗水量(L) = 降水(mm) × 10000(m2/ha) × 入渗系数 (1mm=1L/m2)
+            if self.precip_chem is not None:
+                water_L = precip_mm * 10000.0 * self.precip_infiltration
+                amounts = self.precip_chem.reaction_amounts(water_L)
+                for sp, mol in amounts.items():
+                    if mol > 0:
+                        reaction_lines.append(
+                            f"  {sp:<8} {mol:.6e}  # 降水{sp}")
 
         if action.apply_fertilizer:
             # 氮肥 (N): 尿素硝化产 NO3- + 2H+ (按 N 元素计)
@@ -344,7 +359,7 @@ class PhreeqcEngine:
         lines.append("  -pe true")
         lines.append("  -temp true")
         lines.append("  -water true")
-        lines.append("  -totals Ca Mg K Na Al P Zn Cl C S N Si")
+        lines.append("  -totals Ca Mg K Na Al P Zn Cl C S N Si F")
         lines.append("  -molalities CaX2 MgX2 KX NaX AlX3 X-")
         lines.append("END")
 

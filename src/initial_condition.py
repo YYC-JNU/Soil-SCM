@@ -28,6 +28,12 @@ from typing import Dict, Optional, Tuple
 from dataclasses import dataclass, field
 
 
+# 矿物量缩放系数 (F2 修复: 统一为 0.001, 与 phreeqc_engine 保持一致)
+# 折中方案说明见 docs/Q1_plus_ANALYSIS.md:
+# 物理值(1e6-1e7 mol)会导致碱性突变(pH~9.9), 需取较小值保留区分度
+MINERAL_SCALE = 0.001
+
+
 class InitialConditionBuilder:
     """初始条件构建器
 
@@ -493,14 +499,14 @@ class InitialConditionBuilder:
         lines.append("EQUILIBRIUM_PHASES 1")
         for mineral, moles in minerals.items():
             if moles > 0:
-                scaled = moles * 0.1
+                scaled = moles * MINERAL_SCALE
                 lines.append(f"  {mineral:<15} 0.0  {scaled:.6e}")
         lines.append("")
 
-        # ---- GAS_PHASE 块 (固定 CO2 分压 0.015 atm) ----
+        # ---- GAS_PHASE 块 (CO2 分压 = 初始 pCO2, F1 修复: 不再硬编码) ----
         lines.append("GAS_PHASE 1")
         lines.append("  -fixed_pressure")
-        lines.append("  -pressure     0.015")
+        lines.append(f"  -pressure     {self.pCO2:.6f}")
         lines.append("  CO2(g)        1.0")
         lines.append("")
 

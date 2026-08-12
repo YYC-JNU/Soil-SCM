@@ -6,6 +6,7 @@
 输出: Config 对象 (包含所有配置参数)
 """
 
+import json
 import yaml
 import os
 from pathlib import Path
@@ -79,6 +80,7 @@ class PrecipChemConfig:
     """降水化学配置"""
     use_custom: bool = False
     input_file: Optional[str] = None
+    data: dict = field(default_factory=dict)  # 加载后的降水化学数据 (Q7)
 
 
 @dataclass
@@ -184,13 +186,23 @@ class ConfigManager:
                 beta=s.get('beta', 0.05)
             )
 
-        # 解析 precipitation_chemistry
+        # 解析 precipitation_chemistry (Q7: 加载默认或用户自定义数据)
         if 'precipitation_chemistry' in raw:
             p = raw['precipitation_chemistry']
+            use_custom = p.get('use_custom', False)
+            input_file = p.get('input_file', None)
+            data = {}
+            data_file = input_file if (use_custom and input_file) else 'config/precip_chemistry_default.json'
+            try:
+                if Path(data_file).exists():
+                    with open(data_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                else:
+                    print(f"[WARNING] 降水化学数据文件不存在: {data_file}")
+            except Exception as e:
+                print(f"[WARNING] 降水化学数据加载失败: {e}")
             config.precip_chemistry = PrecipChemConfig(
-                use_custom=p.get('use_custom', False),
-                input_file=p.get('input_file', None)
-            )
+                use_custom=use_custom, input_file=input_file, data=data)
 
         # 解析 output
         if 'output' in raw:
