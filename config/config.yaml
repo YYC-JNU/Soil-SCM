@@ -8,12 +8,11 @@ simulation:
   time_step: monthly             # 主时间步长: monthly
   sub_time_step_days: 0          # 子时间步长(天): 0=不启用, 1~7=启用
   scenario: natural              # 情景: natural/fertilizer/fertilizer_lime/precip_increase/temp_increase
-  # 引擎模式:
-  #   simplified = 简化动力学模式(推荐, pH 随情景长期演变)
-  #   phreeqc    = PHREEQC 化学平衡模式(初始化学状态精确, 但受 phreeqpython
-  #                库限制, SOLUTION 指定 pH 后 pH 被锁定, 无长期演化)
-  #   auto       = PHREEQC 可用则用 PHREEQC, 否则简化模式
-  engine_mode: simplified
+  # 引擎模式 (v0.2.1 起默认 auto, 走官方 PHREEQC 真实化学):
+  #   auto       = PHREEQC 可用则用官方引擎, 否则降级简化模式 (推荐, 默认)
+  #   phreeqc    = 强制使用 PHREEQC (失败时降级简化模式)
+  #   simplified = 始终使用简化动力学模式 (兜底)
+  engine_mode: auto
 
 soil_data:
   input_file: data/soil_survey.csv

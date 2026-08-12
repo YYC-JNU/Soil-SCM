@@ -395,9 +395,12 @@ class PhreeqcEngine:
         precip_effect = forcing['precip'] * 0.0001
         new_state.ph = max(3.5, state.ph - precip_effect)
 
-        # 简化: 施肥产酸
+        # 简化: 施肥产酸 (P4 修复: fertilizer_amount 字段不存在, 改用各肥料量之和)
         if action.apply_fertilizer:
-            fert_acid = action.fertilizer_amount * 0.0005
+            fert_total = (action.n_amount + action.p2o5_amount +
+                          action.k2o_amount + action.mgo_amount +
+                          action.znso4_amount)
+            fert_acid = fert_total * 0.0005
             new_state.ph = max(3.5, new_state.ph - fert_acid)
 
         # 简化: 石灰提碱
