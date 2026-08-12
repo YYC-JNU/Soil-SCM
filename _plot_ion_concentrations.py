@@ -22,10 +22,12 @@ db = SoilDatabase(json_path='config/soil_mineral_db.json',
 info = db.get_soil_info('red_soil')
 pco2 = db.get_pCO2('red_soil')
 
-N_YEARS = 5
-IONS = ['Ca', 'Mg', 'K', 'Na', 'Al', 'P', 'Zn', 'Cl', 'C', 'S', 'N', 'Si']
+N_YEARS = 30
+# 注: Zn 浓度过低(红壤强固定, ~1e-20)不再绘制
+IONS = ['Ca', 'Mg', 'K', 'Na', 'Al', 'P', 'Cl', 'C', 'S', 'N', 'Si']
 COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
-          '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+          '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+          '#aec7e8']
 
 print(f"=== 离子浓度与 pH 模拟 ({N_YEARS} 年, fertilizer_lime) ===")
 engine = PhreeqcEngine(database='phreeqc.dat', mode='phreeqc',
@@ -56,7 +58,7 @@ for y in range(N_YEARS):
             ion_data[k].append(sol.get(k, 0.0))
 
 # ---- 绘图: 单图双轴 ----
-fig, ax1 = plt.subplots(figsize=(12, 7))
+fig, ax1 = plt.subplots(figsize=(13, 7))
 
 # 左轴: pH
 ax1.plot(months, ph_list, 'k-', lw=2.5, label='pH')
@@ -74,16 +76,18 @@ ax2.set_ylabel('Ion concentration (mol/kgw, log scale)', fontsize=12)
 ax2.set_yscale('log')
 ax2.tick_params(axis='y')
 
-# 合并图例
+# 图例放在图外右侧 (bbox_to_anchor), 不遮挡曲线
 lines1, labels1 = ax1.get_legend_handles_labels()
 lines2, labels2 = ax2.get_legend_handles_labels()
-ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left',
-           fontsize=8, ncol=3)
+ax1.legend(lines1 + lines2, labels1 + labels2,
+           loc='upper left', bbox_to_anchor=(1.02, 1.0),
+           fontsize=8, ncol=2, framealpha=0.9)
 
 ax1.set_title('PHREEQC Output: pH and Ion Concentrations '
-              '(fertilizer_lime, 5 years)', fontsize=13)
+              '(fertilizer_lime, 30 years)', fontsize=13)
 
-plt.tight_layout()
+# 预留右侧空间给图例
+plt.tight_layout(rect=[0, 0, 0.82, 1])
 out = 'output/pH_ions.png'
 fig.savefig(out, dpi=150, bbox_inches='tight')
 print(f"[PLOT] 已保存: {out}")
