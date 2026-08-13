@@ -24,3 +24,7 @@ PRECIP_INFILTRATION_DEFAULT = 0.05
 # 折中方案说明见 docs/Q1_plus_ANALYSIS.md:
 # 物理值(1e6-1e7 mol)会导致碱性突变(pH~9.9), 需取较小值保留区分度
 MINERAL_SCALE = 0.001
+
+# ---- PHREEQC 失败输入复现文件路径 (Q18 落盘, T01 修复) ----
+# 官方引擎计算失败时, 完整输入字符串写入此文件供复现与调试 (README 承诺)
+ERROR_INP_PATH = "error.inp"

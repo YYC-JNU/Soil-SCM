@@ -13,11 +13,13 @@
 """
 
 import numpy as np
+from pathlib import Path
 from typing import Dict, Optional, Tuple
 from dataclasses import dataclass, field
 from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
                            SIMPLIFIED_K_PRECIP, SIMPLIFIED_K_FERT,
-                           SIMPLIFIED_K_LIME, PH_LOWER, PH_UPPER)
+                           SIMPLIFIED_K_LIME, PH_LOWER, PH_UPPER,
+                           ERROR_INP_PATH)
 from src.logging_config import get_logger
 
 logger = get_logger("phreeqc_engine")
@@ -188,6 +190,13 @@ class PhreeqcEngine:
             # Q18 修复: 记录完整诊断 (错误详情 + 输入字符串落盘可复现)
             self.last_error_message = str(e)
             self.last_error_input = input_string
+            # T01 修复: 失败输入写入磁盘复现文件 (README 承诺的 error.inp)
+            # 写入失败不影响主流程 (降级继续), 仅记录日志
+            try:
+                Path(ERROR_INP_PATH).write_text(input_string, encoding='utf-8')
+            except Exception as write_err:
+                logger.warning("无法写入 PHREEQC 失败输入复现文件 %s: %s",
+                               ERROR_INP_PATH, write_err)
             if not getattr(self, '_fallback_warned', False):
                 logger.error("PHREEQC 计算失败: %s", e, exc_info=True)
                 logger.debug("失败输入:\n%s", input_string)
