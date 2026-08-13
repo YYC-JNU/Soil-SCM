@@ -4,7 +4,19 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** ✅ 已完成 (implemented via /implement)
+
+## 完成说明 (2026-08-13)
+
+**改动内容**：
+1. `src/constants.py`：新增 `ERROR_INP_PATH = "error.inp"` 常量（Q19 收敛约定）。
+2. `src/phreeqc_engine.py`：`_run_official_step` 异常分支追加磁盘写入——`Path(ERROR_INP_PATH).write_text(input_string)`，写入失败 try/except 隔离，不影响降级主流程。
+3. `tests/test_phreeqc_engine.py`：增强 `test_error_diagnostics_on_failure`（断言 `error.inp` 磁盘生成 + 内容含 SOLUTION/SELECTED_OUTPUT，`tmp_path` 隔离）；新增 `test_error_write_failure_does_not_break_flow`（非法路径 → 降级正常）。
+
+**验证**：
+- 完整测试套件 62 passed（含 2 个新/增强 T01 测试）。
+- E2E 实测：模拟引擎失败后 `error.inp` 真实生成（1071 字节，含完整输入），降级后 pH 正常（4.998）。
+- `/code-review` 双轴通过（Standards 0 硬性发现，Spec 4 条验收全达成）。
 
 ## Background（审查发现 P1）
 

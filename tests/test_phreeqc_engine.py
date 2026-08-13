@@ -75,6 +75,27 @@ def test_mineral_scale_consistent(profile, soil_info):
     assert e.mineral_scale == 0.001
 
 
+def test_error_write_failure_does_not_break_flow(profile, soil_info, monkeypatch, tmp_path):
+    """T01: error.inp 写入失败时不中断主流程, 降级路径正常完成"""
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    state = e.build_initial_state(profile, soil_info, 0.015)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated phreeqc failure")
+
+    monkeypatch.setattr(e.official, "RunString", boom)
+    # 模拟 error.inp 路径为非法目录 → 写入必然失败
+    monkeypatch.setattr("src.phreeqc_engine.ERROR_INP_PATH",
+                        str(tmp_path / "no_such_dir" / "error.inp"))
+    monkeypatch.chdir(tmp_path)
+    new_state, _ = e.run_monthly_step(state, FORCING, MonthlyAction(), profile)
+
+    # 降级路径正常完成, 状态仍有意义
+    assert e._permanent_fallback
+    assert e.last_error_message == "simulated phreeqc failure"
+    assert new_state.ph > 0
+
+
 def test_simplified_with_fertilizer_no_crash(profile, soil_info):
     """P4 回归: simplified 模式 + 施肥指令不崩溃 (fertilizer_amount 已修复)"""
     e = PhreeqcEngine(database="phreeqc.dat", mode="simplified")
@@ -84,8 +105,8 @@ def test_simplified_with_fertilizer_no_crash(profile, soil_info):
     assert new_state.ph > 0
 
 
-def test_error_diagnostics_on_failure(profile, soil_info, monkeypatch):
-    """T3/Q18: 引擎失败时记录 last_error_message / last_error_input"""
+def test_error_diagnostics_on_failure(profile, soil_info, monkeypatch, tmp_path):
+    """T3/Q18/T01: 引擎失败时记录 last_error_message / last_error_input, 并写入 error.inp"""
     e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
     assert e.last_error_message is None
     assert e.last_error_input is None
@@ -96,8 +117,17 @@ def test_error_diagnostics_on_failure(profile, soil_info, monkeypatch):
         raise RuntimeError("simulated phreeqc failure")
 
     monkeypatch.setattr(e.official, "RunString", boom)
+    # T01: 隔离测试, 切换工作目录使 error.inp 写入 tmp_path, 不污染项目根
+    monkeypatch.chdir(tmp_path)
     new_state, _ = e.run_monthly_step(state, FORCING, MonthlyAction(), profile)
 
     assert e._permanent_fallback
     assert e.last_error_message == "simulated phreeqc failure"
-    assert "SELECTED_OUTPUT" in e.last_error_input  # 完整输入已落盘
+    assert "SELECTED_OUTPUT" in e.last_error_input  # 内存属性保留
+
+    # T01: 磁盘复现文件自动生成且内容为完整输入
+    error_file = tmp_path / "error.inp"
+    assert error_file.exists()
+    content = error_file.read_text(encoding="utf-8")
+    assert "SELECTED_OUTPUT" in content
+    assert "SOLUTION" in content
