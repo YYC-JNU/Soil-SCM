@@ -3,7 +3,10 @@
 功能: 情景控制器，决定每月的干预操作
 
 输入: 情景类型、当前年月、配置参数
-输出: 当月操作指令 (施肥/施石灰/降水修正/温度修正)
+输出: 当月操作指令 (施肥/施石灰)
+
+说明: 气候修正 (降水/温度递增) 由 climate_forcing 生成逐月序列时承担,
+      不通过 MonthlyAction 传递 (T02: 移除曾存在但从未生效的修正字段)。
 """
 
 from dataclasses import dataclass
@@ -12,7 +15,7 @@ from typing import List
 
 @dataclass
 class MonthlyAction:
-    """月度操作指令"""
+    """月度操作指令 (施肥/石灰干预; 气候修正由气候强迫承担, 不在此列)"""
     apply_fertilizer: bool = False
     # 各肥料施用量 (kg/ha/次, 按元素计)
     n_amount: float = 0.0        # 氮 (N)
@@ -23,9 +26,6 @@ class MonthlyAction:
 
     apply_lime: bool = False
     lime_amount: float = 0.0             # kg CaO/ha/次
-
-    precip_factor: float = 1.0           # 降水修正系数
-    temp_offset: float = 0.0             # 温度修正 (°C)
 
 
 class ScenarioController:
