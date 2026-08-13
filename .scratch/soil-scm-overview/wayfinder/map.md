@@ -25,6 +25,7 @@
 
 - [WF1 多分层模型架构决策](tickets/WF1-multilayer-architecture.md) — `List[SoilState]` + 一维平流 + 级联下渗；`run_monthly_step` 接口不变，新增 `run_monthly_multi_layer` 编排层；`n_layers` 配置 + 层后缀输出 + SELECTED_OUTPUT totals 守恒核算
 - [WF2 多分层模型实现](tickets/WF2-multilayer-implementation.md) — 已实现：`run_monthly_multi_layer` 编排层 + `n_layers` 配置 + 层后缀输出；4 层 E2E 通过（Ca 逐层累积证明平流生效）；单层回归保持（列名/pH 不变）；71 测试全绿
+- [WF3 SURFACE 表面络合可行性调研](tickets/WF3-surface-feasibility.md) — phreeqc.dat 原生支持 Hfo_s/Hfo_w（Dzombak & Morel 1990），P/Zn 吸附丰富但 **Al 无表面物种**；`build_surface()` 需改位点名（Hfo→Hfo_s/Hfo_w）+ 移除 Som；建议 WF4 仅启用铁氧化物表面，有机质/Al 表面列为独立工单
 
 ## Not yet specified
 
@@ -52,8 +53,8 @@
 |------|------|------|------|------|
 | WF1 | 多分层模型架构决策 | grilling | None | ✅ closed |
 | WF2 | 多分层模型实现 | task | WF1 | ✅ closed |
-| WF3 | SURFACE 表面络合可行性调研 | research | None | open |
-| WF4 | SURFACE 表面络合启用决策与实现 | grilling+task | WF3 | open |
+| WF3 | SURFACE 表面络合可行性调研 | research | None | ✅ closed |
+| WF4 | SURFACE 表面络合启用决策与实现 | grilling+task | WF3（已解除） | open |
 | WF5 | 多分层 + SURFACE 集成验证与回归 | task | WF2（已解除）, WF4 | open |
 
-**前沿（可立即开工）**: WF3
+**前沿（可立即开工）**: WF4
