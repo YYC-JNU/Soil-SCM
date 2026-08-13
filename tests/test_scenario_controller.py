@@ -1,9 +1,16 @@
-from src.scenario_controller import ScenarioController
+from src.scenario_controller import ScenarioController, MonthlyAction
 
 
 FERT = {"n": 12.0, "p2o5": 4.0, "k2o": 9.0, "mgo": 3.0,
         "znso4": 1.0, "apply_months": [3, 6, 9]}
 LIME = {"amount_per_apply": 45.0, "apply_months": [3, 6, 9]}
+
+
+def test_no_dead_climate_correction_fields():
+    """T02: 气候修正由 ClimateForcing 承担, MonthlyAction 不应含死字段 (P2+S1)"""
+    a = MonthlyAction()
+    assert not hasattr(a, 'precip_factor')
+    assert not hasattr(a, 'temp_offset')
 
 
 def test_natural_no_action():
