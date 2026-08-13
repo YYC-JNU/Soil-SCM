@@ -21,11 +21,15 @@ class OutputWriter:
     """输出写入器"""
 
     def __init__(self, output_dir: str, output_format: str = 'csv',
-                 scenario: str = 'natural', variables: List[str] = None):
+                 scenario: str = 'natural', variables: List[str] = None,
+                 n_layers: int = 1, layer_depths: List[float] = None):
         self.output_dir = Path(output_dir)
         self.output_format = output_format
         self.scenario = scenario
         self.variables = variables  # 输出变量列表 (Q11), None=全部
+        # WF2/Q6: 多分层输出 — 列名加层后缀 (如 pH_0_10); 单层列名不变
+        self.n_layers = n_layers
+        self.layer_depths = layer_depths  # 每层厚度 (cm), 用于后缀命名
         os.makedirs(self.output_dir, exist_ok=True)
 
         # 存储时间序列数据
@@ -33,13 +37,47 @@ class OutputWriter:
         self.data_records = []
 
     def record_step(self, year: int, month: int, diagnostics: dict):
-        """记录单步诊断量"""
+        """记录单步诊断量 (单层)"""
         self.time_records.append({
             'year': year,
             'month': month,
             'time_decimal': year + (month - 1) / 12.0,
         })
         self.data_records.append(diagnostics.copy())
+
+    def record_multi_step(self, year: int, month: int,
+                          layer_diagnostics: List[dict]):
+        """记录多分层诊断量 (WF2/Q6: 列名加层深度后缀)
+
+        参数:
+            layer_diagnostics: 每层诊断 dict 列表, 长度 = n_layers
+        后缀规则: 每层用深度区间命名 (0_10, 10_20, 20_40, 40_60...),
+                 列如 pH_0_10, base_saturation_10_20.
+        """
+        suffixes = self._layer_suffixes()
+        merged = {}
+        for diag, suffix in zip(layer_diagnostics, suffixes):
+            for key, val in diag.items():
+                merged[f"{key}_{suffix}"] = val
+        self.record_step(year, month, merged)
+
+    def _layer_suffixes(self) -> List[str]:
+        """生成每层的深度区间后缀 (如 0_10, 10_20)
+
+        若未提供 layer_depths, 按等分深度假设 (默认各层厚度相同);
+        实际由 config 提供 (ROADMAP: 各层默认参数相同)。
+        """
+        if self.layer_depths and len(self.layer_depths) == self.n_layers:
+            bounds = [0.0]
+            for d in self.layer_depths:
+                bounds.append(bounds[-1] + d)
+            return [f"{int(bounds[i])}_{int(bounds[i+1])}"
+                    for i in range(self.n_layers)]
+        # 兜底: 等分 0~60cm (与默认 4 层一致)
+        total = 60.0 if self.n_layers > 1 else 0.0
+        step = total / self.n_layers if self.n_layers > 1 else 0.0
+        return [f"{int(i*step)}_{int((i+1)*step)}" for i in range(self.n_layers)]
+
 
     def save(self):
         """保存输出文件"""
@@ -61,9 +99,17 @@ class OutputWriter:
 
         df = pd.DataFrame(all_data)
         # Q11: 按 config.output.variables 过滤输出列 (保留时间列)
+        # WF2/Q6: 多分层时列名带层后缀 (pH_0_10), 基础变量名需前缀匹配
         if self.variables:
             time_cols = [c for c in ('year', 'month', 'time_decimal') if c in df.columns]
-            var_cols = [v for v in self.variables if v in df.columns]
+            var_cols = []
+            for v in self.variables:
+                if v in df.columns:
+                    var_cols.append(v)
+                else:
+                    # 层后缀列: pH → pH_0_10, pH_10_20 ...
+                    layer_cols = [c for c in df.columns if c.startswith(v + '_')]
+                    var_cols.extend(layer_cols)
             df = df[time_cols + var_cols]
         filename = f"soil_scm_{self.scenario}_output.csv"
         filepath = self.output_dir / filename
@@ -99,7 +145,14 @@ class OutputWriter:
             keys = [k for k in self.data_records[0].keys()
                     if isinstance(self.data_records[0][k], (int, float))]
             if self.variables:
-                keys = [k for k in keys if k in self.variables]
+                # WF2/Q6: 支持层后缀列前缀匹配 (pH → pH_0_10)
+                filtered = []
+                for k in keys:
+                    if k in self.variables:
+                        filtered.append(k)
+                    elif any(k.startswith(v + '_') for v in self.variables):
+                        filtered.append(k)
+                keys = filtered
             for key in keys:
                     var = ds.createVariable(key, 'f8', ('time',))
                     var[:] = [d.get(key, 0.0) for d in self.data_records]

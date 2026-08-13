@@ -14,6 +14,7 @@ simulation:
   #   simplified = 始终使用简化动力学模式 (兜底)
   engine_mode: auto
   precip_infiltration: 0.05          # 降水入渗系数 (0~1): 实际进入土壤溶液的比例 (T3)
+  n_layers: 1                        # WF2: 分层数 (1=单层, 4=多分层; 各层默认参数相同)
 
 soil_data:
   input_file: data/soil_survey.csv

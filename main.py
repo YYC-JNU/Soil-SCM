@@ -33,6 +33,35 @@ from src.initial_condition import InitialConditionBuilder
 from src.logging_config import setup_logging
 
 
+def _extract_diagnostics(soil_state, diag, variables):
+    """从模拟状态提取诊断量 (单层)
+
+    参数:
+        soil_state: 模拟后的土壤状态
+        diag: 引擎诊断输出
+        variables: 配置的输出变量列表 (Q11)
+    """
+    ex = soil_state.exchange
+    base_charge = (ex.get('CaX2', 0) * 2.0 + ex.get('MgX2', 0) * 2.0 +
+                   ex.get('KX', 0) + ex.get('NaX', 0))
+    total_charge = base_charge + ex.get('AlX3', 0) * 3.0
+    base_sat = (base_charge / total_charge * 100.0
+                if total_charge > 0 else 0.0)
+    diagnostics = {
+        'pH': soil_state.ph,
+        'base_saturation': base_sat,
+        'CEC_occupied': total_charge,
+        'exchangeable_Ca': ex.get('CaX2', 0),
+        'exchangeable_Al': ex.get('AlX3', 0),
+    }
+    # Q11: 按配置补充可选字段 (dict 以 JSON 序列化)
+    if 'mineral_mass' in variables and diag.mineral_masses:
+        diagnostics['mineral_mass'] = json.dumps(diag.mineral_masses)
+    if 'solution_ions' in variables and diag.solution_ions:
+        diagnostics['solution_ions'] = json.dumps(diag.solution_ions)
+    return diagnostics
+
+
 def run_simulation(config_path: str = "config/config.yaml"):
     """运行模拟主函数"""
 
@@ -149,11 +178,19 @@ def run_simulation(config_path: str = "config/config.yaml"):
                            precip_infiltration=cfg.simulation.precip_infiltration)
 
     # 构建初始状态 (initial_pCO2 已在阶段 4 中计算)
+    # WF2/Q1: 多分层时构建 List[SoilState] (各层默认参数相同, ROADMAP 约束)
+    n_layers = getattr(cfg.simulation, 'n_layers', 1)
     soil_state = engine.build_initial_state(
         soil_profile, soil_info, initial_pCO2)
+    soil_states = [engine.build_initial_state(
+        soil_profile, soil_info, initial_pCO2) for _ in range(n_layers)]
 
     print(f"\n初始状态:")
-    print(f"  pH: {soil_state.ph}")
+    if n_layers > 1:
+        print(f"  分层数: {n_layers} (各层默认参数相同)")
+        print(f"  顶层 pH: {soil_states[0].ph}")
+    else:
+        print(f"  pH: {soil_state.ph}")
     print(f"  pCO2: {initial_pCO2} atm")
     print(f"  矿物相数量: {len(soil_state.minerals)}")
 
@@ -165,11 +202,15 @@ def run_simulation(config_path: str = "config/config.yaml"):
     print(f"{'='*60}")
 
     # 初始化输出器
+    # WF2/Q6: 多分层时列名加层深度后缀 (单层列名不变)
+    layer_depths = getattr(cfg.simulation, 'layer_depths', None)
     output_writer = OutputWriter(
         output_dir=cfg.output.directory,
         output_format=cfg.output.format,
         scenario=cfg.simulation.scenario,
-        variables=cfg.output.variables  # Q11: 按配置输出变量
+        variables=cfg.output.variables,  # Q11: 按配置输出变量
+        n_layers=n_layers,
+        layer_depths=layer_depths
     )
 
     n_years = cfg.simulation.n_years
@@ -184,43 +225,50 @@ def run_simulation(config_path: str = "config/config.yaml"):
             action = scenario_ctrl.get_action(year + 1, month + 1)
 
             # 执行化学计算
-            if sub_steps > 0:
-                # 子时间步模式
-                n_sub = int(30 / sub_steps)
-                for sub in range(n_sub):
-                    sub_forcing = forcing.copy()
-                    sub_forcing['precip'] = forcing['precip'] / n_sub
-                    soil_state, diag = engine.run_monthly_step(
-                        soil_state, sub_forcing, action, soil_profile)
+            if n_layers > 1:
+                # WF2/Q4: 多分层 — 高层编排层 (层循环 + 级联平流)
+                if sub_steps > 0:
+                    n_sub = int(30 / sub_steps)
+                    for sub in range(n_sub):
+                        sub_forcing = forcing.copy()
+                        sub_forcing['precip'] = forcing['precip'] / n_sub
+                        soil_states, diags = engine.run_monthly_multi_layer(
+                            soil_states, sub_forcing, action, soil_profile)
+                else:
+                    soil_states, diags = engine.run_monthly_multi_layer(
+                        soil_states, forcing, action, soil_profile)
+                # WF2/Q6: 逐层诊断 + 层后缀输出
+                layer_diagnostics = [
+                    _extract_diagnostics(s, d, cfg.output.variables)
+                    for s, d in zip(soil_states, diags)]
+                output_writer.record_multi_step(
+                    year + 1, month + 1, layer_diagnostics)
             else:
-                # 月步长模式
-                soil_state, diag = engine.run_monthly_step(
-                    soil_state, forcing, action, soil_profile)
+                # 单层路径 (回归护栏: 走原接口)
+                if sub_steps > 0:
+                    # 子时间步模式
+                    n_sub = int(30 / sub_steps)
+                    for sub in range(n_sub):
+                        sub_forcing = forcing.copy()
+                        sub_forcing['precip'] = forcing['precip'] / n_sub
+                        soil_state, diag = engine.run_monthly_step(
+                            soil_state, sub_forcing, action, soil_profile)
+                else:
+                    # 月步长模式
+                    soil_state, diag = engine.run_monthly_step(
+                        soil_state, forcing, action, soil_profile)
 
-            # 记录诊断量 (从模拟状态提取, 反映化学演化)
-            ex = soil_state.exchange
-            base_charge = (ex.get('CaX2', 0) * 2.0 + ex.get('MgX2', 0) * 2.0 +
-                           ex.get('KX', 0) + ex.get('NaX', 0))
-            total_charge = base_charge + ex.get('AlX3', 0) * 3.0
-            base_sat = (base_charge / total_charge * 100.0
-                        if total_charge > 0 else 0.0)
-            diagnostics = {
-                'pH': soil_state.ph,
-                'base_saturation': base_sat,
-                'CEC_occupied': total_charge,
-                'exchangeable_Ca': ex.get('CaX2', 0),
-                'exchangeable_Al': ex.get('AlX3', 0),
-            }
-            # Q11: 按 config.output.variables 补充可选字段 (dict 以 JSON 序列化)
-            if 'mineral_mass' in cfg.output.variables and diag.mineral_masses:
-                diagnostics['mineral_mass'] = json.dumps(diag.mineral_masses)
-            if 'solution_ions' in cfg.output.variables and diag.solution_ions:
-                diagnostics['solution_ions'] = json.dumps(diag.solution_ions)
-            output_writer.record_step(year + 1, month + 1, diagnostics)
+                # 记录诊断量 (从模拟状态提取, 反映化学演化)
+                diagnostics = _extract_diagnostics(
+                    soil_state, diag, cfg.output.variables)
+                output_writer.record_step(year + 1, month + 1, diagnostics)
 
         # 每年打印进度
         if (year + 1) % 10 == 0 or year == 0:
-            print(f"  第 {year+1:3d} 年完成 | pH = {soil_state.ph:.3f}")
+            if n_layers > 1:
+                print(f"  第 {year+1:3d} 年完成 | 顶层 pH = {soil_states[0].ph:.3f}")
+            else:
+                print(f"  第 {year+1:3d} 年完成 | pH = {soil_state.ph:.3f}")
 
     # ============================================================
     # 阶段 9: 输出结果
