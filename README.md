@@ -7,44 +7,49 @@
 ## 一、项目目录结构
 
 ```
-soil_scm/
-├── config/
-│   ├── config.yaml
-│   ├── soil_mineral_db.json
-│   ├── soil_mineral.tbl
-│   └── precip_chemistry_default.json
-├── src/
+Soil-SCM/
+├── config/                     # 配置文件
+│   ├── config.yaml             # 主配置文件（类似 WRF namelist.input）
+│   ├── soil_mineral_db.json    # 土壤矿物数据库
+│   ├── soil_mineral.tbl        # 矿物热力学表
+│   └── precip_chemistry_default.json  # 降水化学默认值（广东 2025 公报）
+├── src/                        # 源码
 │   ├── __init__.py
-│   ├── config_manager.py
-│   ├── soil_database.py
-│   ├── input_reader.py
-│   ├── climate_forcing.py
-│   ├── scenario_controller.py
-│   ├── phreeqc_engine.py
-│   ├── output_writer.py
-│   ├── initial_condition.py
-│   ├── precip_chemistry.py    # 降水化学 (Q7)
-│   ├── logging_config.py      # 日志 (Q15)
-│   ├── constants.py           # 全局常量 (Q19)
-│   └── utils.py
-├── data/
-│   ├── soil_survey.csv
-│   └── exchangeable_ions.csv
-├── tests/                     # pytest 测试 (38 用例)
+│   ├── config_manager.py       # 配置加载与校验
+│   ├── soil_database.py        # 土壤/矿物数据库查询
+│   ├── input_reader.py         # 土壤普查/交换性离子数据读取
+│   ├── climate_forcing.py      # 气候强迫（降水/温度/pCO₂）
+│   ├── scenario_controller.py  # 情景控制（施肥/石灰/气候变化）
+│   ├── phreeqc_engine.py       # PHREEQC 化学引擎（官方 + 简化降级）
+│   ├── output_writer.py        # 结果输出（CSV/NetCDF/绘图）
+│   ├── initial_condition.py    # 初始条件构建（溶液/交换/矿物/气相）
+│   ├── precip_chemistry.py     # 降水化学（Q7）
+│   ├── logging_config.py       # 日志（Q15）
+│   ├── constants.py            # 全局常量（Q19）
+│   └── utils.py                # 工具函数
+├── data/                       # 输入数据
+│   ├── soil_survey.csv         # 土壤普查数据
+│   └── exchangeable_ions.csv   # 交换性阳离子初始值
+├── tests/                      # pytest 单元测试（38 用例）
 │   ├── conftest.py
 │   └── test_*.py
-├── docs/                      # 项目文档
-│   ├── ROADMAP.md
-│   ├── OPTIMIZATION_PLAN.md
-│   ├── Q1_ANALYSIS.md
-│   ├── Q1_plus_ANALYSIS.md
-│   ├── Q7_PRECIP_CHEMISTRY.md
+├── docs/                       # 项目文档
+│   ├── ROADMAP.md              # 优化路线图
+│   ├── OPTIMIZATION_PLAN.md    # 问题清单与优化计划（Q1-Q26）
+│   ├── Q1_ANALYSIS.md          # Q1 引擎分析
+│   ├── Q1_plus_ANALYSIS.md     # Q1+ 矿物量诊断
+│   ├── Q7_PRECIP_CHEMISTRY.md  # Q7 降水化学集成
 │   ├── V0_2_0_ENGINEERING_REPORT.md
 │   ├── V0_2_2_SHORT_TERM_REPORT.md
-│   └── GIT_GUIDE.md
-├── output/                    # 运行产物 (gitignore)
-├── main.py
-├── requirements.txt
+│   └── GIT_GUIDE.md            # Git 协作指南
+├── output/                     # 运行产物（gitignore，自动生成）
+├── _plot_pH_scenarios.py       # 辅助：4 情景 pH 对比图
+├── _plot_ion_concentrations.py # 辅助：离子浓度曲线图
+├── _plot_Q7_30yr.py            # 辅助：Q7 降水化学 30 年模拟图
+├── _compare_before_after.py    # 辅助：50 年化学演化监控
+├── error.inp                   # PHREEQC 失败输入复现文件（Q18）
+├── main.py                     # 主程序入口
+├── requirements.txt            # Python 依赖
 └── README.md
 ```
 
@@ -68,7 +73,13 @@ pip install -r requirements.txt
 > **说明**
 > - 化学计算依赖官方 `phreeqc` 包（IPhreeqc 3.8.6，USGS 官方引擎）；`phreeqpython` 兼容后端已于 v0.1.3 废弃移除。
 > - 若 `phreeqc` 未安装或 PHREEQC 计算块与数据库不兼容导致计算失败，引擎会自动**降级到内置简化模式**，保证模拟流程稳定运行。
-> - v0.2.0 起建立 pytest 测试框架（`tests/`，38 用例），运行 `pytest tests/` 验证。
+
+### 运行测试
+
+```bash
+# v0.2.0 起建立 pytest 测试框架（tests/，38 用例）
+pytest tests/ -v
+```
 
 ## 三、运行模拟
 
@@ -76,13 +87,37 @@ pip install -r requirements.txt
 
 `config.yaml` 中 `simulation` 关键参数：
 
-- `engine_mode`：`auto`（默认，官方 PHREEQC 引擎优先，不可用自动降级简化模式）/ `phreeqc` / `simplified`
-- `precip_infiltration`：降水入渗系数（默认 0.05），实际进入土壤溶液的比例（其余径流/排水）
-- `scenario`：情景选择（见下节）
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `engine_mode` | `auto` | 引擎模式：`auto`=官方 PHREEQC 优先、不可用时自动降级简化模式；`phreeqc`=强制官方引擎；`simplified`=始终简化模式 |
+| `precip_infiltration` | `0.05` | 降水入渗系数（0~1）：实际进入土壤溶液的比例，其余为径流/排水（T3） |
+| `scenario` | `natural` | 情景选择（见第四节） |
 
+### 其他常用参数
+
+| 区块 | 参数 | 默认值 | 说明 |
+|------|------|--------|------|
+| `simulation` | `n_years` | `50` | 模拟年数 |
+| `simulation` | `sub_time_step_days` | `0` | 子时间步长（天）：`0`=关闭，`1~7`=启用（与月步长结果一致，Q10） |
+| `climate` | `base_annual_precip` | `1893.0` | 基准年降水量（mm/yr） |
+| `climate` | `base_annual_temp` | `25.0` | 基准年平均温度（°C） |
+| `climate` | `precip_increase_rate` | `0.02` | `precip_increase` 情景：每年降水增加比例 |
+| `climate` | `temp_increase_rate` | `0.05` | `temp_increase` 情景：每年增温幅度（°C/yr） |
+| `soil_data` | `soil_type` | `red_soil` | 土壤类型标识符（用于查询矿物数据库） |
+| `fertilizer` | `n / p2o5 / k2o / mgo / znso4` | `12 / 4 / 9 / 3 / 1` | 每次施用量（kg/ha），详见第五节 |
+| `fertilizer` | `apply_months` | `[3, 6, 9]` | 施肥月份 |
+| `lime` | `amount_per_apply` | `45.0` | 生石灰每次施用量（kg/ha，按 CaO 计），3/6/9 月 |
+| `soil_co2` | `pCO2_ref` | `0.015` | 参考 CO₂ 分压（atm） |
+| `soil_co2` | `T_ref` | `25.0` | 参考温度（°C） |
+| `soil_co2` | `beta` | `0.05` | 土壤 CO₂ 温度响应系数（1/°C） |
+| `precipitation_chemistry` | `use_custom` | `false` | 是否使用自定义降水化学数据文件（`input_file`） |
+| `output` | `directory` | `./output` | 输出目录 |
+| `output` | `format` | `csv` | 输出格式：`csv` / `netcdf`（未装 netCDF4 时回退 CSV） |
+| `output` | `variables` | 见第七节 | 输出变量列表（Q11） |
+
+### 运行模拟
 
 ```bash
-# 运行模拟
 python main.py --config config/config.yaml
 ```
 
@@ -134,8 +169,46 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 
 ## 七、输出
 
-- CSV / NetCDF 时间序列：`output/soil_scm_<scenario>_output.csv|.nc`
-- pH 演变图：`output/pH_<scenario>.png`
+### 输出文件
+
+模拟完成后在 `output/` 目录生成：
+
+| 文件 | 说明 |
+|------|------|
+| `soil_scm_<scenario>_output.csv` | 时间序列 CSV（`output.format=csv` 时） |
+| `soil_scm_<scenario>_output.nc` | 时间序列 NetCDF（`output.format=netcdf` 时） |
+| `pH_<scenario>.png` | 土壤 pH 演变图 |
+
+### 输出变量
+
+时间序列包含时间列（`year`、`month`、`time_decimal`）与以下变量（由 `config.output.variables` 控制，Q11）：
+
+| 变量 | 说明 |
+|------|------|
+| `pH` | 土壤溶液 pH |
+| `base_saturation` | 盐基饱和度（%） |
+| `CEC_occupied` | 交换位点占据总量（cmol(+)/kg） |
+| `exchangeable_Ca` | 交换性 Ca |
+| `exchangeable_Al` | 交换性 Al |
+| `mineral_mass` | 矿物相质量（可选，JSON 序列化） |
+| `solution_ions` | 溶液中离子浓度（可选，JSON 序列化） |
+
+> **说明**
+> - `mineral_mass`、`solution_ions` 为可选诊断列，以 JSON 字符串形式存储，仅在配置中包含时输出。
+> - NetCDF 格式需要安装 `netCDF4`；未安装时自动回退为 CSV（Q23）。
+
+### 辅助分析与绘图脚本
+
+根目录下 `_*.py` 为分析/绘图辅助脚本（独立运行，不参与主流程）：
+
+| 脚本 | 说明 |
+|------|------|
+| `_plot_pH_scenarios.py` | 4 情景（natural / fertilizer / lime_only / fertilizer_lime）土壤 pH 演化对比图（5 年，官方引擎） |
+| `_plot_ion_concentrations.py` | fertilizer_lime 情景 30 年 pH + 11 种离子浓度曲线（PHREEQC 溶液输出，mol/kgw） |
+| `_plot_Q7_30yr.py` | Q7 降水化学集成 + F1 pCO₂ 传递后 natural 情景 30 年 pH 与全部离子浓度曲线 |
+| `_compare_before_after.py` | 官方引擎 50 年 fertilizer_lime 化学演化监控（pH / 盐基饱和度 / 交换性 Al / Ca 四联图） |
+
+`error.inp` 为 PHREEQC 计算失败时自动生成的完整输入复现文件（Q18 异常分级），可据此复现与调试。
 
 ## 八、后续扩展建议
 
