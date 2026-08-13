@@ -23,7 +23,7 @@
 
 <!-- the index — one line per closed ticket -->
 
-（暂无 — 地图刚建立）
+- [WF1 多分层模型架构决策](tickets/WF1-multilayer-architecture.md) — `List[SoilState]` + 一维平流 + 级联下渗；`run_monthly_step` 接口不变，新增 `run_monthly_multi_layer` 编排层；`n_layers` 配置 + 层后缀输出 + SELECTED_OUTPUT totals 守恒核算
 
 ## Not yet specified
 
@@ -49,10 +49,10 @@
 
 | 编号 | 名称 | 类型 | 阻塞 | 状态 |
 |------|------|------|------|------|
-| WF1 | 多分层模型架构决策 | grilling | None | open |
-| WF2 | 多分层模型实现 | task | WF1 | open |
+| WF1 | 多分层模型架构决策 | grilling | None | ✅ closed |
+| WF2 | 多分层模型实现 | task | WF1（已解除） | open |
 | WF3 | SURFACE 表面络合可行性调研 | research | None | open |
 | WF4 | SURFACE 表面络合启用决策与实现 | grilling+task | WF3 | open |
 | WF5 | 多分层 + SURFACE 集成验证与回归 | task | WF2, WF4 | open |
 
-**前沿（可立即开工）**: WF1、WF3
+**前沿（可立即开工）**: WF2（WF1 已解析）、WF3
