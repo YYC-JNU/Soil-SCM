@@ -1,6 +1,6 @@
 # Soil-SCM: 土壤物理化学数值模式
 
-> **版本：v0.2.2**（2026-08-12）
+> **版本：v0.2.3**（2026-08-13）
 
 基于 PHREEQC 地球化学引擎的土壤单点物理化学数值模式，用于模拟长期（数十年）施肥、酸化、淋溶与改良条件下的土壤化学演变（pH、盐基饱和度、交换性阳离子等）。
 
@@ -10,9 +10,11 @@
 Soil-SCM/
 ├── config/                     # 配置文件
 │   ├── config.yaml             # 主配置文件（类似 WRF namelist.input）
+│   ├── config_example.yaml     # 配置模板（参数速查表 + 完整可填配置）
 │   ├── soil_mineral_db.json    # 土壤矿物数据库
 │   ├── soil_mineral.tbl        # 矿物热力学表
-│   └── precip_chemistry_default.json  # 降水化学默认值（广东 2025 公报）
+│   ├── precip_chemistry_default.json  # 降水化学默认值（广东 2025 公报）
+│   └── texture_code.json       # 土壤质地编码表（卡钦斯基制，v0.2.3）
 ├── src/                        # 源码
 │   ├── __init__.py
 │   ├── config_manager.py       # 配置加载与校验
@@ -30,7 +32,7 @@ Soil-SCM/
 ├── data/                       # 输入数据
 │   ├── soil_survey.csv         # 土壤普查数据
 │   └── exchangeable_ions.csv   # 交换性阳离子初始值
-├── tests/                      # pytest 单元测试（38 用例）
+├── tests/                      # pytest 单元测试（51 用例）
 │   ├── conftest.py
 │   └── test_*.py
 ├── docs/                       # 项目文档
@@ -110,7 +112,8 @@ pytest tests/ -v
 | `soil_co2` | `pCO2_ref` | `0.015` | 参考 CO₂ 分压（atm） |
 | `soil_co2` | `T_ref` | `25.0` | 参考温度（°C） |
 | `soil_co2` | `beta` | `0.05` | 土壤 CO₂ 温度响应系数（1/°C） |
-| `precipitation_chemistry` | `use_custom` | `false` | 是否使用自定义降水化学数据文件（`input_file`） |
+| `precipitation_chemistry` | `input_file` | `config/precip_chemistry_default.json` | 回退 JSON 路径（全 -1 时读取） |
+| `precipitation_chemistry` | `ph` / `ions` | `-1` | 内联降水化学（v0.2.3）：全部 -1 回退 JSON；全部有效值覆盖；混合报错 |
 | `output` | `directory` | `./output` | 输出目录 |
 | `output` | `format` | `csv` | 输出格式：`csv` / `netcdf`（未装 netCDF4 时回退 CSV） |
 | `output` | `variables` | 见第七节 | 输出变量列表（Q11） |

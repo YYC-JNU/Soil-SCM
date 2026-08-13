@@ -67,7 +67,11 @@ def run_simulation(config_path: str = "config/config.yaml"):
         soil_file=cfg.soil_data.input_file,
         exchangeable_file=cfg.soil_data.exchangeable_ions_file
     )
-    soil_profile = reader.build_soil_profile()
+    # v0.2.3: 传递 config 内联字段 (全 -1 时自动回退 CSV)
+    soil_profile = reader.build_soil_profile(
+        survey_config=vars(cfg.soil_data.survey),
+        exchangeable_config=vars(cfg.soil_data.exchangeable_ions)
+    )
 
     print(f"\n土壤剖面数据:")
     print(f"  pH: {soil_profile.ph}")

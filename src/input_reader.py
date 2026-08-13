@@ -8,6 +8,7 @@
 
 import pandas as pd
 import numpy as np
+import json
 from pathlib import Path
 from dataclasses import dataclass
 from src.logging_config import get_logger
@@ -73,9 +74,38 @@ class SoilProfile:
 class InputReader:
     """输入数据读取器"""
 
+    # 质地编码表路径 (v0.2.3: config 内联质地编码 → 中文名称)
+    TEXTURE_CODE_PATH = "config/texture_code.json"
+
     def __init__(self, soil_file: str, exchangeable_file: str):
         self.soil_file = Path(soil_file)
         self.exchangeable_file = Path(exchangeable_file)
+        self.texture_codes = self._load_texture_codes()
+
+    def _load_texture_codes(self) -> dict:
+        """加载质地编码表: {编码数字: 中文名称}
+
+        返回:
+            dict: 编码数字(int) → 质地中文名称(str)
+        """
+        path = Path(self.TEXTURE_CODE_PATH)
+        if not path.exists():
+            logger.warning("质地编码表 %s 不存在, 质地编码转换不可用", path)
+            return {}
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {int(k): v["name"] for k, v in data.get("texture_codes", {}).items()}
+
+    @staticmethod
+    def _all_minus_one(values: dict) -> bool:
+        """判断字段值 dict 是否全部为 -1 (空 dict 视为全部 -1)
+
+        参数:
+            values: 字段名 → 值的 dict
+        返回:
+            bool: True=全部为 -1 或为空 (回退 CSV)
+        """
+        return all(v == -1 for v in values.values()) if values else True
 
     def read_soil_survey(self) -> dict:
         """读取土壤普查数据"""
@@ -125,10 +155,53 @@ class InputReader:
             'exch_h': float(row.get('交换性H_cmol_kg', 1.0)),
         }
 
-    def build_soil_profile(self) -> SoilProfile:
-        """构建完整的土壤剖面对象"""
-        survey = self.read_soil_survey()
-        exch = self.read_exchangeable_ions()
+    def build_soil_profile(self, survey_config: dict = None,
+                           exchangeable_config: dict = None) -> SoilProfile:
+        """构建完整的土壤剖面对象 (v0.2.3: 支持 config 内联字段)
+
+        参数:
+            survey_config: config 中 soil_data.survey 字段值 dict。
+                全部字段为 -1 (或省略/空 dict) → 回退读取 CSV 默认值;
+                全部字段为有效值 → 覆盖 CSV (混合填写已由 config_manager 拦截报错)。
+            exchangeable_config: config 中 soil_data.exchangeable_ions 字段值 dict。
+                逻辑同上。
+
+        返回:
+            SoilProfile 对象
+        """
+        survey_config = survey_config or {}
+        exchangeable_config = exchangeable_config or {}
+
+        # ---- 土壤普查块: config 全 -1 → 回退 CSV ----
+        if self._all_minus_one(survey_config):
+            # Q14: 全 -1 时 CSV 必须存在
+            if not self.soil_file.exists():
+                raise FileNotFoundError(
+                    f"survey 参数全部为 -1 (需读取 CSV 默认值), "
+                    f"但土壤普查文件不存在: {self.soil_file}")
+            survey = self.read_soil_survey()
+        else:
+            survey = dict(survey_config)
+            # 质地编码数字 → 中文名称 (config_manager 已校验编码合法性, 此处兜底)
+            texture_code = survey.get('texture')
+            if isinstance(texture_code, int) and texture_code != -1:
+                if texture_code in self.texture_codes:
+                    survey['texture'] = self.texture_codes[texture_code]
+                else:
+                    raise ValueError(
+                        f"['texture' 参数存在问题: 编码 {texture_code} 无效, "
+                        f"请确认后再输入]")
+
+        # ---- 交换性阳离子块: config 全 -1 → 回退 CSV ----
+        if self._all_minus_one(exchangeable_config):
+            # Q14: 全 -1 时 CSV 必须存在
+            if not self.exchangeable_file.exists():
+                raise FileNotFoundError(
+                    f"exchangeable_ions 参数全部为 -1 (需读取 CSV 默认值), "
+                    f"但交换性阳离子文件不存在: {self.exchangeable_file}")
+            exch = self.read_exchangeable_ions()
+        else:
+            exch = dict(exchangeable_config)
 
         return SoilProfile(
             ph=survey['ph'],

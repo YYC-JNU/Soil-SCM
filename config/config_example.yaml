@@ -1,0 +1,181 @@
+# ============================================================
+# Soil-SCM 配置文件模板 (v0.2.2)
+# 用法: 复制为 config.yaml 并按需修改
+#   copy config/config_example.yaml config/config.yaml
+# ============================================================
+#
+# ── 参数速查表 ──────────────────────────────────────────────
+# 格式: 参数名 | 类型 | 默认值 | 单位 | 可选值/范围
+#
+# === simulation ===
+# n_years              | int   | 50               | -  | >0
+# time_step            | str   | monthly          | -  | monthly (唯一支持值)
+# sub_time_step_days   | int   | 0                | 天 | 0 或 1~7
+# scenario             | str   | natural          | -  | natural|fertilizer|fertilizer_lime|precip_increase|temp_increase
+# engine_mode          | str   | auto             | -  | auto|phreeqc|simplified
+# precip_infiltration  | float | 0.05             | -  | 0.0~1.0
+#
+# === soil_data ===
+# input_file               | str | data/soil_survey.csv       | - | CSV 文件路径
+# exchangeable_ions_file   | str | data/exchangeable_ions.csv | - | CSV 文件路径
+# soil_type                | str | red_soil                   | - | red_soil|black_soil|purple_soil
+# survey (子块, 12 字段)   | -   | 全 -1                      | - | ph, organic_matter, cec, bulk_density, area,
+#                          |     |                            |   | effective_depth, available_p, available_k, texture,
+#                          |     |                            |   | sand_pct, silt_pct, clay_pct
+#                          |     |                            |   | 全部 -1→回退CSV; 全部有效值→覆盖CSV; 混合→报错
+#   texture                | int | -1 | - | 1~9 (卡钦斯基制, 见 config/texture_code.json)
+#   sand_pct/silt_pct/clay_pct | float | -1 | % | 全有效值时三者之和必须 = 100
+# exchangeable_ions (子块, 6 字段) | - | 全 -1 | cmol(+)/kg | exch_ca, exch_mg, exch_k,
+#                          |     |       |           | exch_na, exch_al, exch_h; 逻辑同上
+#
+# === climate ===
+# base_annual_precip     | float | 1893.0 | mm/yr | 800~2500
+# base_annual_temp       | float | 25.0   | °C    | 5~25
+# precip_increase_rate   | float | 0.02   | /yr   | 0~1
+# temp_increase_rate     | float | 0.05   | °C/yr | 0~1
+#
+# === fertilizer ===
+# n              | float | 12.0 | kg N/ha/次      | 10~13
+# p2o5           | float | 4.0  | kg P2O5/ha/次   | 3~4
+# k2o            | float | 9.0  | kg K2O/ha/次    | 8~10
+# mgo            | float | 3.0  | kg MgO/ha/次    | 2~3
+# znso4          | float | 1.0  | kg ZnSO4/ha/次  | 1~2
+# apply_months   | list  | [3,6,9]               | - | 1~12 整数列表
+#
+# === lime ===
+# amount_per_apply   | float | 45.0  | kg CaO/ha/次 | 40~50
+# apply_months       | list  | [3,6,9]             | - | 1~12 整数列表
+#
+# === soil_co2 ===
+# pCO2_ref   | float | 0.015 | atm  | 0.005~0.060
+# T_ref      | float | 25.0  | °C   | 参考温度
+# beta       | float | 0.05  | 1/°C | 0.03~0.08
+#
+# === precipitation_chemistry ===
+# input_file   | str  | config/precip_chemistry_default.json | - | 回退 JSON 路径
+# ph           | float| -1 | - | 降水 pH; -1=使用JSON
+# ions (子块, 10 字段) | - | 全 -1 | % | Cl, SO4, NO3, F, Ca, NH4, Na, Mg, K, H
+#                          |     |       |   | 全部 -1→回退JSON; 全部有效值→覆盖; 混合→报错
+#                          |     |       |   | 全有效值时 10 种离子之和必须 = 100, H⁺ > 0
+#
+# === output ===
+# directory   | str      | ./output | - | 输出目录路径
+# format      | str      | csv      | - | csv|netcdf
+# variables   | list     | [pH, base_saturation, CEC_occupied, exchangeable_Ca, exchangeable_Al] | - | 见正文注释 (7 种)
+#
+# ════════════════════════════════════════════════════════════
+# 配置正文: 以下为 config.yaml 的完整可填配置
+# 每个参数右侧为简短说明, 详细可选值见上方速查表
+# ════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────
+# simulation: 模拟控制参数
+# ─────────────────────────────────────────────
+simulation:
+  n_years: 50                    # 模拟年数，短期试验 5~10，长期研究 50~100
+  time_step: monthly             # 月步长（当前唯一支持值）
+  sub_time_step_days: 0          # 0=关闭；1~7=启用子步长(天)，降水按子步均分
+  scenario: natural              # natural|fertilizer|fertilizer_lime|precip_increase|temp_increase
+  engine_mode: auto              # auto=优先PHREEQC|phreeqc=强制官方|simplified=始终简化
+  precip_infiltration: 0.05      # 降水入渗比例，0.01(排水好)~0.20(低洼积水)
+
+# ─────────────────────────────────────────────
+# soil_data: 土壤数据配置
+# ─────────────────────────────────────────────
+soil_data:
+  input_file: data/soil_survey.csv       # 土壤普查CSV，列名须含 pH/有机质/CEC 等(见README)
+  exchangeable_ions_file: data/exchangeable_ions.csv  # 交换性阳离子CSV，单位 cmol(+)/kg
+  soil_type: red_soil            # red_soil|black_soil|purple_soil，对应矿物数据库条目
+
+  # 土壤普查参数 (config 内联, v0.2.3): 全部 -1 → 读取 data/soil_survey.csv;
+  # 全部有效值 → 覆盖 CSV; 混合 → 报错
+  survey:
+    ph: -1                       # 初始 pH，-1=使用CSV
+    organic_matter: -1           # 有机质 g/kg，-1=使用CSV
+    cec: -1                      # 阳离子交换量 cmol(+)/kg，-1=使用CSV
+    bulk_density: -1             # 容重 g/cm³，-1=使用CSV
+    area: -1                     # 耕地面积 ha，-1=使用CSV
+    effective_depth: -1          # 有效土层厚度 cm，-1=使用CSV
+    available_p: -1              # 有效磷 mg/kg，-1=使用CSV
+    available_k: -1              # 速效钾 mg/kg，-1=使用CSV
+    texture: -1                  # 质地编码 1~9(卡钦斯基制, 见config/texture_code.json)，-1=使用CSV
+    sand_pct: -1                 # 砂粒 %，-1=使用CSV
+    silt_pct: -1                 # 粉粒 %，-1=使用CSV
+    clay_pct: -1                 # 黏粒 %，-1=使用CSV
+
+  # 交换性阳离子 (config 内联, v0.2.3): 逻辑同上 (全 -1 → 读取 exchangeable_ions.csv)
+  exchangeable_ions:
+    exch_ca: -1                  # 交换性 Ca cmol(+)/kg，-1=使用CSV
+    exch_mg: -1                  # 交换性 Mg cmol(+)/kg，-1=使用CSV
+    exch_k: -1                   # 交换性 K cmol(+)/kg，-1=使用CSV
+    exch_na: -1                  # 交换性 Na cmol(+)/kg，-1=使用CSV
+    exch_al: -1                  # 交换性 Al cmol(+)/kg，-1=使用CSV
+    exch_h: -1                   # 交换性 H cmol(+)/kg，-1=使用CSV
+
+# ─────────────────────────────────────────────
+# climate: 气候强迫配置
+# ─────────────────────────────────────────────
+climate:
+  base_annual_precip: 1893.0     # 基准年降水量，广东约 1893 mm/yr
+  base_annual_temp: 25.0         # 基准年均温，广东约 25 °C
+  precip_increase_rate: 0.02     # precip_increase 情景: 降水年增比例
+  temp_increase_rate: 0.05       # temp_increase 情景: 温度年增量 °C/yr
+
+# ─────────────────────────────────────────────
+# fertilizer: 肥料配置（仅 fertilizer/fertilizer_lime 情景生效）
+# ─────────────────────────────────────────────
+fertilizer:
+  n: 12.0                        # 氮肥 kg N/ha/次（10~13），硝化产酸
+  p2o5: 4.0                      # 磷肥 kg P2O5/ha/次（3~4）
+  k2o: 9.0                       # 钾肥 kg K2O/ha/次（8~10）
+  mgo: 3.0                       # 镁肥 kg MgO/ha/次（2~3）
+  znso4: 1.0                     # 硫酸锌 kg ZnSO4/ha/次（1~2）
+  apply_months: [3, 6, 9]        # 施肥月份（1~12 整数列表），设 [] 停用
+
+# ─────────────────────────────────────────────
+# lime: 石灰配置（仅 fertilizer_lime 情景生效）
+# ─────────────────────────────────────────────
+lime:
+  amount_per_apply: 45.0         # 生石灰 kg CaO/ha/次（40~50），水化产碱
+  apply_months: [3, 6, 9]        # 石灰施用月份（1~12 整数列表），设 [] 停用
+
+# ─────────────────────────────────────────────
+# soil_co2: 土壤 CO₂ 分压配置
+# ─────────────────────────────────────────────
+soil_co2:
+  pCO2_ref: 0.015                # 参考CO2分压 atm（0.005~0.060）
+  T_ref: 25.0                    # 参考温度 °C（通常设研究区年均温）
+  beta: 0.05                     # 温度响应系数 1/°C（0.03~0.08）
+
+# ─────────────────────────────────────────────
+# precipitation_chemistry: 降水化学配置
+# ─────────────────────────────────────────────
+precipitation_chemistry:
+  input_file: config/precip_chemistry_default.json  # 回退 JSON 路径 (全 -1 时读取)
+  ph: -1                     # 降水 pH，-1=使用JSON
+  ions:
+    Cl: -1                   # Cl⁻ 当量占比 %，-1=使用JSON
+    SO4: -1                  # SO₄²⁻ 当量占比 %
+    NO3: -1                  # NO₃⁻ 当量占比 %
+    F: -1                    # F⁻ 当量占比 %
+    Ca: -1                   # Ca²⁺ 当量占比 %
+    NH4: -1                  # NH₄⁺ 当量占比 %
+    Na: -1                   # Na⁺ 当量占比 %
+    Mg: -1                   # Mg²⁺ 当量占比 %
+    K: -1                    # K⁺ 当量占比 %
+    H: -1                    # H⁺ 当量占比 %
+  # 逻辑: 全部 -1 → 读取 input_file JSON (广东2025公报);
+  #       全部有效值 → 覆盖 JSON (10 离子之和须 = 100); 混合 → 报错
+
+# ─────────────────────────────────────────────
+# output: 输出配置
+# ─────────────────────────────────────────────
+output:
+  directory: ./output            # 输出目录（自动创建，含CSV/图/日志）
+  format: csv                    # csv|netcdf（netcdf 需安装 netCDF4，未装自动回退）
+  variables: [pH, base_saturation, CEC_occupied, exchangeable_Ca,
+              exchangeable_Al, mineral_mass, solution_ions]  # 输出变量
+  # 可选变量: pH, base_saturation, CEC_occupied, exchangeable_Ca,
+  #           exchangeable_Al, mineral_mass(JSON), solution_ions(JSON)
+  # 时间列 year/month/time_decimal 始终输出
+

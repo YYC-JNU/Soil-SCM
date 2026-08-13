@@ -20,6 +20,30 @@ soil_data:
   exchangeable_ions_file: data/exchangeable_ions.csv
   soil_type: red_soil            # 土壤类型标识符(用于查矿物数据库)
 
+  # v0.2.3: config 内联土壤参数 (优先读取; 填 -1 = 使用 data/ CSV 默认值)
+  # 逻辑: 全部 -1 → 读取 CSV; 全部有效值 → 覆盖 CSV; 混合 → 报错
+  survey:
+    ph: -1                       # 初始 pH
+    organic_matter: -1           # 有机质 (g/kg)
+    cec: -1                      # 阳离子交换量 (cmol(+)/kg)
+    bulk_density: -1             # 容重 (g/cm³)
+    area: -1                     # 耕地面积 (ha)
+    effective_depth: -1          # 有效土层厚度 (cm)
+    available_p: -1              # 有效磷 (mg/kg)
+    available_k: -1              # 速效钾 (mg/kg)
+    texture: -1                  # 质地编码 1~9 (卡钦斯基制, 见 config/texture_code.json)
+    sand_pct: -1                 # 砂粒 (%)
+    silt_pct: -1                 # 粉粒 (%)
+    clay_pct: -1                 # 黏粒 (%)
+
+  exchangeable_ions:
+    exch_ca: -1                  # 交换性 Ca (cmol(+)/kg)
+    exch_mg: -1                  # 交换性 Mg (cmol(+)/kg)
+    exch_k: -1                   # 交换性 K (cmol(+)/kg)
+    exch_na: -1                  # 交换性 Na (cmol(+)/kg)
+    exch_al: -1                  # 交换性 Al (cmol(+)/kg)
+    exch_h: -1                   # 交换性 H (cmol(+)/kg)
+
 climate:
   base_annual_precip: 1893.0     # 基准年降水量 (mm/yr)
   base_annual_temp: 25.0         # 基准年平均温度 (°C)
@@ -49,8 +73,20 @@ soil_co2:
   #   Davidson & Trumbore (1995), Tellus B, 47(5), 550-565.
 
 precipitation_chemistry:
-  use_custom: false              # true=使用用户数据, false=使用default
-  input_file: null               # 用户降水化学数据文件路径
+  # v0.2.3: config 内联降水化学 (优先); 全部 -1 → 读取 input_file JSON
+  input_file: config/precip_chemistry_default.json
+  ph: -1                     # 降水 pH, -1=使用JSON
+  ions:
+    Cl: -1                   # Cl⁻ 当量占比 %, -1=使用JSON
+    SO4: -1                  # SO₄²⁻ 当量占比 %
+    NO3: -1                  # NO₃⁻ 当量占比 %
+    F: -1                    # F⁻ 当量占比 %
+    Ca: -1                   # Ca²⁺ 当量占比 %
+    NH4: -1                  # NH₄⁺ 当量占比 %
+    Na: -1                   # Na⁺ 当量占比 %
+    Mg: -1                   # Mg²⁺ 当量占比 %
+    K: -1                    # K⁺ 当量占比 %
+    H: -1                    # H⁺ 当量占比 %
   # 默认数据 (2026-08-12 更新, 据《2025年广东省生态环境状况公报》):
   #   pH=5.75, 离子当量占比%: Cl 18.4 / SO4 12.5 / NO3 10.8 / F 2.1 /
   #   Ca 20.9 / NH4 15.8 / Na 11.5 / Mg 5.1 / K 1.9 / H 1.0
