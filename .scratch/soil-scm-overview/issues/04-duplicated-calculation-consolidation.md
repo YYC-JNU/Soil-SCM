@@ -4,7 +4,22 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** ✅ 已完成 (implemented via /implement)
+
+## 完成说明 (2026-08-13)
+
+**改动内容**：
+1. `utils.py`：删除 6 个零调用死函数（`mol_per_kg_to_cmol`/`kg_per_ha_to_mol_per_ha`/`calc_soil_mass_per_ha`/`estimate_base_saturation`/`urea_to_hno3_equivalent`/`calcite_dissolution_rate`）；保留 `cmol_to_mol_per_kg`、`estimate_soil_pCO2` 并接入实际调用。模块从 140 行瘦身至 ~50 行。
+2. `initial_condition.py`：删除 `_calc_soil_mass`/`_calc_porosity` 方法，复用 `SoilProfile.soil_mass_per_ha`/`porosity` 属性（修复 Feature Envy）；`_calc_cec_total` 改用 `utils.cmol_to_mol_per_kg`（cmol 换算单一事实来源）。
+3. `climate_forcing.py`：`_generate_pCO2` 改用 `utils.estimate_soil_pCO2`（pCO2 公式单一事实来源）。
+
+**一处偏差（有意）**：工单示例"主程序盐基饱和度改用 estimate_base_saturation"未采纳——main.py 的盐基饱和度是**动态交换位点电荷占比**（基于模拟后交换组成），与静态 cmol(+)/kg 语义不同，替换会改变数值。该公式仅 main.py 一处实现，非重复，保留内联。
+
+**验证**：
+- 完整测试套件 62 passed（数值锁定用例 test_soil_mass/test_porosity/test_cec_total 全过）。
+- E2E 数值对比：soil_mass_kg=3.600e6、porosity=0.5472、cec_total_mol=4.32e5、pCO2[0,0]=0.011682，与重构前完全一致。
+- 全仓搜索确认无已删除函数的残留引用。
+- `/code-review` 双轴通过（Standards 0 硬性发现，Spec 4 条验收全达成）。
 
 ## Background（审查发现 S2 + S3 + S1）
 

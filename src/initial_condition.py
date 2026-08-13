@@ -28,6 +28,7 @@ from typing import Dict, Optional, Tuple
 from dataclasses import dataclass, field
 from src.logging_config import get_logger
 from src.constants import MINERAL_SCALE
+from src.utils import cmol_to_mol_per_kg
 
 logger = get_logger("initial_condition")
 
@@ -71,47 +72,17 @@ class InitialConditionBuilder:
         self.mineral_info = mineral_db_info
         self.pCO2 = pCO2
 
-        # 计算衍生量
+        # 计算衍生量 (复用 SoilProfile 已有属性, 消除重复实现, T04)
         # 注意: porosity 必须先于 solution_volume 计算
         # ( _calc_solution_volume 内部引用 self.porosity )
-        self.soil_mass_kg = self._calc_soil_mass()
-        self.porosity = self._calc_porosity()
+        self.soil_mass_kg = self.profile.soil_mass_per_ha
+        self.porosity = self.profile.porosity
         self.solution_volume_L = self._calc_solution_volume()
         self.cec_total_mol = self._calc_cec_total()
 
     # ============================================================
     # 基础物理量计算
     # ============================================================
-
-    def _calc_soil_mass(self) -> float:
-        """计算单位面积土壤质量 (kg/ha)
-
-        公式: mass = bulk_density × depth × area
-        其中 area = 1 ha = 10^4 m² = 10^8 cm²
-
-        参数:
-            bulk_density: 容重 (g/cm³)
-            effective_depth: 有效土层厚度 (cm)
-
-        返回:
-            土壤质量 (kg/ha)
-        """
-        depth_m = self.profile.effective_depth / 100.0  # cm → m
-        volume_m3 = depth_m * 10000.0                   # m³/ha
-        mass_kg = self.profile.bulk_density * 1000.0 * volume_m3
-        return mass_kg
-
-    def _calc_porosity(self) -> float:
-        """估算土壤孔隙度
-
-        公式: porosity = 1 - bulk_density / particle_density
-        假设土壤颗粒密度为 2.65 g/cm³ (石英为主)
-
-        返回:
-            孔隙度 (无量纲, 0~1)
-        """
-        particle_density = 2.65  # g/cm³
-        return 1.0 - self.profile.bulk_density / particle_density
 
     def _calc_solution_volume(self) -> float:
         """估算土壤溶液体积 (L/ha)
@@ -132,11 +103,12 @@ class InitialConditionBuilder:
         """将 CEC 从 cmol(+)/kg 转换为 mol (对于整个土柱)
 
         公式: CEC_total(mol) = CEC(cmol(+)/kg) / 100 × soil_mass(kg)
+        换算复用 utils.cmol_to_mol_per_kg (单一事实来源, T04)
 
         返回:
             CEC 总量 (mol)
         """
-        cec_mol_per_kg = self.profile.cec / 100.0  # cmol(+)/kg → mol/kg
+        cec_mol_per_kg = cmol_to_mol_per_kg(self.profile.cec)  # cmol(+)/kg → mol/kg
         cec_total_mol = cec_mol_per_kg * self.soil_mass_kg
         return cec_total_mol
 

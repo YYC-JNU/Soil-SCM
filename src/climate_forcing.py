@@ -12,6 +12,7 @@
 
 import numpy as np
 from typing import Tuple
+from src.utils import estimate_soil_pCO2
 
 
 class ClimateForcing:
@@ -103,6 +104,7 @@ class ClimateForcing:
         """生成逐月土壤CO2分压序列
 
         公式: pCO2(T) = pCO2_ref × exp[β × (T - T_ref)]
+        计算复用 utils.estimate_soil_pCO2 (单一事实来源, T04)
         参考文献:
           Brook G.A. et al. (1983). Earth Surface Processes and Landforms.
           Davidson E.A. & Trumbore S.E. (1995). Tellus B, 47(5), 550-565.
@@ -112,8 +114,8 @@ class ClimateForcing:
         for year in range(self.n_years):
             for month in range(12):
                 T = self.monthly_temp[year, month]
-                pCO2[year, month] = self.pCO2_ref * \
-                    np.exp(self.beta * (T - self.T_ref))
+                pCO2[year, month] = estimate_soil_pCO2(
+                    T, self.pCO2_ref, self.T_ref, self.beta)
 
         return pCO2
 
