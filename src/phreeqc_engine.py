@@ -176,6 +176,66 @@ class PhreeqcEngine:
             return self._run_simplified_step(state, monthly_forcing,
                                              action, soil_profile)
 
+    def run_monthly_multi_layer(self, states: list,
+                                monthly_forcing: dict,
+                                action,
+                                soil_profile) -> Tuple[list, list]:
+        """执行多分层月度计算步 (WF2, 基于 WF1 架构决策)
+
+        架构 (WF1 Q1-Q4, Q7):
+          - Q1: List[SoilState] — 每层独立完整状态
+          - Q3: 级联下渗 — 最上层接受 precip×infiltration, 每层平衡后
+               超出持水水量(含溶质)逐层下渗, 最底层流失
+          - Q2/Q7: 一维平流 — 上层排水量 × 平衡后溶液浓度(SELECTED_OUTPUT
+               totals) = 移出摩尔量, 作为下层 REACTION 输入 (守恒)
+          - Q4: run_monthly_step 单层接口不变 (深模块), 此处是高层编排层
+
+        参数:
+            states: List[SoilState] — 各层当前状态 (长度 = n_layers)
+            monthly_forcing: 当月气候强迫
+            action: 当月操作指令
+            soil_profile: 土壤剖面数据 (各层默认参数相同, ROADMAP 约束)
+
+        返回:
+            (List[SoilState], List[DiagnosticOutput]) — 更新后各层状态与诊断
+        """
+        n = len(states)
+        if n == 1:
+            # 回归护栏: 单层走原接口 (WF1 Q4)
+            new_state, diag = self.run_monthly_step(
+                states[0], monthly_forcing, action, soil_profile)
+            return [new_state], [diag]
+
+        new_states = []
+        diags = []
+        # 级联下渗: 上一层排出的溶质 (mol) 注入下一层
+        inflow_ions = {}  # 初始为 None: 最上层无层间输入
+        for i in range(n):
+            layer_forcing = dict(monthly_forcing)
+            if inflow_ions:
+                # 下层: 接收上层排水溶质 (Q2/Q7 平流守恒)
+                layer_forcing['inflow_ions'] = inflow_ions
+            new_state, diag = self.run_monthly_step(
+                states[i], layer_forcing, action, soil_profile)
+            new_states.append(new_state)
+            diags.append(diag)
+
+            # 计算本层排水携带的溶质 → 作为下一层输入 (Q7 守恒核算)
+            if i < n - 1:
+                # 排水量 = 入渗水量 (L), 由 precip_infiltration 决定
+                # 1 mm 降水 × 10000 m2/ha × 入渗系数 = L/ha (与引擎内一致)
+                drain_water_L = (monthly_forcing.get('precip', 0.0)
+                                 * 10000.0 * self.precip_infiltration)
+                inflow_ions = {}
+                for ion, conc in new_state.solution.items():
+                    if ion in ('temp', 'pH', 'pe', 'units'):
+                        continue
+                    # totals (mol/kgw ≈ mol/L) × 排水水量(L) = 移出摩尔量
+                    if conc > 0:
+                        inflow_ions[ion] = conc * drain_water_L
+
+        return new_states, diags
+
     def _run_official_step(self, state, forcing, action, profile):
         """使用官方 phreeqc (IPhreeqc 3.8.6) 引擎执行单月计算"""
         # 构建 PHREEQC 输入字符串 (含 SELECTED_OUTPUT 查询块)
@@ -337,6 +397,15 @@ class PhreeqcEngine:
                     if mol > 0:
                         reaction_lines.append(
                             f"  {sp:<8} {mol:.6e}  # 降水{sp}")
+
+        # WF2/Q2+Q7: 层间平流输入 — 上层排水溶质 (mol) 注入本层
+        # 由 run_monthly_multi_layer 计算上层 SELECTED_OUTPUT totals × 排水量
+        inflow_ions = forcing.get('inflow_ions')
+        if inflow_ions:
+            for ion, mol in inflow_ions.items():
+                if mol > 0:
+                    reaction_lines.append(
+                        f"  {ion:<8} {mol:.6e}  # 上层排水")
 
         if action.apply_fertilizer:
             # 氮肥 (N): 尿素硝化产 NO3- + 2H+ (按 N 元素计)

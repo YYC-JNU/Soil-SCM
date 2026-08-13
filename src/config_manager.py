@@ -27,6 +27,7 @@ class SimulationConfig:
     scenario: str = "natural"
     engine_mode: str = "auto"  # auto / phreeqc / simplified (v0.2.1 默认官方引擎)
     precip_infiltration: float = PRECIP_INFILTRATION_DEFAULT  # 降水入渗系数 0~1 (T3)
+    n_layers: int = 1  # 分层数 (WF2): 1=单层, 4=多分层 (各层默认参数相同)
 
 
 @dataclass
@@ -202,7 +203,8 @@ class ConfigManager:
                 sub_time_step_days=s.get('sub_time_step_days', 0),
                 scenario=s.get('scenario', 'natural'),
                 engine_mode=s.get('engine_mode', 'auto'),
-                precip_infiltration=s.get('precip_infiltration', PRECIP_INFILTRATION_DEFAULT)
+                precip_infiltration=s.get('precip_infiltration', PRECIP_INFILTRATION_DEFAULT),
+                n_layers=s.get('n_layers', 1)
             )
 
         # 解析 soil_data (v0.2.3: 支持 config 内联字段, -1=回退 CSV)
