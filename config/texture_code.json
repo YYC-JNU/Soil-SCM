@@ -1,0 +1,20 @@
+{
+  "description": "中国土壤质地分类编码表（卡钦斯基制，按物理性黏粒 <0.01mm 含量划分）",
+  "unit": "编码数字",
+  "usage": "config.yaml 中 soil_data.survey.texture 填写编码数字；填 -1 则读取 data/soil_survey.csv 的默认质地",
+  "texture_codes": {
+    "1": { "name": "松砂土", "physical_clay_pct": "<5" },
+    "2": { "name": "紧砂土", "physical_clay_pct": "5~10" },
+    "3": { "name": "砂壤土", "physical_clay_pct": "10~20" },
+    "4": { "name": "轻壤土", "physical_clay_pct": "20~30" },
+    "5": { "name": "中壤土", "physical_clay_pct": "30~45" },
+    "6": { "name": "重壤土", "physical_clay_pct": "45~60" },
+    "7": { "name": "轻黏土", "physical_clay_pct": "60~70" },
+    "8": { "name": "中黏土", "physical_clay_pct": "70~80" },
+    "9": { "name": "重黏土", "physical_clay_pct": ">80" }
+  },
+  "references": [
+    "熊毅, 李庆逵. 中国土壤. 科学出版社, 1987.",
+    "中国科学院南京土壤研究所. 中国土壤质地分类（卡钦斯基制）."
+  ]
+}
