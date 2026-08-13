@@ -1,6 +1,6 @@
 # Soil-SCM: 土壤物理化学数值模式
 
-> **版本：v0.2.3**（2026-08-13）
+> **版本：v0.2.4**（2026-08-13）
 
 基于 PHREEQC 地球化学引擎的土壤单点物理化学数值模式，用于模拟长期（数十年）施肥、酸化、淋溶与改良条件下的土壤化学演变（pH、盐基饱和度、交换性阳离子等）。
 
@@ -32,18 +32,21 @@ Soil-SCM/
 ├── data/                       # 输入数据
 │   ├── soil_survey.csv         # 土壤普查数据
 │   └── exchangeable_ions.csv   # 交换性阳离子初始值
-├── tests/                      # pytest 单元测试（51 用例）
+├── tests/                      # pytest 单元测试（62 用例）
 │   ├── conftest.py
 │   └── test_*.py
 ├── docs/                       # 项目文档
 │   ├── ROADMAP.md              # 优化路线图
 │   ├── OPTIMIZATION_PLAN.md    # 问题清单与优化计划（Q1-Q26）
+│   ├── V0_2_4_TICKET_SUMMARY.md # v0.2.4 工单验收汇总（T01/T02/T04）
 │   ├── Q1_ANALYSIS.md          # Q1 引擎分析
 │   ├── Q1_plus_ANALYSIS.md     # Q1+ 矿物量诊断
 │   ├── Q7_PRECIP_CHEMISTRY.md  # Q7 降水化学集成
 │   ├── V0_2_0_ENGINEERING_REPORT.md
 │   ├── V0_2_2_SHORT_TERM_REPORT.md
 │   └── GIT_GUIDE.md            # Git 协作指南
+├── .scratch/                   # 本地工单追踪（spec + 工单）
+│   └── soil-scm-overview/issues/
 ├── output/                     # 运行产物（gitignore，自动生成）
 ├── _plot_pH_scenarios.py       # 辅助：4 情景 pH 对比图
 ├── _plot_ion_concentrations.py # 辅助：离子浓度曲线图
@@ -79,7 +82,7 @@ pip install -r requirements.txt
 ### 运行测试
 
 ```bash
-# v0.2.0 起建立 pytest 测试框架（tests/，38 用例）
+# v0.2.0 起建立 pytest 测试框架（tests/，当前 62 用例）
 pytest tests/ -v
 ```
 
@@ -211,7 +214,7 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 | `_plot_Q7_30yr.py` | Q7 降水化学集成 + F1 pCO₂ 传递后 natural 情景 30 年 pH 与全部离子浓度曲线 |
 | `_compare_before_after.py` | 官方引擎 50 年 fertilizer_lime 化学演化监控（pH / 盐基饱和度 / 交换性 Al / Ca 四联图） |
 
-`error.inp` 为 PHREEQC 计算失败时自动生成的完整输入复现文件（Q18 异常分级），可据此复现与调试。
+`error.inp` 为 PHREEQC 计算失败时**自动生成**的完整输入复现文件（Q18 异常分级，T01 修复）：当官方引擎 `RunString` 抛出异常并降级时，完整输入字符串写入 `error.inp`，每次失败刷新；写入失败不影响主流程（记录日志后继续降级模拟）。可据此复现与调试。
 
 ## 八、后续扩展建议
 
@@ -242,3 +245,10 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 3. **矿物量折中**：矿物量取物理值 0.001（`mineral_scale`），以避免矿物量大导致的碱性突变，但压缩了矿物缓冲容量（详见 `docs/Q1_plus_ANALYSIS.md`）。
 
 > ✅ **v0.1.4 已解决**：**降水化学集成（Q7）**——降水含 Cl⁻/SO₄²⁻/NO₃⁻/NH₄⁺ 等离子（据《2025年广东省生态环境状况公报》），原"保守离子 Cl⁻ 持续淋失"局限已解决（详见 `docs/Q7_PRECIP_CHEMISTRY.md`）。
+
+> ✅ **v0.2.4 工程化改进（T01/T02/T04）**：
+> - **T01**：PHREEQC 失败自动落盘 `error.inp` 复现文件（README 承诺兑现，含写入失败隔离）。
+> - **T02**：气候修正机制收敛——`MonthlyAction` 移除永不生效的 `precip_factor`/`temp_offset` 死字段，气候修正明确由气候强迫生成器（ClimateForcing）承担。
+> - **T04**：重复计算收敛与死函数清理——土壤质量/静态盐基饱和度/cmol 换算/pCO2 公式收敛为单一事实来源；`utils.py` 删除 6 个零调用函数。
+>
+> 详见 `docs/V0_2_4_TICKET_SUMMARY.md`。
