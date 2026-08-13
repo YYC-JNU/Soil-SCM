@@ -246,3 +246,18 @@
 | 低 | 8 | Q14 Q17 Q20 Q21 Q22 Q23 Q24 Q26 |
 
 > 合计 26 项。
+
+---
+
+### T01+T02+T04 — 工程化清理（2026-08-13, v0.2.4）
+
+**背景**：基于 `.scratch/soil-scm-overview/` spec 与 `/code-review` 审查发现（P1/P2/S1/S2/S3）拆分的三张工单，经 `/implement`+`/tdd`+`/code-review` 完成。
+
+**改动**：
+- **T01**（P1）：`src/phreeqc_engine.py` 异常分支追加 `Path(ERROR_INP_PATH).write_text(input_string)`（写入失败 try/except 隔离）；`src/constants.py` 新增 `ERROR_INP_PATH="error.inp"`（Q19 收敛）。README 承诺的"失败自动生成 error.inp"兑现。
+- **T02**（P2+S1）：`src/scenario_controller.py` 移除 `MonthlyAction.precip_factor`/`temp_offset` 死字段（从未赋值/读取）；spec 4 处同步（US28/情景-动作分离/领域词汇/S2 接缝）。
+- **T04**（S2+S3+S1）：`src/utils.py` 删除 6 个零调用函数；`initial_condition.py` 复用 `SoilProfile` 属性（修复 Feature Envy）+ `_calc_cec_total` 接入 `cmol_to_mol_per_kg`；`climate_forcing.py` 接入 `estimate_soil_pCO2`。
+
+**验证**：pytest 62 passed（+2 新增）；E2E 数值一致（soil_mass=3.6e6/porosity=0.5472/cec_total=4.32e5/pCO2=0.011682）；`/code-review` 双轴通过。
+
+**说明**：main.py 盐基饱和度为动态交换位点电荷占比（与静态 cmol 语义不同），保留内联，未按工单示例改用 `estimate_base_saturation`。
