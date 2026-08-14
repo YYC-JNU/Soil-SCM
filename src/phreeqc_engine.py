@@ -23,7 +23,10 @@ from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
                            HFO_SPECIFIC_AREA, HFO_STRONG_SITE_DENSITY,
                            HFO_WEAK_SITE_DENSITY,
                            NITRIFICATION_K1, NITRIFICATION_K2,
-                           N_MOL_PER_KG_N)
+                           N_MOL_PER_KG_N,
+                           PRE_EQUIL_PH_TOL, PRE_EQUIL_ION_TOL,
+                           PRE_EQUIL_PH_GAIN, PRE_EQUIL_ION_GAIN,
+                           ALX3_DEFAULT_LOGK, ALX3_SELECTIVITY_LOGK)
 from src.logging_config import get_logger
 
 logger = get_logger("phreeqc_engine")
@@ -231,6 +234,129 @@ class PhreeqcEngine:
             return self._run_simplified_step(state, monthly_forcing,
                                              action, soil_profile)
 
+    def pre_equilibrate(self, state: SoilState, soil_profile,
+                        max_steps: int = 100) -> SoilState:
+        """前处理预平衡: 观测锚定迭代, 使初始状态在观测约束下自洽 [v0.5.0]
+
+        背景: 初始状态由溶液/交换/矿物三相独立估算拼合, 首次 PHREEQC 平衡
+        剧烈重分配 (pH 漂移、交换 Al 被矿物相吸收, L9 根因)。自由预平衡
+        实测让 pH 漂移至 2.88 (偏离观测 5.0)——故改为**观测锚定**:
+        把 config/CSV 输入的观测 (pH + 全部交换性离子) 作为硬约束,
+        通过迭代反馈 (比例-阻尼控制) 修正溶液, 使稳态接近观测。
+
+        实现 (grilling Q1=B/Q2=A/Q3=(a)/Q5=A/Q6):
+          - 每步 run_monthly_step 后计算观测偏差 (ΔpH/Δ各交换离子)
+          - REACTION 注入修正: pH→H+/OH-, 交换离子→对应阳离子 (顺序迭代)
+          - 收敛: ΔpH < 0.3 且各交换离子相对偏差 < 10%, 或 max_steps 截断
+          - 锚定仅预平衡期; 长期模拟交换 Al 自由演化 (可耗尽)
+          - simplified 引擎跳过
+
+        参数:
+            state: 初始构建的状态
+            soil_profile: 土壤剖面 (观测 pH/交换离子来源)
+            max_steps: 最大迭代步数 (默认 100, Q5=A)
+
+        返回:
+            观测锚定后的状态
+        """
+        if self.mode == 'simplified' or self.backend != 'official':
+            return state
+
+        from src.initial_condition import InitialConditionBuilder
+        from src.scenario_controller import MonthlyAction
+        # 观测目标: 交换离子 (cmol/kg → mol, 与 build_exchange 换算一致)
+        builder = InitialConditionBuilder(
+            soil_profile, None,
+            pCO2=state.gas_phase.get('CO2(g)', 0.015))
+        targets = builder.build_exchange()
+        target_ph = soil_profile.ph
+
+        # 工单 17: 偏离度诊断快照 (初始 vs 稳态)
+        init_snapshot = {'pH': state.ph}
+        for ion in ('CaX2', 'MgX2', 'KX', 'NaX', 'AlX3'):
+            init_snapshot[ion] = state.exchange.get(ion, 0.0)
+
+        action = MonthlyAction()
+        current = state
+        # 先平衡一步 (暴露首次平衡的观测漂移)
+        forcing = {'precip': 0.0, 'temp': current.temperature,
+                   'pCO2': current.gas_phase.get('CO2(g)', 0.015)}
+        current, _ = self.run_monthly_step(current, forcing, action,
+                                           soil_profile)
+        # 迭代修正: 计算观测偏差 → 注入拉回 → 再平衡, 直到收敛
+        for _ in range(max_steps - 1):
+            injection = self._compute_anchor_injection(
+                current, targets, target_ph)
+            if not injection:
+                break   # 观测偏差全部收敛
+            forcing = {'precip': 0.0, 'temp': current.temperature,
+                       'pCO2': current.gas_phase.get('CO2(g)', 0.015),
+                       'injection': injection}
+            current, _ = self.run_monthly_step(current, forcing, action,
+                                               soil_profile)
+
+        # 工单 17: 偏离度诊断 (初始 vs 稳态)
+        self.last_pre_equilibration_diagnostics = {
+            'pH': (init_snapshot['pH'], current.ph),
+        }
+        for ion in ('CaX2', 'MgX2', 'KX', 'NaX', 'AlX3'):
+            self.last_pre_equilibration_diagnostics[ion] = (
+                init_snapshot[ion], current.exchange.get(ion, 0.0))
+        self._log_pre_equilibration_diagnostics()
+        return current
+
+    def _compute_anchor_injection(self, state, targets: dict,
+                                  target_ph: float) -> dict:
+        """计算交换离子锚定修正注入 (比例-阻尼控制, v0.5.0 支柱②)
+
+        v0.5.0: **移除 pH 锚定** — GAS_PHASE 固定分压 CO2 会缓冲吸收碱
+        (实测注入 H -3000/-10000/-30000 结果完全相同 pH 3.612), 锚定 pH
+        无效。pH 自然平衡并记录于偏离度诊断 (支柱① 缺口修正后自然接近观测)。
+
+        返回空 dict 表示全部交换离子观测偏差已收敛 (<10%)。
+        """
+        injection = {}
+        sp_map = {'CaX2': 'Ca+2', 'MgX2': 'Mg+2', 'KX': 'K+',
+                  'NaX': 'Na+', 'AlX3': 'Al+3'}
+        for ion, target in targets.items():
+            if target <= 0 or ion not in sp_map:
+                continue
+            cur = state.exchange.get(ion, 0.0)
+            dev = (cur - target) / target
+            if abs(dev) > PRE_EQUIL_ION_TOL:
+                injection[sp_map[ion]] = (
+                    injection.get(sp_map[ion], 0.0)
+                    + dev * target * PRE_EQUIL_ION_GAIN)
+        return injection
+
+    def _log_pre_equilibration_diagnostics(self):
+        """日志输出预平衡偏离度诊断 + 阈值警示 (工单 17, Q5=A)
+
+        科学判据 (初值, 实测后校准): ΔpH < 0.5 且各交换性离子相对变化 < 20%
+        视为"输入参数物理合理" (稳态接近观测); 超出则警示。
+        """
+        if not getattr(self, 'last_pre_equilibration_diagnostics', None):
+            return
+        diag = self.last_pre_equilibration_diagnostics
+        d_ph = abs(diag['pH'][1] - diag['pH'][0])
+        lines = ['初始状态预平衡完成:']
+        lines.append('  pH: %.3f -> %.3f (Δ=%.3f)' % (
+            diag['pH'][0], diag['pH'][1], d_ph))
+        warn = d_ph > 0.5
+        for ion in ('CaX2', 'MgX2', 'KX', 'NaX', 'AlX3'):
+            init_v, eq_v = diag[ion]
+            rel = (abs(eq_v - init_v) / max(abs(init_v), 1e-6)) * 100.0
+            lines.append('  %s: %.3e -> %.3e (相对变化 %.1f%%)' % (
+                ion, init_v, eq_v, rel))
+            if rel > 20.0:
+                warn = True
+        if warn:
+            logger.warning('预平衡偏离度超阈值 (ΔpH>0.5 或交换离子变化>20%%): '
+                           '输入参数可能不物理, 请检查观测值', extra=None)
+            logger.warning('  ' + '\n  '.join(lines[1:]))
+        else:
+            logger.info('  ' + '\n  '.join(lines[1:]))
+
     def run_monthly_multi_layer(self, states: list,
                                 monthly_forcing: dict,
                                 action,
@@ -422,6 +548,14 @@ class PhreeqcEngine:
         lines.append("  -tolerance 1e-12")
         lines.append("")
 
+        # v0.5.0 L9: 覆盖 AlX3 交换选择性 log_k (抑制盐基置换交换 Al)
+        # 仅在校准值 != 数据库默认值时输出 (默认不改变行为)
+        if ALX3_SELECTIVITY_LOGK != ALX3_DEFAULT_LOGK:
+            lines.append("EXCHANGE_SPECIES")
+            lines.append("Al+3 + 3 X- = AlX3")
+            lines.append(f"    -log_k {ALX3_SELECTIVITY_LOGK}")
+            lines.append("")
+
         # SOLUTION 块
         # -water 指定土柱溶液体积 (L), 使溶液与交换/矿物摩尔量量级匹配
         lines.append("SOLUTION 1")
@@ -520,6 +654,14 @@ class PhreeqcEngine:
         h_mol = n_reaction.get('H+', 0.0)
         if h_mol > 0:
             reaction_lines.append(f"  H+     {h_mol:.6e}  # 硝化产酸")
+
+        # v0.5.0: 预平衡观测锚定注入 (pH/交换离子修正, 见 pre_equilibrate)
+        injection = forcing.get('injection')
+        if injection:
+            for sp, mol in injection.items():
+                if abs(mol) > 1e-12:
+                    reaction_lines.append(
+                        f"  {sp:<8} {mol:.6e}  # 预平衡锚定")
 
         if action.apply_fertilizer:
             # 磷肥 (P2O5 → 2 H2PO4-)

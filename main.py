@@ -186,6 +186,15 @@ def run_simulation(config_path: str = "config/config.yaml"):
     soil_states = [engine.build_initial_state(
         soil_profile, soil_info, initial_pCO2) for _ in range(n_layers)]
 
+    # v0.5.0: 初始状态预平衡 (热力学自洽, 默认开启, L9 落地)
+    # 无干预多步平衡让溶液/交换/矿物三相重新分配至稳态, 避免首次平衡
+    # 剧烈重分配 (矿物量大时交换 Al 被矿物相吸收 → fertilizer 长期耗尽)
+    if getattr(cfg.simulation, 'enable_pre_equilibration', True):
+        pre_steps = getattr(cfg.simulation, 'pre_equilibration_max_steps', 60)
+        soil_state = engine.pre_equilibrate(soil_state, soil_profile, pre_steps)
+        soil_states = [engine.pre_equilibrate(s, soil_profile, pre_steps)
+                       for s in soil_states]
+
     print(f"\n初始状态:")
     if n_layers > 1:
         print(f"  分层数: {n_layers} (各层默认参数相同)")

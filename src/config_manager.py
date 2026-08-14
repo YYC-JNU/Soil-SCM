@@ -29,6 +29,8 @@ class SimulationConfig:
     precip_infiltration: float = PRECIP_INFILTRATION_DEFAULT  # 降水入渗系数 0~1 (T3)
     n_layers: int = 1  # 分层数 (WF2): 1=单层, 4=多分层 (各层默认参数相同)
     enable_surface: bool = False  # WF4: 启用 SURFACE 表面络合 (Hfo_s/Hfo_w), 默认关闭
+    enable_pre_equilibration: bool = True  # v0.5.0: 初始状态预平衡 (热力学自洽, 默认开启)
+    pre_equilibration_max_steps: int = 60  # v0.5.0: 预平衡最大步数 (收敛判据见引擎)
 
 
 @dataclass
@@ -206,7 +208,9 @@ class ConfigManager:
                 engine_mode=s.get('engine_mode', 'auto'),
                 precip_infiltration=s.get('precip_infiltration', PRECIP_INFILTRATION_DEFAULT),
                 n_layers=s.get('n_layers', 1),
-                enable_surface=s.get('enable_surface', False)
+                enable_surface=s.get('enable_surface', False),
+                enable_pre_equilibration=s.get('enable_pre_equilibration', True),
+                pre_equilibration_max_steps=s.get('pre_equilibration_max_steps', 60)
             )
 
         # 解析 soil_data (v0.2.3: 支持 config 内联字段, -1=回退 CSV)

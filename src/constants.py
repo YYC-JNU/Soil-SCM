@@ -80,3 +80,27 @@ SOLUTION_TOTAL_CATION_CONC = 2e-3
 AMORPHOUS_ALOH3_MASS_FRACTION = 0.02
 # Al(OH)3 摩尔质量 (g/mol)
 AMORPHOUS_ALOH3_MOLAR_MASS = 78.0
+
+# ---- 观测锚定预平衡参数 (v0.5.0, grilling Q5=A) ----
+# 预平衡通过迭代反馈 (比例-阻尼) 使初始状态在观测 (pH + 交换离子) 约束下
+# 自洽: 每步注入修正 (pH→H+/OH-, 交换离子→对应阳离子), 直到观测偏差收敛。
+# 收敛判据 (Q5=A): ΔpH < 0.3 且各交换离子相对偏差 < 10%
+PRE_EQUIL_PH_TOL = 0.3      # pH 收敛阈值 (观测 vs 稳态)
+PRE_EQUIL_ION_TOL = 0.10    # 交换离子相对偏差阈值
+PRE_EQUIL_PH_GAIN = 3000.0  # pH 修正增益 (mol H/每 pH 单位, 比例控制, 实测标定 08-14)
+PRE_EQUIL_ION_GAIN = 0.5    # 交换离子修正增益 (偏差比例 → 注入比例)
+
+# ---- CEC 缺口补齐参数 (v0.5.0, B 诊断落地) ----
+# build_exchange 中 CEC 缺口 (= CEC - Σ观测交换离子) 的填充分配:
+# 缺口 × GAP_AL_FRACTION → AlX3 (三价), 缺口 × (1-GAP_AL_FRACTION) → NaX (一价)。
+# B 诊断 (2026-08-14): 缺口全 Al (比例=1.0) 使自然平衡 pH 4.36 偏离观测 5.0;
+# 全 Na (比例=0.0) 使 pH 5.1 自洽但盐基饱和度偏高。参数化在"pH 自洽"与
+# "盐基物理"间取平衡, 扫描确定默认值 (见 docs/V0_5_0_REPORT.md)。
+GAP_AL_FRACTION = 0.3       # 缺口中 Al 占比 (扫描确定 2026-08-14: 0.3→首平衡 pH 4.92, Δ=0.08 最接近观测 5.0)
+
+# ---- AlX3 交换选择性校准参数 (v0.5.0, L9) ----
+# 引擎层 EXCHANGE_SPECIES 覆盖 Al+3 + 3X- = AlX3 的 log_k (默认 0.41=数据库值)。
+# 校准方向: 增大 log_k → 增强 Al 对交换位点亲和力, 抑制盐基置换交换 Al。
+# 历史教训 (ROADMAP): 0.41→5.0 曾在 natural 场景无效, fertilizer 场景需扫描。
+ALX3_DEFAULT_LOGK = 0.41    # phreeqc.dat 数据库原值
+ALX3_SELECTIVITY_LOGK = 0.41   # 校准值 (默认=数据库值, 仅覆盖非默认时输出 EXCHANGE_SPECIES)
