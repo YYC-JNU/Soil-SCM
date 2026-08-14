@@ -1,6 +1,6 @@
 # Soil-SCM: 土壤物理化学数值模式
 
-> **版本：v0.2.4**（2026-08-13）
+> **版本：v0.2.6**（2026-08-14）
 
 基于 PHREEQC 地球化学引擎的土壤单点物理化学数值模式，用于模拟长期（数十年）施肥、酸化、淋溶与改良条件下的土壤化学演变（pH、盐基饱和度、交换性阳离子等）。
 
@@ -32,13 +32,14 @@ Soil-SCM/
 ├── data/                       # 输入数据
 │   ├── soil_survey.csv         # 土壤普查数据
 │   └── exchangeable_ions.csv   # 交换性阳离子初始值
-├── tests/                      # pytest 单元测试（62 用例）
+├── tests/                      # pytest 单元测试（85 用例）
 │   ├── conftest.py
 │   └── test_*.py
 ├── docs/                       # 项目文档
 │   ├── ROADMAP.md              # 优化路线图
 │   ├── OPTIMIZATION_PLAN.md    # 问题清单与优化计划（Q1-Q26）
 │   ├── V0_2_4_TICKET_SUMMARY.md # v0.2.4 工单验收汇总（T01/T02/T04）
+│   ├── V0_2_5_FINAL_REPORT.md   # v0.2.5 最终总结汇报（多分层+SURFACE）
 │   ├── Q1_ANALYSIS.md          # Q1 引擎分析
 │   ├── Q1_plus_ANALYSIS.md     # Q1+ 矿物量诊断
 │   ├── Q7_PRECIP_CHEMISTRY.md  # Q7 降水化学集成
@@ -82,7 +83,7 @@ pip install -r requirements.txt
 ### 运行测试
 
 ```bash
-# v0.2.0 起建立 pytest 测试框架（tests/，当前 62 用例）
+# v0.2.0 起建立 pytest 测试框架（tests/，当前 85 用例）
 pytest tests/ -v
 ```
 
@@ -103,6 +104,8 @@ pytest tests/ -v
 | 区块 | 参数 | 默认值 | 说明 |
 |------|------|--------|------|
 | `simulation` | `n_years` | `50` | 模拟年数 |
+| `simulation` | `n_layers` | `1` | 分层数（v0.2.5）：`1`=单层，`4`=多分层（各层默认参数相同） |
+| `simulation` | `enable_surface` | `false` | SURFACE 表面络合（v0.2.5）：`true`=启用 Hfo_s/Hfo_w 铁氧化物表面，P/Zn 吸附生效 |
 | `simulation` | `sub_time_step_days` | `0` | 子时间步长（天）：`0`=关闭，`1~7`=启用（与月步长结果一致，Q10） |
 | `climate` | `base_annual_precip` | `1893.0` | 基准年降水量（mm/yr） |
 | `climate` | `base_annual_temp` | `25.0` | 基准年平均温度（°C） |
