@@ -30,9 +30,12 @@ MINERAL_SCALE = 0.001
 ERROR_INP_PATH = "error.inp"
 
 # ---- Hfo 表面位点参数 (WF4: SURFACE 表面络合, Dzombak & Morel 1990) ----
-# 铁氧化物比表面积 (m2/g): HFO 典型值 (Dzombak & Morel)
+# 铁氧化物比表面积 (m2/g): HFO 典型值 (Dzombak & Morel), 仅用于质量推导
 HFO_SPECIFIC_AREA = 600.0
 # 强位点 (Hfo_s) 位点密度 (mol/m2): D&M 标准 0.005 mol/mol Fe 折算
 HFO_STRONG_SITE_DENSITY = 8.35e-4
 # 弱位点 (Hfo_w) 位点密度 (mol/m2): D&M 标准 0.2 mol/mol Fe 折算
 HFO_WEAK_SITE_DENSITY = 1.67e-2
+# 目标表面位点总量 (mol): D&M 模型适用浓度范围 (~1e-4 mol/L), 超出会数值失稳
+# (WF5 实测: 表面位点 >~100 mol 时 Al/Ca 不收敛, 交换位点被误判为抽干)
+HFO_TARGET_SITES = 50.0

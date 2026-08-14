@@ -344,8 +344,10 @@ class PhreeqcEngine:
 
         # KNOBS: 提高收敛鲁棒性 (物理矿物量较大时数值更难收敛)
         # 迭代数取 100 平衡速度与收敛 (500 会使长模拟显著变慢)
+        # WF4/WF5: SURFACE 增加非线性, 需更高迭代数收敛 (1000, 实测验证)
+        iterations = 1000 if self.enable_surface else 100
         lines.append("KNOBS")
-        lines.append("  -iterations 100")
+        lines.append(f"  -iterations {iterations}")
         lines.append("  -tolerance 1e-12")
         lines.append("")
 
@@ -388,9 +390,9 @@ class PhreeqcEngine:
         lines.append("")
 
         # SURFACE 块 (WF4: Hfo_s/Hfo_w 铁氧化物表面络合, 默认关闭)
-        # PHREEQC 语法: {name} {面积m2} {比表面m2/g} {位点密度mol/m2}
+        # PHREEQC 语法: {name} {表面积m2} {比表面m2/g} {位点密度mol/m2}
         #   -equilibrate with solution 1 (与溶液平衡)
-        # 面积 = 铁氧化物质量(g) × 比表面积(m2/g); 位点量 = 面积 × 位点密度
+        # 位点量 = 面积 × 位点密度; 面积由 build_surface 按 HFO_TARGET_SITES 反算
         if self.enable_surface and state.surface:
             surface_area = state.surface.get('area_m2', 0.0)
             if surface_area > 0:

@@ -27,6 +27,7 @@
 - [WF2 多分层模型实现](tickets/WF2-multilayer-implementation.md) — 已实现：`run_monthly_multi_layer` 编排层 + `n_layers` 配置 + 层后缀输出；4 层 E2E 通过（Ca 逐层累积证明平流生效）；单层回归保持（列名/pH 不变）；71 测试全绿
 - [WF3 SURFACE 表面络合可行性调研](tickets/WF3-surface-feasibility.md) — phreeqc.dat 原生支持 Hfo_s/Hfo_w（Dzombak & Morel 1990），P/Zn 吸附丰富但 **Al 无表面物种**；`build_surface()` 需改位点名（Hfo→Hfo_s/Hfo_w）+ 移除 Som；建议 WF4 仅启用铁氧化物表面，有机质/Al 表面列为独立工单
 - [WF4 SURFACE 表面络合启用决策](tickets/WF4-surface-implementation.md) — 决策已定：Q2 调整为推迟 Al 表面（四源查证无标准数据）；Q3 阶段一用 phreeqc.dat（已含 Hfo_s/Hfo_w）；Q4 有机质表面排除；实现范围=Hfo_s/Hfo_w + `enable_surface` 配置 + P/Zn 吸附（78 测试全绿）
+- [WF5 多分层 + SURFACE 集成验证与回归](tickets/WF5-integration-validation.md) — 多层推迟 pH 突升（第 8→10 年）+ 垂直梯度（Q12* 部分解决）；SURFACE P/Zn 吸附（Q9 解决）；SURFACE 雨季加速 Al 耗尽（诚实记录）；Al 表面络合列独立工单；82 测试全绿
 
 ## Not yet specified
 
@@ -56,6 +57,6 @@
 | WF2 | 多分层模型实现 | task | WF1 | ✅ closed |
 | WF3 | SURFACE 表面络合可行性调研 | research | None | ✅ closed |
 | WF4 | SURFACE 表面络合启用决策与实现 | grilling+task | WF3 | ✅ closed |
-| WF5 | 多分层 + SURFACE 集成验证与回归 | task | WF2（已解除）, WF4（已解除） | open |
+| WF5 | 多分层 + SURFACE 集成验证与回归 | task | WF2, WF4 | ✅ closed |
 
 **前沿（可立即开工）**: WF4

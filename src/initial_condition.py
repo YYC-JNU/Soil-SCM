@@ -27,7 +27,8 @@ import numpy as np
 from typing import Dict, Optional, Tuple
 from dataclasses import dataclass, field
 from src.logging_config import get_logger
-from src.constants import MINERAL_SCALE, HFO_SPECIFIC_AREA
+from src.constants import MINERAL_SCALE, HFO_STRONG_SITE_DENSITY, \
+    HFO_WEAK_SITE_DENSITY, HFO_TARGET_SITES
 from src.utils import cmol_to_mol_per_kg
 
 logger = get_logger("initial_condition")
@@ -390,9 +391,10 @@ class InitialConditionBuilder:
     def build_surface(self) -> Optional[Dict[str, float]]:
         """构建表面络合数据 (可选, WF4: Hfo_s/Hfo_w 铁氧化物表面)
 
-        返回含铁氧化物总表面积 (m2), 供引擎生成 SURFACE 块:
-          面积 = 铁氧化物质量(g) × 比表面积(m2/g)
-        位点密度在引擎侧按 Dzombak & Morel (1990) 拆分强/弱 (10%/90%)。
+        返回铁氧化物表面积 (m2), 供引擎生成 SURFACE 块。
+        面积按 HFO_TARGET_SITES 目标位点总量反算, 约束在 D&M 模型适用
+        浓度范围 (~1e-4 mol/L, 对应表面位点 ~50 mol), 避免数值失稳
+        (WF5 实测: 位点 >~100 mol 时 Al/Ca 不收敛)。
         有机质表面 (Som) 不启用: phreeqc.dat 无对应 SURFACE_MASTER_SPECIES。
 
         参考文献:
@@ -400,9 +402,9 @@ class InitialConditionBuilder:
           龚子同. 中国土壤地理. 江苏科学技术出版社, 2004.
 
         返回:
-            dict: {'area_m2': 铁氧化物总表面积}, 或 None (无铁氧化物时)
+            dict: {'area_m2': 铁氧化物表面积}, 或 None (无铁氧化物时)
         """
-        # ---- 铁氧化物表面位点 (针铁矿 + 赤铁矿) ----
+        # ---- 检查是否有铁氧化物 (针铁矿 + 赤铁矿) ----
         fe_oxides = ['goethite', 'hematite']
         fe_mass_kg = 0.0
         for mname in fe_oxides:
@@ -413,11 +415,9 @@ class InitialConditionBuilder:
         if fe_mass_kg <= 0:
             return None
 
-        # 铁氧化物比表面积 (m2/g), HFO 典型值 (Dzombak & Morel)
-        # 折中: 表面面积与矿物量一致缩放 (MINERAL_SCALE, 见 Q1_plus_ANALYSIS),
-        #       避免过量表面位点导致 P/Zn 完全吸附掩盖其他化学 (WF4 校准)
-        surface_area_m2 = (fe_mass_kg * 1000.0 * HFO_SPECIFIC_AREA
-                           * MINERAL_SCALE)
+        # 面积 = 目标位点总量 / 总位点密度 (强+弱)
+        total_density = (HFO_STRONG_SITE_DENSITY + HFO_WEAK_SITE_DENSITY)
+        surface_area_m2 = HFO_TARGET_SITES / total_density
         return {'area_m2': surface_area_m2}
 
     # ============================================================

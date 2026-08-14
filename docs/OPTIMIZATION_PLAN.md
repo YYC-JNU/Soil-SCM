@@ -261,3 +261,20 @@
 **验证**：pytest 62 passed（+2 新增）；E2E 数值一致（soil_mass=3.6e6/porosity=0.5472/cec_total=4.32e5/pCO2=0.011682）；`/code-review` 双轴通过。
 
 **说明**：main.py 盐基饱和度为动态交换位点电荷占比（与静态 cmol 语义不同），保留内联，未按工单示例改用 `estimate_base_saturation`。
+
+---
+
+### WF1-WF5 — 中期架构：多分层 + SURFACE（2026-08-13, v0.2.5）
+
+**背景**：经 wayfinder 地图（WF1-WF5）规划的中期架构升级——多分层模型（Q12*）+ SURFACE 表面络合（Q9）。
+
+**改动**：
+- **WF1（决策）**：`List[SoilState]` + 一维平流 + 级联下渗；`run_monthly_step` 接口不变 + 新增 `run_monthly_multi_layer` 编排层；`n_layers` 配置 + 层后缀输出。
+- **WF2（多分层实现）**：`run_monthly_multi_layer` 编排层（层循环 + 级联平流交换）；`SoilState` 列表状态；SELECTED_OUTPUT totals × 排水量守恒核算。
+- **WF3（SURFACE 调研）**：phreeqc.dat 原生支持 Hfo_s/Hfo_w（Dzombak & Morel 1990），P/Zn 吸附丰富但 **Al 表面物种缺失**（minteq.v4/wateq4f/RES³T 四源查证均为研究空白）。
+- **WF4（SURFACE 实现）**：`build_surface()` 重构（Hfo_s/Hfo_w 位点，HFO_TARGET_SITES 约束收敛）；`enable_surface` 配置；KNOBS 迭代数自适应（SURFACE 时 1000）；P/Zn 吸附显著增强。
+- **WF5（集成验证）**：4 层 + SURFACE 组合测试（82 用例全绿）；验证结论——多层**推迟** pH 突升（第 8→10 年）+ 垂直梯度；SURFACE 增强 P/Zn 吸附但**雨季加速 Al 耗尽**；**Al 表面络合未实现**（研究空白，独立工单）。
+
+**验证**：pytest 82 passed；4 层无 SURFACE 15 年模拟：前 7 年 pH 梯度稳定（4.9→7.9 顶层），第 10 年突升（Al 耗尽不可避免）。
+
+**结论**：Q12* 部分解决（多层推迟 + 垂直梯度）、Q9 解决（P/Zn 吸附）；完整解决 pH 突升需 Al 矿物化抑制等进一步机制。

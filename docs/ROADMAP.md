@@ -123,11 +123,20 @@ Q10 子时间步、Q11 输出变量、Q14 anatase、Q17 包结构、Q19 魔法�
   - [x] `src/precip_chemistry.py`：占比→mol/L 换算（pH 自洽总当量 1.78e-4 eq/L），`reaction_amounts()` 供 REACTION
   - [x] F1 修复：GAS_PHASE `-pressure` 用 `forcing['pCO2']`；F2 修复：`MINERAL_SCALE=0.001` 双路径统一
   - [x] 验证：30 年 natural 模拟 `output/pH_ions_30yr_Q7.png`（详见 docs/Q7_PRECIP_CHEMISTRY.md）
-- [ ] **多分层模型**（4 层，0-10/10-20/20-40/40-60cm）：Al 下移累积、盐基优先淋洗、避免表层缓冲耗尽（解决 pH 突变）
-  - [ ] 设计决策（2026-08-12 确认）：**各层默认参数相同**（当前无土壤剖面观测约束）；
+- [x] **多分层模型（WF1/WF2，v0.2.4）**：`List[SoilState]` + 一维平流 + 级联下渗；`n_layers` 配置（默认 1）
+  - [x] 设计决策（2026-08-12 确认）：**各层默认参数相同**（当前无土壤剖面观测约束）；
         后续通过外部输入文件（CSV/JSON）逐层覆盖容重、CEC、交换性阳离子、
         矿物组成、pCO₂ 等参数（保留 `n_layers=1` 单层兼容）
-- [ ] SURFACE 表面络合（Q9）：Hfo_s/Hfo_w 按 phreeqc.dat（增强 P/Zn/Al 吸附描述）
+  - [x] 实现：`run_monthly_multi_layer` 编排层 + 层后缀输出（82 测试全绿）
+  - [x] 验证结论：**多层推迟 pH 突升**（单层第 8 年 vs 4 层第 10 年），建立垂直 pH 梯度
+        （表层高/底层低，盐基优先淋洗）；但 Al 耗尽最终不可避免（10 年+）——
+        **部分解决 Q12***，完整解决需进一步机制（如 Al 矿物化抑制）
+- [x] **SURFACE 表面络合（WF3/WF4，v0.2.4）**：Hfo_s/Hfo_w 按 phreeqc.dat（增强 P/Zn 吸附）
+  - [x] 实现：`build_surface()` 重构 + `enable_surface` 配置 + 迭代数自适应
+  - [x] 验证结论：**P/Zn 吸附显著增强**（红壤磷固定）；**Al 表面络合未实现**
+        （phreeqc.dat/minteq.v4/wateq4f/RES³T 四源查证无标准数据，研究空白）
+  - [x] 已知交互：SURFACE 在雨季强入渗时会加速交换 Al 耗尽（Hfo 质子化驱动）——
+        需与多层配合使用，独立启用会加剧 pH 上升
 - [ ] 硝化两步动力学（尿素→NH₄⁺→NO₃⁻）
 - [ ] 电荷平衡用 HCO₃ 缓冲（Q13）
 
@@ -154,3 +163,4 @@ Q10 子时间步、Q11 输出变量、Q14 anatase、Q17 包结构、Q19 魔法�
 | v0.2.2 | 2026-08-12 | 短期收尾：T3 入渗参数化 + Q19 常量收敛 + Q8 输入清理 + Q10/Q11 验证 |
 | v0.2.3 | 2026-08-13 | soil_data/降水化学支持 config 内联字段（-1 回退 CSV/JSON） |
 | v0.2.4 | 2026-08-13 | 工程化清理：T01 error.inp 落盘 + T02 死字段清理 + T04 重复计算收敛（62 用例全绿） |
+| v0.2.5 | 2026-08-13 | 中期架构（WF1-WF5）：多分层模型（推迟 pH 突升）+ SURFACE 表面络合（P/Zn 吸附）；82 用例全绿 |

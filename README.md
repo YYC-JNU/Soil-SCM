@@ -238,11 +238,12 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 - Parton W.J. et al. Analysis of factors controlling soil organic matter levels in Great Plains grasslands. SSSAJ, 1987, 51(5): 1173-1179.
 - Tang D., Larssen T., Lange R.D. et al. Soil acidification and soil quality in China. European Journal of Soil Science, 2006, 57(1): 1-11.
 
-## 十、已知模型局限（v0.2.2）
+## 十、已知模型局限（v0.2.5）
 
-1. **交换性 Al 缓冲库耗尽 → pH 突变**：单层模型 + 排水使交换性 Al 被淋洗耗尽（约第 8 年，AlX3→0），土壤失去主要产酸源后 pH 突升至 ~10。真实红壤 Al 会下移累积，需**多分层模型**解决。
+1. **交换性 Al 缓冲库耗尽 → pH 突变**：单层模型 + 排水使交换性 Al 被淋洗耗尽（约第 8 年，AlX3→0），土壤失去主要产酸源后 pH 突升至 ~10。**v0.2.5 多分层模型推迟至约第 10 年**并建立垂直梯度（表层高/底层低，盐基优先淋洗），但 Al 耗尽最终不可避免（详见 `docs/ROADMAP.md`）。
 2. **Al(OH)₄⁻ 两性溶解**：pH 升高后总 Al 浓度反而上升——Al 以铝酸根（Al(OH)₄⁻）形态碱性溶解，Al³⁺ 实际剧降（pH 10 时 ~10⁻²³）。
 3. **矿物量折中**：矿物量取物理值 0.001（`mineral_scale`），以避免矿物量大导致的碱性突变，但压缩了矿物缓冲容量（详见 `docs/Q1_plus_ANALYSIS.md`）。
+4. **SURFACE 与雨季交互**：启用 SURFACE（`enable_surface: true`）后，Hfo 表面质子化在雨季强入渗时加速交换 Al 耗尽，pH 上升更快——建议与多分层配合使用，独立启用会加剧。
 
 > ✅ **v0.1.4 已解决**：**降水化学集成（Q7）**——降水含 Cl⁻/SO₄²⁻/NO₃⁻/NH₄⁺ 等离子（据《2025年广东省生态环境状况公报》），原"保守离子 Cl⁻ 持续淋失"局限已解决（详见 `docs/Q7_PRECIP_CHEMISTRY.md`）。
 
@@ -252,3 +253,9 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 > - **T04**：重复计算收敛与死函数清理——土壤质量/静态盐基饱和度/cmol 换算/pCO2 公式收敛为单一事实来源；`utils.py` 删除 6 个零调用函数。
 >
 > 详见 `docs/V0_2_4_TICKET_SUMMARY.md`。
+
+> ✅ **v0.2.5 中期架构（WF1-WF5）**：
+> - **多分层模型**：`n_layers` 配置（默认 1），4 层时推迟 pH 突升并建立垂直梯度（`run_monthly_multi_layer` 编排层）。
+> - **SURFACE 表面络合**：`enable_surface` 配置（默认 false），Hfo_s/Hfo_w 铁氧化物表面，P/Zn 吸附显著增强（红壤磷固定）；**Al 表面络合未实现**（研究空白，独立工单）。
+>
+> 详见 `docs/OPTIMIZATION_PLAN.md` 的 WF1-WF5 记录。
