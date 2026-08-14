@@ -36,7 +36,8 @@ from src.constants import (MINERAL_SCALE, HFO_STRONG_SITE_DENSITY,
                            CHARGE_BALANCE_CL_RESIDUAL,
                            SOLUTION_TOTAL_CATION_CONC,
                            AMORPHOUS_ALOH3_MASS_FRACTION,
-                           AMORPHOUS_ALOH3_MOLAR_MASS)
+                           AMORPHOUS_ALOH3_MOLAR_MASS,
+                           GAP_AL_FRACTION)
 from src.utils import cmol_to_mol_per_kg
 
 logger = get_logger("initial_condition")
@@ -317,17 +318,19 @@ class InitialConditionBuilder:
         na_mol = (na_ion_mol_per_kg + h_ion_mol_per_kg) * self.soil_mass_kg
         al_mol = al_ion_mol_per_kg * self.soil_mass_kg
 
-        # 用 AlX3 补齐 CEC 未覆盖的位点 (Q12 修复)
-        # 酸性红壤的交换性酸主要由 Al³⁺ 主导 (而非 Na⁺):
-        # 当交换性阳离子电荷总和 < CEC 时, 缺口位点以 Al³⁺ 填充,
-        # 使总交换位点 = CEC 且交换组成符合红壤物理特征。
+        # 用 AlX3/NaX 按比例补齐 CEC 未覆盖的位点 (v0.5.0, B 诊断落地)
+        # 历史: Q12 修复曾全用 Al³⁺ 填充缺口 (酸性红壤交换性酸主导),
+        # 但 B 诊断 (2026-08-14) 实测: 缺口全 Al 使自然平衡 pH 4.36 偏离
+        # 观测 5.0; 全 Na 使 pH 5.1 自洽但盐基饱和度偏高。参数化折中:
+        #   缺口 × GAP_AL_FRACTION → AlX3 (三价), 缺口 × (1-比例) → NaX (一价)
         covered_charge_cmol = (
             self.profile.exch_ca + self.profile.exch_mg +
             self.profile.exch_k + self.profile.exch_na +
             self.profile.exch_al + self.profile.exch_h
         )
         gap_cmol = max(0.0, self.profile.cec - covered_charge_cmol)
-        al_mol += gap_cmol / 3.0 / 100.0 * self.soil_mass_kg  # Al³⁺ 三价
+        al_mol += (gap_cmol * GAP_AL_FRACTION) / 3.0 / 100.0 * self.soil_mass_kg
+        na_mol += (gap_cmol * (1.0 - GAP_AL_FRACTION)) / 1.0 / 100.0 * self.soil_mass_kg
 
         # PHREEQC EXCHANGE 写法 (仅使用 phreeqc.dat 已定义的物种)
         exchange = {
