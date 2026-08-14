@@ -278,3 +278,20 @@
 **验证**：pytest 82 passed；4 层无 SURFACE 15 年模拟：前 7 年 pH 梯度稳定（4.9→7.9 顶层），第 10 年突升（Al 耗尽不可避免）。
 
 **结论**：Q12* 部分解决（多层推迟 + 垂直梯度）、Q9 解决（P/Zn 吸附）；完整解决 pH 突升需 Al 矿物化抑制等进一步机制。
+
+---
+
+### L2 — 矿物演化回填（2026-08-13, v0.2.6, Q12* 根治）
+
+**背景**：WF5 验证确认多层推迟但未根治 pH 突升。实验定位真正根因——**非矿物量不足**（增大矿物量反而加速 Al 耗尽），而是 `_parse_official_output` 的 Q1 占位实现 `new_state.minerals = old_state.minerals` 将矿物相**冻结**，使矿物成为"单向 Al 汇"（吸收交换 Al 沉淀但不回补）。
+
+**改动**：
+- `phreeqc_engine._build_phreeqc_input`：SELECTED_OUTPUT 加 `-equilibrium_phases`（输出矿物摩尔量）
+- `phreeqc_engine._parse_official_output`：读取矿物摩尔量回填 `new_state.minerals`（含 `max(0.0)` 防御 + 未输出兜底）
+
+**验证**（修复前后对比）：
+- 修复前：单层 AlX3 第 8 年耗尽 → pH 突升 10.66
+- 修复后：单层 12 年 AlX3 稳定 67,409 mol → pH 平缓 6.46；4 层 8 年各层 Al 保留、pH 梯度稳定（6.08/4.14）
+- 新增 `tests/test_mineral_evolution.py`（3 用例），完整套件 85 passed
+
+**结论**：Q12* 从"部分解决（推迟）"升级为"**根治**"——矿物演化回填建立 Al 循环通道。
