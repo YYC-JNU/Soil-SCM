@@ -28,3 +28,11 @@ MINERAL_SCALE = 0.001
 # ---- PHREEQC 失败输入复现文件路径 (Q18 落盘, T01 修复) ----
 # 官方引擎计算失败时, 完整输入字符串写入此文件供复现与调试 (README 承诺)
 ERROR_INP_PATH = "error.inp"
+
+# ---- Hfo 表面位点参数 (WF4: SURFACE 表面络合, Dzombak & Morel 1990) ----
+# 铁氧化物比表面积 (m2/g): HFO 典型值 (Dzombak & Morel)
+HFO_SPECIFIC_AREA = 600.0
+# 强位点 (Hfo_s) 位点密度 (mol/m2): D&M 标准 0.005 mol/mol Fe 折算
+HFO_STRONG_SITE_DENSITY = 8.35e-4
+# 弱位点 (Hfo_w) 位点密度 (mol/m2): D&M 标准 0.2 mol/mol Fe 折算
+HFO_WEAK_SITE_DENSITY = 1.67e-2

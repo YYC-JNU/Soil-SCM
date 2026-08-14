@@ -19,7 +19,9 @@ from dataclasses import dataclass, field
 from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
                            SIMPLIFIED_K_PRECIP, SIMPLIFIED_K_FERT,
                            SIMPLIFIED_K_LIME, PH_LOWER, PH_UPPER,
-                           ERROR_INP_PATH)
+                           ERROR_INP_PATH,
+                           HFO_SPECIFIC_AREA, HFO_STRONG_SITE_DENSITY,
+                           HFO_WEAK_SITE_DENSITY)
 from src.logging_config import get_logger
 
 logger = get_logger("phreeqc_engine")
@@ -39,6 +41,7 @@ class SoilState:
     exchange: dict = field(default_factory=dict)
     minerals: dict = field(default_factory=dict)
     gas_phase: dict = field(default_factory=dict)
+    surface: dict = field(default_factory=dict)   # WF4: Hfo_s/Hfo_w 表面位点
     volume: float = 1.0          # 土壤溶液体积 (L)
     temperature: float = 25.0
     ph: float = 7.0
@@ -64,7 +67,8 @@ class PhreeqcEngine:
     def __init__(self, database: str = 'phreeqc.dat',
                  mode: str = 'auto', backend: str = 'official',
                  precip_chem=None,
-                 precip_infiltration: float = PRECIP_INFILTRATION_DEFAULT):
+                 precip_infiltration: float = PRECIP_INFILTRATION_DEFAULT,
+                 enable_surface: bool = False):
         """
         参数:
             database: PHREEQC 热力学数据库
@@ -77,6 +81,9 @@ class PhreeqcEngine:
                 - 其他取值    : 已废弃 (phreeqpython 等), 自动视为 official
             precip_chem: 降水化学对象 (PrecipChemistry) 或 None (Q7)
             precip_infiltration: 降水入渗系数 0~1 (T3 参数化, 默认 0.05)
+            enable_surface: 是否启用 SURFACE 表面络合 (WF4, 默认关闭)
+                - True : 生成 Hfo_s/Hfo_w 铁氧化物表面, P/Zn 吸附生效
+                - False: 不生成 SURFACE 块 (回归护栏)
         """
         self.database = database
         self.mode = mode
@@ -86,6 +93,7 @@ class PhreeqcEngine:
         self.backend = 'official'
         self.official = None    # 官方 phreeqc 后端实例
         self.precip_chem = precip_chem  # 降水化学 (Q7)
+        self.enable_surface = enable_surface  # WF4: SURFACE 表面络合开关
         self._fallback_warned = False
         self._permanent_fallback = False
         self.last_error_message = None    # Q18: 最近一次引擎失败信息
@@ -138,6 +146,9 @@ class PhreeqcEngine:
         state.minerals = builder.build_minerals()
         state.gas_phase = builder.build_gas_phase()
         state.volume = builder.solution_volume_L
+        # WF4: SURFACE 表面络合 (Hfo_s/Hfo_w), 默认关闭
+        if self.enable_surface:
+            state.surface = builder.build_surface() or {}
 
         return state
 
@@ -321,6 +332,8 @@ class PhreeqcEngine:
         # 矿物相: Q1 阶段保持旧值 (矿物量变化小; 完整追踪见后续优化)
         new_state.minerals = old_state.minerals
         new_state.gas_phase = old_state.gas_phase
+        # WF4: 表面位点摩尔量在月步间保持 (吸附位点不因平衡而消失)
+        new_state.surface = old_state.surface
 
         diag = DiagnosticOutput(ph=new_state.ph, pe=new_state.pe)
         return new_state, diag
@@ -373,6 +386,24 @@ class PhreeqcEngine:
         lines.append(f"  -pressure     {pco2:.6f}")
         lines.append("  CO2(g)        1.0")
         lines.append("")
+
+        # SURFACE 块 (WF4: Hfo_s/Hfo_w 铁氧化物表面络合, 默认关闭)
+        # PHREEQC 语法: {name} {面积m2} {比表面m2/g} {位点密度mol/m2}
+        #   -equilibrate with solution 1 (与溶液平衡)
+        # 面积 = 铁氧化物质量(g) × 比表面积(m2/g); 位点量 = 面积 × 位点密度
+        if self.enable_surface and state.surface:
+            surface_area = state.surface.get('area_m2', 0.0)
+            if surface_area > 0:
+                lines.append("SURFACE 1")
+                lines.append(f"  Hfo_s  {surface_area:.6e}  "
+                             f"{HFO_SPECIFIC_AREA:.1f}  "
+                             f"{HFO_STRONG_SITE_DENSITY:.6e}")
+                lines.append("  -equilibrate with solution 1")
+                lines.append(f"  Hfo_w  {surface_area:.6e}  "
+                             f"{HFO_SPECIFIC_AREA:.1f}  "
+                             f"{HFO_WEAK_SITE_DENSITY:.6e}")
+                lines.append("  -equilibrate with solution 1")
+                lines.append("")
 
         # 单一 REACTION 块: 降水入渗 + 施肥(尿素硝化) + 石灰(CaO水化)
         # 注意:
@@ -468,6 +499,7 @@ class PhreeqcEngine:
         new_state.exchange = state.exchange
         new_state.minerals = state.minerals
         new_state.gas_phase = state.gas_phase
+        new_state.surface = state.surface   # WF4: 保留表面位点
         new_state.volume = state.volume
         new_state.temperature = state.temperature
         new_state.pe = state.pe

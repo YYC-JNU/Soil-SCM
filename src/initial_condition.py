@@ -27,7 +27,7 @@ import numpy as np
 from typing import Dict, Optional, Tuple
 from dataclasses import dataclass, field
 from src.logging_config import get_logger
-from src.constants import MINERAL_SCALE
+from src.constants import MINERAL_SCALE, HFO_SPECIFIC_AREA
 from src.utils import cmol_to_mol_per_kg
 
 logger = get_logger("initial_condition")
@@ -53,13 +53,9 @@ class InitialConditionBuilder:
     KSP_AL_OH3 = 3.0e-34   # Al(OH)3 溶度积
     KSP_FE_OH3 = 2.8e-39   # Fe(OH)3 溶度积
 
-    # 有机质表面位点密度 (mol/kg 有机质)
-    # 参考: 熊毅, 李庆逵. 中国土壤. 科学出版社, 1987.
-    OM_SITE_DENSITY = 1.0   # mol/kg
-
-    # 铁氧化物表面位点密度 (mol/kg 铁氧化物)
-    # 参考: 龚子同. 中国土壤地理. 江苏科学技术出版社, 2004.
-    FE_OXIDE_SITE_DENSITY = 0.5  # mol/kg
+    # 铁氧化物表面位点密度 (mol/kg 铁氧化物) — WF4 已移入 constants.py
+    # FE_OXIDE_SITE_DENSITY 由 HFO_SITE_DENSITY 取代; OM_SITE_DENSITY 因
+    # phreeqc.dat 无有机质表面物种而废弃 (见 WF3/WF4)。
 
     def __init__(self, soil_profile, mineral_db_info, pCO2: float):
         """
@@ -392,29 +388,20 @@ class InitialConditionBuilder:
     # ============================================================
 
     def build_surface(self) -> Optional[Dict[str, float]]:
-        """构建表面络合位点数据 (可选)
+        """构建表面络合数据 (可选, WF4: Hfo_s/Hfo_w 铁氧化物表面)
 
-        基于有机质含量和铁铝氧化物含量估算表面位点密度
+        返回含铁氧化物总表面积 (m2), 供引擎生成 SURFACE 块:
+          面积 = 铁氧化物质量(g) × 比表面积(m2/g)
+        位点密度在引擎侧按 Dzombak & Morel (1990) 拆分强/弱 (10%/90%)。
+        有机质表面 (Som) 不启用: phreeqc.dat 无对应 SURFACE_MASTER_SPECIES。
 
         参考文献:
-          有机质表面位点密度: ~0.5-2 mmol/g 有机质
-          铁氧化物表面位点密度: ~0.1-1 mmol/g
-          铝氧化物表面位点密度: ~0.1-0.5 mmol/g
-          熊毅, 李庆逵. 中国土壤. 科学出版社, 1987.
+          Dzombak & Morel (1990). Surface Complexation Modeling: HFO.
           龚子同. 中国土壤地理. 江苏科学技术出版社, 2004.
 
         返回:
-            dict: 表面类型 → 位点摩尔量 (mol), 或 None
+            dict: {'area_m2': 铁氧化物总表面积}, 或 None (无铁氧化物时)
         """
-        surface = {}
-
-        # ---- 有机质表面位点 ----
-        # organic_matter 单位: g/kg
-        om_kg = self.profile.organic_matter / 1000.0 * self.soil_mass_kg
-        om_sites = om_kg * self.OM_SITE_DENSITY
-        if om_sites > 0:
-            surface['Som'] = om_sites
-
         # ---- 铁氧化物表面位点 (针铁矿 + 赤铁矿) ----
         fe_oxides = ['goethite', 'hematite']
         fe_mass_kg = 0.0
@@ -422,11 +409,16 @@ class InitialConditionBuilder:
             if mname in self.mineral_info.minerals:
                 minfo = self.mineral_info.minerals[mname]
                 fe_mass_kg += self.soil_mass_kg * minfo.mass_fraction
-        fe_sites = fe_mass_kg * self.FE_OXIDE_SITE_DENSITY
-        if fe_sites > 0:
-            surface['Hfo'] = fe_sites
 
-        return surface if surface else None
+        if fe_mass_kg <= 0:
+            return None
+
+        # 铁氧化物比表面积 (m2/g), HFO 典型值 (Dzombak & Morel)
+        # 折中: 表面面积与矿物量一致缩放 (MINERAL_SCALE, 见 Q1_plus_ANALYSIS),
+        #       避免过量表面位点导致 P/Zn 完全吸附掩盖其他化学 (WF4 校准)
+        surface_area_m2 = (fe_mass_kg * 1000.0 * HFO_SPECIFIC_AREA
+                           * MINERAL_SCALE)
+        return {'area_m2': surface_area_m2}
 
     # ============================================================
     # 生成 PHREEQC 输入字符串

@@ -28,6 +28,7 @@ class SimulationConfig:
     engine_mode: str = "auto"  # auto / phreeqc / simplified (v0.2.1 默认官方引擎)
     precip_infiltration: float = PRECIP_INFILTRATION_DEFAULT  # 降水入渗系数 0~1 (T3)
     n_layers: int = 1  # 分层数 (WF2): 1=单层, 4=多分层 (各层默认参数相同)
+    enable_surface: bool = False  # WF4: 启用 SURFACE 表面络合 (Hfo_s/Hfo_w), 默认关闭
 
 
 @dataclass
@@ -204,7 +205,8 @@ class ConfigManager:
                 scenario=s.get('scenario', 'natural'),
                 engine_mode=s.get('engine_mode', 'auto'),
                 precip_infiltration=s.get('precip_infiltration', PRECIP_INFILTRATION_DEFAULT),
-                n_layers=s.get('n_layers', 1)
+                n_layers=s.get('n_layers', 1),
+                enable_surface=s.get('enable_surface', False)
             )
 
         # 解析 soil_data (v0.2.3: 支持 config 内联字段, -1=回退 CSV)

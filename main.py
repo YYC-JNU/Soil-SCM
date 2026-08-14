@@ -175,7 +175,8 @@ def run_simulation(config_path: str = "config/config.yaml"):
     engine = PhreeqcEngine(database='phreeqc.dat',
                            mode=cfg.simulation.engine_mode,
                            precip_chem=precip_chem,
-                           precip_infiltration=cfg.simulation.precip_infiltration)
+                           precip_infiltration=cfg.simulation.precip_infiltration,
+                           enable_surface=getattr(cfg.simulation, 'enable_surface', False))
 
     # 构建初始状态 (initial_pCO2 已在阶段 4 中计算)
     # WF2/Q1: 多分层时构建 List[SoilState] (各层默认参数相同, ROADMAP 约束)
