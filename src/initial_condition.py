@@ -27,8 +27,14 @@ import numpy as np
 from typing import Dict, Optional, Tuple
 from dataclasses import dataclass, field
 from src.logging_config import get_logger
-from src.constants import MINERAL_SCALE, HFO_STRONG_SITE_DENSITY, \
-    HFO_WEAK_SITE_DENSITY, HFO_TARGET_SITES
+from src.constants import (MINERAL_SCALE, HFO_STRONG_SITE_DENSITY,
+                           HFO_WEAK_SITE_DENSITY, HFO_TARGET_SITES,
+                           HENRY_CO2 as _HENRY_CO2,
+                           KA1_H2CO3 as _KA1_H2CO3,
+                           KA2_HCO3 as _KA2_HCO3,
+                           KW_WATER as _KW_WATER,
+                           CHARGE_BALANCE_CL_RESIDUAL,
+                           SOLUTION_TOTAL_CATION_CONC)
 from src.utils import cmol_to_mol_per_kg
 
 logger = get_logger("initial_condition")
@@ -45,12 +51,12 @@ class InitialConditionBuilder:
     """
 
     # ============================================================
-    # 热力学常数 (25°C)
+    # 热力学常数 (25°C) — Q19 收敛: 数值来自 src/constants.py (单一事实来源)
     # ============================================================
-    KH_CO2 = 3.4e-2        # CO2 Henry's law constant, mol/(L·atm)
-    KA1_H2CO3 = 4.3e-7     # H2CO3 第一级解离常数
-    KA2_HCO3 = 4.7e-11     # HCO3- 第二级解离常数
-    KW = 1.0e-14           # 水的离子积
+    KH_CO2 = _HENRY_CO2     # CO2 Henry's law constant, mol/(L·atm)
+    KA1_H2CO3 = _KA1_H2CO3  # H2CO3 第一级解离常数
+    KA2_HCO3 = _KA2_HCO3    # HCO3- 第二级解离常数
+    KW = _KW_WATER          # 水的离子积
     KSP_AL_OH3 = 3.0e-34   # Al(OH)3 溶度积
     KSP_FE_OH3 = 2.8e-39   # Fe(OH)3 溶度积
 
@@ -162,9 +168,11 @@ class InitialConditionBuilder:
         else:
             ca_frac = mg_frac = k_frac = na_frac = 0.25
 
-        # 红壤典型总阳离子浓度 (mol/L)
+        # 红壤典型总阳离子浓度 (mol/L) — 土壤溶液浓度 (田间持水)
         # 参考: 熊毅, 李庆逵. 中国土壤. 科学出版社, 1987.
-        total_cation_conc = 2e-3  # mol/L
+        # 注意: 溶液体积为田间持水 (8.2e5 L/ha), 浓度应为土壤溶液量级
+        # (与交换相自洽); 曾尝试淋溶液量级 5e-5 触发 NaX 失衡碱化 (见常量注释)
+        total_cation_conc = SOLUTION_TOTAL_CATION_CONC  # mol/L
 
         ca_conc = ca_frac * total_cation_conc
         mg_conc = mg_frac * total_cation_conc
@@ -175,19 +183,29 @@ class InitialConditionBuilder:
         # 参考: 张远辉等. 中国酸雨研究进展. 环境科学, 2003.
         so4_conc = 5e-5    # SO4^2- (mol/L)
         no3_conc = 1e-5    # NO3^- (mol/L)
-        cl_conc = 3e-5     # Cl^- (mol/L)
+        # Cl^-: 背景微量 (L5 修正: 电荷盈余由 Cl- 兜底, 大盈余下数值由盈余
+        # 决定; 保留背景值避免降水化学 Cl- 输入与初始完全归零的数值边缘)
+        cl_conc = CHARGE_BALANCE_CL_RESIDUAL
 
-        # ---- 电荷平衡修正 (Q13) ----
-        # 初始溶液阳离子电荷常高于阴离子, 若不修正, PHREEQC 平衡时
-        # 只能靠 OH- 补足电中性, 导致平衡 pH 大幅偏离真实值。
-        # 用保守离子 Cl- 补足正电荷盈余。
+        # ---- 电荷平衡修正 (L5, v0.3.0 修正) ----
+        # 背景: 初始溶液阳离子电荷高于阴离子, 若不修正, PHREEQC 平衡时只能靠
+        # OH- 补足电中性, 平衡 pH 大幅偏离。
+        # L5 修正要点 (经实测校准):
+        #   - HCO3- 浓度由 pCO2 决定 (亨利定律, 与 GAS_PHASE 开放体系自洽)
+        #   - _check_charge_balance 用碳酸体系真实电荷 (替代旧 C(4) 一价简化)
+        #   - 电荷盈余由强酸阴离子 Cl- 兜底 (Q13): pH<6 时 HCO3- 承载能力
+        #     有限 (pH=5 时仅 ~2e-5 mol/L), 强制 HCO3 补足会使 C(4) 暴涨至
+        #     0.09 mol/L (物理不可能, PHREEQC 数值失稳, 实测)。Cl- 是土壤
+        #     溶液主要强酸阴离子, 由其承担盈余是物理必要的。
+        #   - Cl- 保留"微量"仅在盈余小 (接近平衡) 时成立; 大盈余下 Cl- 为
+        #     平衡所需, 数值由盈余决定。
         cation_charge = (2.0 * ca_conc + 2.0 * mg_conc + k_conc +
                          na_conc + 3.0 * al3plus + h_plus)
-        anion_charge = (2.0 * so4_conc + no3_conc + cl_conc +
-                        total_inorganic_carbon + oh_minus)
-        charge_imbalance = cation_charge - anion_charge
+        anion_charge_without_cl = (2.0 * so4_conc + no3_conc +
+                                   hco3 + 2.0 * co3 + oh_minus)
+        charge_imbalance = cation_charge - anion_charge_without_cl
         if charge_imbalance > 0:
-            cl_conc += charge_imbalance  # Cl- 一价
+            cl_conc += charge_imbalance  # Cl- 一价兜底 (Q13/L5 修正)
 
         # ---- 组装溶液 ----
         solution = {
@@ -216,6 +234,9 @@ class InitialConditionBuilder:
           2[Ca²⁺] + 2[Mg²⁺] + [K⁺] + [Na⁺] + 3[Al³⁺] + [H⁺]
           = 2[SO₄²⁻] + [NO₃⁻] + [Cl⁻] + [HCO₃⁻] + 2[CO₃²⁻] + [OH⁻]
 
+        碳酸体系 (L5, v0.3.0): 从 C(4) 总量按解离平衡拆分 HCO3-/CO3-2,
+        用真实电荷 (HCO3- 一价 + CO3-2 二价), 替代旧一价简化。
+
         返回:
             电荷不平衡度 (mol/L)
         """
@@ -231,11 +252,18 @@ class InitialConditionBuilder:
             h_plus
         )
 
+        # 碳酸体系拆分 (L5): C(4) = H2CO3 + HCO3- + CO3-2
+        c4 = solution.get('C(4)', 0.0)
+        h2co3 = c4 / (1.0 + self.KA1_H2CO3 / h_plus +
+                      self.KA1_H2CO3 * self.KA2_HCO3 / h_plus ** 2)
+        hco3 = h2co3 * self.KA1_H2CO3 / h_plus
+        co3 = hco3 * self.KA2_HCO3 / h_plus
+
         anion_charge = (
             2.0 * solution.get('S(6)', 0) +
             solution.get('N(5)', 0) +
             solution.get('Cl', 0) +
-            solution.get('C(4)', 0) +  # 简化处理
+            hco3 + 2.0 * co3 +   # L5: 碳酸体系真实电荷 (替代 C(4) 一价)
             oh_minus
         )
 

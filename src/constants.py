@@ -39,3 +39,35 @@ HFO_WEAK_SITE_DENSITY = 1.67e-2
 # 目标表面位点总量 (mol): D&M 模型适用浓度范围 (~1e-4 mol/L), 超出会数值失稳
 # (WF5 实测: 表面位点 >~100 mol 时 Al/Ca 不收敛, 交换位点被误判为抽干)
 HFO_TARGET_SITES = 50.0
+
+# ---- 硝化两步动力学参数 (L4, v0.3.0) ----
+# 简化一阶转化: 尿素 → NH4+ (水解 k1) → NO3- + 2H+ (硝化 k2)
+# 决策依据 (2026-08-14 grilling Q3/Q10):
+#   - 简化两步一阶 (非 Monod KINETICS), 但架构留有升级空间
+#     (advance_nitrification 独立函数, 可整体替换为 PHREEQC KINETICS 实现)
+#   - k1=1.0: 尿素水解 (urease 催化) 在田间数天内完成, 远快于月步长 → 当月全水解
+#   - k2=0.4: 硝化速率 0.4/month, 约 2-3 个月完成大部分硝化;
+#     红壤酸性条件硝化受抑, 取保守量级 (可配置, 见 docs/V0_3_0_REPORT.md)
+NITRIFICATION_K1 = 1.0      # 尿素水解速率 (/month)
+NITRIFICATION_K2 = 0.4      # 硝化速率 (/month)
+# kg N → mol N 换算 (N 原子量 14.007): 施肥量 (kg N/ha) → 摩尔量 (mol N)
+N_MOL_PER_KG_N = 1000.0 / 14.007
+
+# ---- 溶液电荷平衡参数 (L5, v0.3.0) ----
+# CO2 亨利常数 (mol/(L·atm), 25°C): 计算初始 HCO3- 浓度 (与 GAS_PHASE pCO2 联动)
+HENRY_CO2 = 3.4e-2
+# 碳酸第一级解离常数 (25°C): H2CO3 ⇌ H+ + HCO3-
+KA1_H2CO3 = 4.3e-7
+# 碳酸第二级解离常数 (25°C): HCO3- ⇌ H+ + CO3-2
+KA2_HCO3 = 4.7e-11
+# 水的离子积 (25°C)
+KW_WATER = 1.0e-14
+# 保留微量 Cl- (mol/L): 电荷平衡盈余大时由 Cl- 兜底 (pH<6 HCO3- 承载有限),
+# 背景值避免与降水化学 Cl- 输入完全归零导致数值边缘
+CHARGE_BALANCE_CL_RESIDUAL = 1e-6
+# 初始溶液总阳离子浓度 (mol/L) — 土壤溶液量级 (与交换相自洽)
+# 修正记录 (v0.3.0 实测): 曾尝试淋溶液量级 5e-5 (电荷物理化), 但土壤溶液
+# 体积为田间持水 (8.2e5 L/ha), 5e-5 与交换相 NaX (43200 mol) 失衡, 平衡时
+# NaX 释放 Na+ 触发 pH 碱化漂移 (fertilizer 5 年 pH 反转至 10.4), 故保留
+# 2e-3 (维持 v0.2.6 基线行为, 详见 docs/V0_3_0_REPORT.md 第三节)。
+SOLUTION_TOTAL_CATION_CONC = 2e-3

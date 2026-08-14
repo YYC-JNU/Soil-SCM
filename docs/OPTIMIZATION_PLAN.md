@@ -295,3 +295,22 @@
 - 新增 `tests/test_mineral_evolution.py`（3 用例），完整套件 85 passed
 
 **结论**：Q12* 从"部分解决（推迟）"升级为"**根治**"——矿物演化回填建立 Al 循环通道。
+
+---
+
+### L4 + L5 — v0.3.0 化学机理收尾（2026-08-14）
+
+**背景**：基于 `.scratch/soil-scm-overview/issues/05-10` spec/工单，经 `/to-spec` + `/to-tickets` + `/grilling`（3 轮共识）完成。
+
+**L4 硝化两步（库存层）**：
+- 实测发现 `phreeqc.dat` N 氧化还原平衡将任何注入溶液的无机氮全转为 N₂（pe=0~12 下 N(-3)/N(5)≈0）——旧实现施肥氮同样 100% 流失，系既有局限显式化
+- 氮形态（尿素/NH₄⁺/NO₃⁻）为 `SoilState` 模型库存，不注入溶液；硝化产酸 2H⁺/mol N 注入 REACTION（酸化真实）
+- `advance_nitrification` 独立函数（升级空间：KINETICS 替换）；k₁=1.0/k₂=0.4 进 constants.py
+
+**L5 电荷平衡修正**：
+- 初版"HCO₃⁻ 全量补足 + 总阳离子 5e-5"**实测否决**：pH=5 下 HCO₃⁻ 承载有限，强制补足使 C(4) 暴涨至 0.09 mol/L（PHREEQC 数值失稳）；阳离子 5e-5 与交换相 NaX 失衡触发 pH 碱化漂移
+- 落地：HCO₃⁻ 由 pCO₂ 决定（GAS_PHASE 联动）+ `_check_charge_balance` 碳酸真实电荷 + Cl⁻ 兜底 + `total_cation_conc` 保留 2e-3（与交换相自洽）
+
+**实测科学发现**：fertilizer 单层在 k₂=0.4 弱产酸下 AlX₃ 于第 2-3 年耗尽→pH 突升 ~10（根因：Q1+ 矿物压缩 + Q12* 单层排水）；grilling Q1=A 接受为已知局限，k₂=1.0 对照实验证实产酸强度为关键变量；深层修复立项 backlog **L9「矿物缓冲重新校准」**。
+
+**验证**：pytest **102 passed**；E2E natural 30 年 pH 6.46 无突升（AlX₃ 稳定 6.7e4）、单月施肥酸化 5.00→4.35、n_nh4 峰值 649 mol、n_no3 累计 76870 mol。
