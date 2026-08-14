@@ -329,8 +329,17 @@ class PhreeqcEngine:
                 exchange[sp] = get(col) * water_mass
         new_state.exchange = exchange
 
-        # 矿物相: Q1 阶段保持旧值 (矿物量变化小; 完整追踪见后续优化)
-        new_state.minerals = old_state.minerals
+        # 矿物相: L2 修复 — 从 SELECTED_OUTPUT 读取矿物摩尔量演化
+        # (原 Q1 占位实现冻结为旧值, 导致矿物单向吸收 Al 不回补 → Al 耗尽)
+        # -equilibrium_phases 输出两列: <name> (当前摩尔量), d_<name> (变化量)
+        minerals = {}
+        for mname, moles in old_state.minerals.items():
+            col = mname
+            if col in idx:
+                minerals[mname] = max(0.0, get(col))
+            else:
+                minerals[mname] = moles  # 未输出时保持旧值 (兜底)
+        new_state.minerals = minerals
         new_state.gas_phase = old_state.gas_phase
         # WF4: 表面位点摩尔量在月步间保持 (吸附位点不因平衡而消失)
         new_state.surface = old_state.surface
@@ -485,6 +494,11 @@ class PhreeqcEngine:
         lines.append("  -water true")
         lines.append("  -totals Ca Mg K Na Al P Zn Cl C S N Si F")
         lines.append("  -molalities CaX2 MgX2 KX NaX AlX3 X-")
+        # L2: 输出矿物相摩尔量 (供矿物演化回填, 修复 Al 耗尽根因)
+        # 只列出非零矿物; 矿物名须与 phreeqc.dat PHASES 段一致
+        mineral_names = [m for m, v in state.minerals.items() if v > 0]
+        if mineral_names:
+            lines.append("  -equilibrium_phases " + " ".join(mineral_names))
         lines.append("END")
 
         return "\n".join(lines)
