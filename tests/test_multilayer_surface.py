@@ -39,13 +39,13 @@ def test_multilayer_establishes_ph_gradient(profile, soil_info):
     """
     e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
     states = [e.build_initial_state(profile, soil_info, 0.015) for _ in range(4)]
-    # 模拟 1 年 (12 月, natural)
+    # 模拟 1 年 (12 月, natural; v0.6.0 KINETICS 使月度步变慢, 但本测试无 SURFACE 可接受)
     climate = ClimateForcing(1893.0, 25.0, 0.015, 25.0, 0.05, 1, "natural")
     for m in range(12):
         f = climate.get_monthly_forcing(0, m)
         states, _ = e.run_monthly_multi_layer(states, f, ACTION, profile)
     phs = [s.ph for s in states]
-    # 表层高/底层低 (表层盐基优先淋洗脱酸)
+    # 表层高/底层低 (表层盐基优先淋洗脱酸, KINETICS 下 12 月翻转成立)
     assert phs[0] >= phs[-1], f"pH 梯度异常: {phs}"
 
 

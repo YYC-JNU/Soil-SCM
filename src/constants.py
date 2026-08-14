@@ -104,3 +104,13 @@ GAP_AL_FRACTION = 0.3       # 缺口中 Al 占比 (扫描确定 2026-08-14: 0.3�
 # 历史教训 (ROADMAP): 0.41→5.0 曾在 natural 场景无效, fertilizer 场景需扫描。
 ALX3_DEFAULT_LOGK = 0.41    # phreeqc.dat 数据库原值
 ALX3_SELECTIVITY_LOGK = 0.41   # 校准值 (默认=数据库值, 仅覆盖非默认时输出 EXCHANGE_SPECIES)
+
+# ---- Al 动力学参数 (v0.6.0, KINETICS 阻断矿物化单向 Al 汇) ----
+# L9 证伪链 (v0.5.0): Al 矿物化沉淀是 fertilizer 单层 AlX3 耗尽的单向汇。
+# v0.6.0 把 Al 关键相 (Gibbsite/Al(OH)3(a)) 从瞬时平衡 (EQUILIBRIUM_PHASES)
+# 切到速率控制 (KINETICS/RATES): 沉淀速率受限, 溶液 Al3+ 有时间被排水带走
+# (而非固化到矿物), 阻断净流失通道。TST 一阶: rate = k × (10^SI - 1)。
+AL_KINETIC_RATE = 1e-9     # 速率常数 (mol/s, 初值, 工单 22 扫描确定)
+AL_KINETIC_PHASES = ('gibbsite', 'Al(OH)3(a)')  # 动力学控制的 Al 相 (state.minerals 键, 小写)
+# state.minerals 键 → phreeqc.dat 数据库相名 (SI()/RATES/KINETICS 需精确匹配)
+AL_KINETIC_DB_NAMES = {'gibbsite': 'Gibbsite', 'Al(OH)3(a)': 'Al(OH)3(a)'}
