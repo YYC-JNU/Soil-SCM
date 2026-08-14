@@ -49,6 +49,7 @@ def test_input_select_output_has_f(profile, soil_info):
     e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
     state = e.build_initial_state(profile, soil_info, 0.015)
     inp = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile)
+    # L4: 氮库存为模型状态, SELECTED_OUTPUT 不再输出 N(-3)/N(5); F 仍在 totals
     assert "-totals Ca Mg K Na Al P Zn Cl C S N Si F" in inp
 
 

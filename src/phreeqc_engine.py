@@ -21,7 +21,9 @@ from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
                            SIMPLIFIED_K_LIME, PH_LOWER, PH_UPPER,
                            ERROR_INP_PATH,
                            HFO_SPECIFIC_AREA, HFO_STRONG_SITE_DENSITY,
-                           HFO_WEAK_SITE_DENSITY)
+                           HFO_WEAK_SITE_DENSITY,
+                           NITRIFICATION_K1, NITRIFICATION_K2,
+                           N_MOL_PER_KG_N)
 from src.logging_config import get_logger
 
 logger = get_logger("phreeqc_engine")
@@ -46,6 +48,48 @@ class SoilState:
     temperature: float = 25.0
     ph: float = 7.0
     pe: float = 4.0
+    # L4: 氮形态库存 (mol N) — 简化两步硝化 (尿素→NH4+→NO3-)
+    n_urea: float = 0.0          # 尿素形态氮 (mol N), 水解前库存
+    n_nh4: float = 0.0           # 铵态氮 (mol N), 由 SELECTED_OUTPUT N(-3) 回填
+    n_no3: float = 0.0           # 硝态氮 (mol N), 由 SELECTED_OUTPUT N(5) 回填
+
+
+def advance_nitrification(state: SoilState, action,
+                          k1: float = NITRIFICATION_K1,
+                          k2: float = NITRIFICATION_K2) -> Dict[str, float]:
+    """推进氮形态库存 (尿素 → NH4+ → NO3-, 简化一阶转化) [L4, v0.3.0]
+
+    独立模块级函数 (升级空间): 将来若升级为 PHREEQC KINETICS 动力学块,
+    只需替换本函数实现, 调用方 (引擎月度步) 与返回契约不变。
+
+    Q1=A (库存层): 氮形态 (尿素/NH4+/NO3-) 为纯模型状态, 不注入 PHREEQC
+    溶液平衡 — phreeqc.dat 的 N 氧化还原平衡会把注入的无机氮全部转为
+    N2(g) (实测: pe=0~12 下溶液 N(-3)/N(5) 均≈0)。NH4+ 吸附于交换位点
+    不易淋失, 为硝化的驱动源; NO3- 为累计硝化量 (诊断, Q4=A)。
+
+    月度推进顺序:
+      1. 施肥: N 以尿素形式入库存 (kg N → mol N)
+      2. 尿素水解: n_urea × k1 → NH4+ (k1=1.0 当月全水解)
+      3. 硝化: n_nh4 × k2 → NO3- (库存累计)
+
+    返回本月硝化产酸量 (mol H+): {'H+': 2×硝化量}
+    (Q3=A: 硝化产酸注入 REACTION, 酸化效应真实进入溶液)
+    """
+    # 1. 施肥: 尿素入库存 (kg N → mol N)
+    if action.apply_fertilizer and getattr(action, 'n_amount', 0.0) > 0:
+        state.n_urea += action.n_amount * N_MOL_PER_KG_N
+
+    # 2. 尿素水解: urea → NH4+ (k1)
+    hydrolyzed = state.n_urea * k1
+    state.n_urea -= hydrolyzed
+    state.n_nh4 += hydrolyzed
+
+    # 3. 硝化: NH4+ → NO3- (k2, 库存形态)
+    nitrified = state.n_nh4 * k2
+    state.n_nh4 -= nitrified
+    state.n_no3 += nitrified
+
+    return {'H+': 2.0 * nitrified}
 
 
 @dataclass
@@ -249,9 +293,12 @@ class PhreeqcEngine:
 
     def _run_official_step(self, state, forcing, action, profile):
         """使用官方 phreeqc (IPhreeqc 3.8.6) 引擎执行单月计算"""
+        # L4: 推进氮形态库存 (尿素→NH4+→NO3-, 简化两步), 返回本月氮反应量
+        # 独立函数 + 返回契约 → 将来可替换为 KINETICS 实现 (升级空间)
+        n_reaction = advance_nitrification(state, action)
         # 构建 PHREEQC 输入字符串 (含 SELECTED_OUTPUT 查询块)
         input_string = self._build_phreeqc_input(
-            state, forcing, action, profile)
+            state, forcing, action, profile, n_reaction=n_reaction)
 
         try:
             self.official.RunString(input_string)
@@ -344,11 +391,26 @@ class PhreeqcEngine:
         # WF4: 表面位点摩尔量在月步间保持 (吸附位点不因平衡而消失)
         new_state.surface = old_state.surface
 
+        # L4 (Q4=A): 氮形态库存由 advance_nitrification 推进 (纯模型状态),
+        # 不被溶液输出覆盖 — 施肥氮不注入溶液 (N2 平衡), 溶液 N 不代表库存。
+        # n_urea/n_nh4 为水解/硝化的驱动库存, n_no3 为累计硝化量 (诊断)。
+        # (advance 已在 _run_official_step 中就地推进传入的 state, 此处延续)
+        new_state.n_urea = old_state.n_urea
+        new_state.n_nh4 = old_state.n_nh4
+        new_state.n_no3 = old_state.n_no3
+
         diag = DiagnosticOutput(ph=new_state.ph, pe=new_state.pe)
         return new_state, diag
 
-    def _build_phreeqc_input(self, state, forcing, action, profile) -> str:
-        """构建 PHREEQC 输入字符串"""
+    def _build_phreeqc_input(self, state, forcing, action, profile,
+                             n_reaction=None) -> str:
+        """构建 PHREEQC 输入字符串
+
+        参数:
+            n_reaction (L4, v0.3.0): 本月氮反应量 {'NH4+','NO3-','H+'} (mol),
+                由 advance_nitrification 计算。None 时内部计算 (直接调用场景,
+                如测试), 此时会就地推进 state 的氮库存。
+        """
         lines = []
 
         # KNOBS: 提高收敛鲁棒性 (物理矿物量较大时数值更难收敛)
@@ -449,12 +511,17 @@ class PhreeqcEngine:
                     reaction_lines.append(
                         f"  {ion:<8} {mol:.6e}  # 上层排水")
 
+        # L4 (v0.3.0): 氮形态两步 — 尿素水解 → NH4+ → NO3- (库存层, Q1=A)
+        # NH4+/NO3- 不注入 PHREEQC 溶液: phreeqc.dat 的 N 氧化还原平衡会将其
+        # 全部转为 N2(g) (实测 pe=0~12 下 N(-3)/N(5)≈0)。只注入硝化产酸
+        # H+ = 2×硝化量 (Q3=A: 酸化效应真实进入溶液, 与旧"一步产酸"守恒)
+        if n_reaction is None:
+            n_reaction = advance_nitrification(state, action)
+        h_mol = n_reaction.get('H+', 0.0)
+        if h_mol > 0:
+            reaction_lines.append(f"  H+     {h_mol:.6e}  # 硝化产酸")
+
         if action.apply_fertilizer:
-            # 氮肥 (N): 尿素硝化产 NO3- + 2H+ (按 N 元素计)
-            n_mol = action.n_amount * 1000.0 / 14.007
-            if n_mol > 0:
-                reaction_lines.append(f"  NO3-   {n_mol:.6e}  # 氮肥硝化")
-                reaction_lines.append(f"  H+     {2*n_mol:.6e}  # 产酸")
             # 磷肥 (P2O5 → 2 H2PO4-)
             p_mol = action.p2o5_amount * 1000.0 / 141.94 * 2.0
             if p_mol > 0:
@@ -492,6 +559,8 @@ class PhreeqcEngine:
         lines.append("  -pe true")
         lines.append("  -temp true")
         lines.append("  -water true")
+        # L4 (Q1=A): 氮库存为模型状态 (不注入溶液), 无需 N(-3)/N(5) 回填;
+        # 总 N 保留供层间平流 (inflow_ions)
         lines.append("  -totals Ca Mg K Na Al P Zn Cl C S N Si F")
         lines.append("  -molalities CaX2 MgX2 KX NaX AlX3 X-")
         # L2: 输出矿物相摩尔量 (供矿物演化回填, 修复 Al 耗尽根因)
@@ -520,6 +589,11 @@ class PhreeqcEngine:
         new_state.temperature = state.temperature
         new_state.pe = state.pe
         new_state.ph = state.ph
+        # L4 (Q9=A): simplified 引擎不参与硝化逻辑, 氮库存占位保留
+        # (降级边界: 简化模式退化为经验产酸, 氮形态不演化, 见 V0_3_0_REPORT)
+        new_state.n_urea = state.n_urea
+        new_state.n_nh4 = state.n_nh4
+        new_state.n_no3 = state.n_no3
 
         # 简化: 降水淋溶 → pH 缓降 (S4 物理量级校准 v0.2.1)
         #   k_precip=1.5e-5 → 年降 ~0.03 (30 年 ~0.9, 保持淋溶酸化物理方向;

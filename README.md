@@ -1,6 +1,6 @@
 # Soil-SCM: 土壤物理化学数值模式
 
-> **版本：v0.2.6**（2026-08-14）
+> **版本：v0.3.0**（2026-08-14）
 
 基于 PHREEQC 地球化学引擎的土壤单点物理化学数值模式，用于模拟长期（数十年）施肥、酸化、淋溶与改良条件下的土壤化学演变（pH、盐基饱和度、交换性阳离子等）。
 
@@ -32,12 +32,13 @@ Soil-SCM/
 ├── data/                       # 输入数据
 │   ├── soil_survey.csv         # 土壤普查数据
 │   └── exchangeable_ions.csv   # 交换性阳离子初始值
-├── tests/                      # pytest 单元测试（85 用例）
+├── tests/                      # pytest 单元测试（102 用例）
 │   ├── conftest.py
 │   └── test_*.py
 ├── docs/                       # 项目文档
 │   ├── ROADMAP.md              # 优化路线图
 │   ├── OPTIMIZATION_PLAN.md    # 问题清单与优化计划（Q1-Q26）
+│   ├── V0_3_0_REPORT.md        # v0.3.0 工程报告（L4 硝化两步 + L5 电荷平衡）
 │   ├── V0_2_4_TICKET_SUMMARY.md # v0.2.4 工单验收汇总（T01/T02/T04）
 │   ├── V0_2_5_FINAL_REPORT.md   # v0.2.5 最终总结汇报（多分层+SURFACE）
 │   ├── Q1_ANALYSIS.md          # Q1 引擎分析
@@ -83,7 +84,7 @@ pip install -r requirements.txt
 ### 运行测试
 
 ```bash
-# v0.2.0 起建立 pytest 测试框架（tests/，当前 85 用例）
+# v0.2.0 起建立 pytest 测试框架（tests/，当前 102 用例）
 pytest tests/ -v
 ```
 
@@ -123,6 +124,14 @@ pytest tests/ -v
 | `output` | `directory` | `./output` | 输出目录 |
 | `output` | `format` | `csv` | 输出格式：`csv` / `netcdf`（未装 netCDF4 时回退 CSV） |
 | `output` | `variables` | 见第七节 | 输出变量列表（Q11） |
+
+> **v0.3.0 新增化学参数（L4/L5，位于 `src/constants.py`，非 config 字段）**：
+> - `NITRIFICATION_K1 = 1.0`：尿素水解速率（/month），默认当月全水解（urease 快速）
+> - `NITRIFICATION_K2 = 0.4`：硝化速率（/month），红壤酸性受抑取保守值（2-3 月完成大部分）
+> - `HENRY_CO2` / `KA1_H2CO3` / `KA2_HCO3` / `KW_WATER`：碳酸体系常数（25°C），决定初始 HCO₃⁻（与 GAS_PHASE pCO₂ 联动）
+> - `CHARGE_BALANCE_CL_RESIDUAL = 1e-6`：Cl⁻ 背景残留（电荷盈余大时由盈余决定）
+> - `SOLUTION_TOTAL_CATION_CONC = 2e-3`：初始溶液总阳离子浓度（mol/L，土壤溶液量级）
+> - 完整参数表与可修改性说明见 `docs/V0_3_0_REPORT.md` 第五节
 
 ### 运行模拟
 
@@ -241,12 +250,14 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 - Parton W.J. et al. Analysis of factors controlling soil organic matter levels in Great Plains grasslands. SSSAJ, 1987, 51(5): 1173-1179.
 - Tang D., Larssen T., Lange R.D. et al. Soil acidification and soil quality in China. European Journal of Soil Science, 2006, 57(1): 1-11.
 
-## 十、已知模型局限（v0.2.5）
+## 十、已知模型局限（v0.3.0）
 
 1. ~~**交换性 Al 缓冲库耗尽 → pH 突变**~~ ✅ **已解决（L2，v0.2.6）**：原单层模型 + 排水使交换性 Al 淋洗耗尽（第 8 年），pH 突升至 ~10。**根因是矿物相被冻结**（`_parse_official_output` 占位实现丢弃矿物演化）——现已实现**矿物演化回填**（`-equilibrium_phases` 读取矿物摩尔量），gibbsite 溶解回补交换 Al。验证：单层 12 年 AlX3 稳定、pH 平缓至 6.46（无突升）；4 层 8 年各层 Al 保留、pH 梯度稳定。
 2. **Al(OH)₄⁻ 两性溶解**：pH 升高后总 Al 浓度反而上升——Al 以铝酸根（Al(OH)₄⁻）形态碱性溶解，Al³⁺ 实际剧降（pH 10 时 ~10⁻²³）。
 3. **矿物量折中**：矿物量取物理值 0.001（`mineral_scale`），以避免矿物量大导致的碱性突变，但压缩了矿物缓冲容量（详见 `docs/Q1_plus_ANALYSIS.md`）。
 4. **SURFACE 与雨季交互**：启用 SURFACE（`enable_surface: true`）后，Hfo 表面质子化在雨季强入渗时加速交换 Al 耗尽，pH 上升更快——建议与多分层配合使用，独立启用会加剧。
+5. **PHREEQC 无法维持溶液无机氮形态（v0.3.0 确认）**：`phreeqc.dat` 的 N 氧化还原平衡将任何注入溶液的无机氮（NH₄⁺/NO₃⁻）热力学平衡为 N₂（实测 pe=0~12 下 N(-3)/N(5)≈0）。L4 采用**模型库存层**方案（氮形态为模型状态，硝化产酸 2H⁺ 注入 REACTION）；这是既有局限的显式化——旧实现施肥氮同样 100% 流失为 N₂。
+6. **fertilizer 单层长期 AlX₃ 耗尽→pH 突升（v0.3.0 实测）**：k₂=0.4 弱产酸使 pH~4（Al 淋洗活跃区），AlX₃ 被排水淋失耗尽（约第 2-3 年）后 pH 突升 ~10（根因：Q1+ 矿物压缩 + Q12* 单层排水）。**深层修复见 backlog L9「矿物缓冲重新校准」**；当前科学应用建议配合多层模型（n_layers≥4）。
 
 > ✅ **v0.1.4 已解决**：**降水化学集成（Q7）**——降水含 Cl⁻/SO₄²⁻/NO₃⁻/NH₄⁺ 等离子（据《2025年广东省生态环境状况公报》），原"保守离子 Cl⁻ 持续淋失"局限已解决（详见 `docs/Q7_PRECIP_CHEMISTRY.md`）。
 

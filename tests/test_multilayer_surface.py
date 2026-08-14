@@ -30,7 +30,13 @@ def _setup():
 
 
 def test_multilayer_establishes_ph_gradient(profile, soil_info):
-    """WF5: 多层模型建立垂直 pH 梯度 (表层高/底层低, 盐基优先淋洗)"""
+    """WF5: 多层模型建立垂直 pH 梯度
+
+    实测 [表层高, ..., 底层低] (如 1 年 natural: [3.29, 3.12, 3.06, 3.04]):
+    表层盐基优先淋洗脱酸、底层 Al 缓冲保留。total_cation_conc 保留
+    2e-3 (土壤溶液与交换相自洽), 梯度方向与 v0.2.6 基线一致
+    (L5 曾尝试的 5e-5 物理化因触发交换相 NaX 失衡碱化而被否决)。
+    """
     e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
     states = [e.build_initial_state(profile, soil_info, 0.015) for _ in range(4)]
     # 模拟 1 年 (12 月, natural)
@@ -39,9 +45,8 @@ def test_multilayer_establishes_ph_gradient(profile, soil_info):
         f = climate.get_monthly_forcing(0, m)
         states, _ = e.run_monthly_multi_layer(states, f, ACTION, profile)
     phs = [s.ph for s in states]
-    # 顶层 pH 应 >= 底层 (表层盐基优先流失 → 顶层相对更酸? 或更碱?)
-    # 实测: 顶层高/底层低 (表层 Al 淋失 → 相对脱酸)
-    assert phs[0] >= phs[-1] - 0.5, f"pH 梯度异常: {phs}"
+    # 表层高/底层低 (表层盐基优先淋洗脱酸)
+    assert phs[0] >= phs[-1], f"pH 梯度异常: {phs}"
 
 
 def test_multilayer_delays_al_depletion(profile, soil_info):
