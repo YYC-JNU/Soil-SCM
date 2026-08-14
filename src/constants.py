@@ -71,3 +71,12 @@ CHARGE_BALANCE_CL_RESIDUAL = 1e-6
 # NaX 释放 Na+ 触发 pH 碱化漂移 (fertilizer 5 年 pH 反转至 10.4), 故保留
 # 2e-3 (维持 v0.2.6 基线行为, 详见 docs/V0_3_0_REPORT.md 第三节)。
 SOLUTION_TOTAL_CATION_CONC = 2e-3
+
+# ---- 非晶质氢氧化铝缓冲相 (L9, v0.4.0) ----
+# phreeqc.dat 定义 Al(OH)3(a) (非晶质, log_k 小于结晶态 gibbsite, 更可溶):
+# 提供额外 Al 缓冲来源, 解决 fertilizer 单层长期 AlX3 耗尽→pH 突升
+# (Q12* 残留 + Q1+ 矿物压缩; v0.4.0 扫描证实单纯增大 MINERAL_SCALE 无效,
+# 见 docs/V0_4_0_L9_SCAN.md)。质量分数 2% (红壤非晶质铝氧化物典型量级)
+AMORPHOUS_ALOH3_MASS_FRACTION = 0.02
+# Al(OH)3 摩尔质量 (g/mol)
+AMORPHOUS_ALOH3_MOLAR_MASS = 78.0

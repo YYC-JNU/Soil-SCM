@@ -34,7 +34,9 @@ from src.constants import (MINERAL_SCALE, HFO_STRONG_SITE_DENSITY,
                            KA2_HCO3 as _KA2_HCO3,
                            KW_WATER as _KW_WATER,
                            CHARGE_BALANCE_CL_RESIDUAL,
-                           SOLUTION_TOTAL_CATION_CONC)
+                           SOLUTION_TOTAL_CATION_CONC,
+                           AMORPHOUS_ALOH3_MASS_FRACTION,
+                           AMORPHOUS_ALOH3_MOLAR_MASS)
 from src.utils import cmol_to_mol_per_kg
 
 logger = get_logger("initial_condition")
@@ -390,6 +392,15 @@ class InitialConditionBuilder:
                 # 摩尔量 (mol)
                 moles = mineral_mass_kg * 1000.0 / minfo.molar_mass
                 minerals[mname] = moles
+
+        # L9 (v0.4.0): 非晶质氢氧化铝缓冲相 — 解决 fertilizer 单层长期
+        # AlX3 耗尽→pH 突升 (Q12* 残留 + Q1+ 矿物压缩)。phreeqc.dat 定义
+        # Al(OH)3(a) (非晶质, 更可溶), 交换 Al 被淋失时溶解补充 Al3+,
+        # 配合 L2 矿物回填维持 Al 循环。v0.4.0 扫描证实单纯增大
+        # MINERAL_SCALE 无效 (矿物化加速 Al 耗尽, 见 docs/V0_4_0_L9_SCAN.md)。
+        minerals['Al(OH)3(a)'] = (self.soil_mass_kg
+                                  * AMORPHOUS_ALOH3_MASS_FRACTION
+                                  * 1000.0 / AMORPHOUS_ALOH3_MOLAR_MASS)
 
         return minerals
 

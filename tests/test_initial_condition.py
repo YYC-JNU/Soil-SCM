@@ -52,6 +52,14 @@ def test_minerals_no_anatase(profile, soil_info):
     assert len(minerals) > 0
 
 
+def test_amorphous_aloh3_in_minerals(profile, soil_info):
+    """L9: 非晶质 Al(OH)3(a) 缓冲相加入矿物相 (红壤真实组分, v0.4.0)"""
+    b = _builder(profile, soil_info)
+    minerals = b.build_minerals()
+    assert "Al(OH)3(a)" in minerals
+    assert minerals["Al(OH)3(a)"] > 0
+
+
 def test_minerals_all_positive(profile, soil_info):
     b = _builder(profile, soil_info)
     minerals = b.build_minerals()
