@@ -124,7 +124,7 @@ def run_simulation(config_path: str = "config/config.yaml"):
     # T5-Q8 修复: 不再单独生成/打印初始输入串 (仅打印不用, 与引擎路径割裂)。
     # 引擎实际初始状态由阶段 7 build_initial_state() 复用 InitialConditionBuilder 生成。
     # SURFACE 默认关闭: phreeqc.dat 仅定义 Hfo_s/Hfo_w 表面物种, 文档代码生成的
-    # Som/Hfo 位点与该数据库不兼容 (见 docs/OPTIMIZATION_PLAN.md P3)。
+    # Som/Hfo 位点与该数据库不兼容 (见 docs/analysis/OPTIMIZATION_PLAN.md P3)。
 
     # ============================================================
     # 阶段 5: 生成气候强迫

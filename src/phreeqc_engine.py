@@ -163,7 +163,7 @@ class PhreeqcEngine:
         # 降水入渗系数 (0~1): 实际进入土壤溶液的比例, 其余径流/排水 (T3 参数化)
         self.precip_infiltration = precip_infiltration
         # 矿物量缩放系数: EQUILIBRIUM_PHASES 矿物量 = 物理摩尔量 × 此系数
-        # (折中方案, 见 docs/Q1_plus_ANALYSIS.md):
+        # (折中方案, 见 docs/analysis/Q1_plus_ANALYSIS.md):
         # 物理值(1e6-1e7 mol)会导致碱性突变(pH~9.9), 需取较小值保留区分度
         # F2 修复: 与 initial_condition.MINERAL_SCALE 统一 (双路径一致)
         self.mineral_scale = MINERAL_SCALE
@@ -637,7 +637,7 @@ class PhreeqcEngine:
         lines.append("")
 
         # EQUILIBRIUM_PHASES 块 (v0.6.1: 恢复全矿物平衡相, KINETICS 已回退)
-        # 矿物量 = 物理摩尔量 × 缩放系数 (折中方案, 见 docs/Q1_plus_ANALYSIS.md):
+        # 矿物量 = 物理摩尔量 × 缩放系数 (折中方案, 见 docs/analysis/Q1_plus_ANALYSIS.md):
         # 物理值会导致碱性突变(pH~9.9), 10% 提供真实缓冲且 pH 合理(4.4-4.5)
         lines.append("EQUILIBRIUM_PHASES 1")
         for mineral, moles in state.minerals.items():
@@ -678,7 +678,7 @@ class PhreeqcEngine:
         #   1) PHREEQC 多 REACTION 块共存时仅第一个生效 (phreeqc 包行为),
         #      故所有干预合并到同一 REACTION 块;
         #   2) REACTION 物质名不支持括号价态写法(N(5)/H(1) 会 Parsing error),
-        #      必须用元素名或具体物种名 (见 docs/Q1_ANALYSIS.md);
+        #      必须用元素名或具体物种名 (见 docs/analysis/Q1_ANALYSIS.md);
         #   3) 降水: mm → L → mol (1 L H2O ≈ 55.5 mol), 乘以入渗系数
         precip_mm = forcing['precip']
         reaction_lines = []

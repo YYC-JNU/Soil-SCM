@@ -21,7 +21,7 @@ PH_UPPER = 12.0
 PRECIP_INFILTRATION_DEFAULT = 0.05
 
 # ---- 矿物量缩放系数 (F2 统一, v0.1.4) ----
-# 折中方案说明见 docs/Q1_plus_ANALYSIS.md:
+# 折中方案说明见 docs/analysis/Q1_plus_ANALYSIS.md:
 # 物理值(1e6-1e7 mol)会导致碱性突变(pH~9.9), 需取较小值保留区分度
 MINERAL_SCALE = 0.001
 
@@ -49,7 +49,7 @@ HFO_TARGET_SITES = 50.0
 #     (advance_nitrification 独立函数, 可整体替换为 PHREEQC KINETICS 实现)
 #   - k1=1.0: 尿素水解 (urease 催化) 在田间数天内完成, 远快于月步长 → 当月全水解
 #   - k2=0.4: 硝化速率 0.4/month, 约 2-3 个月完成大部分硝化;
-#     红壤酸性条件硝化受抑, 取保守量级 (可配置, 见 docs/V0_3_0_REPORT.md)
+#     红壤酸性条件硝化受抑, 取保守量级 (可配置, 见 docs/reports/V0_3_0_FINAL_REPORT.md)
 NITRIFICATION_K1 = 1.0      # 尿素水解速率 (/month)
 NITRIFICATION_K2 = 0.4      # 硝化速率 (/month)
 # kg N → mol N 换算 (N 原子量 14.007): 施肥量 (kg N/ha) → 摩尔量 (mol N)
@@ -71,14 +71,14 @@ CHARGE_BALANCE_CL_RESIDUAL = 1e-6
 # 修正记录 (v0.3.0 实测): 曾尝试淋溶液量级 5e-5 (电荷物理化), 但土壤溶液
 # 体积为田间持水 (8.2e5 L/ha), 5e-5 与交换相 NaX (43200 mol) 失衡, 平衡时
 # NaX 释放 Na+ 触发 pH 碱化漂移 (fertilizer 5 年 pH 反转至 10.4), 故保留
-# 2e-3 (维持 v0.2.6 基线行为, 详见 docs/V0_3_0_REPORT.md 第三节)。
+# 2e-3 (维持 v0.2.6 基线行为, 详见 docs/reports/V0_3_0_FINAL_REPORT.md 第三节)。
 SOLUTION_TOTAL_CATION_CONC = 2e-3
 
 # ---- 非晶质氢氧化铝缓冲相 (L9, v0.4.0) ----
 # phreeqc.dat 定义 Al(OH)3(a) (非晶质, log_k 小于结晶态 gibbsite, 更可溶):
 # 提供额外 Al 缓冲来源, 解决 fertilizer 单层长期 AlX3 耗尽→pH 突升
 # (Q12* 残留 + Q1+ 矿物压缩; v0.4.0 扫描证实单纯增大 MINERAL_SCALE 无效,
-# 见 docs/V0_4_0_L9_SCAN.md)。质量分数 2% (红壤非晶质铝氧化物典型量级)
+# 见 docs/reports/V0_3_0_FINAL_REPORT.md)。质量分数 2% (红壤非晶质铝氧化物典型量级)
 AMORPHOUS_ALOH3_MASS_FRACTION = 0.02
 # Al(OH)3 摩尔质量 (g/mol)
 AMORPHOUS_ALOH3_MOLAR_MASS = 78.0
@@ -97,7 +97,7 @@ PRE_EQUIL_ION_GAIN = 0.5    # 交换离子修正增益 (偏差比例 → 注入�
 # 缺口 × GAP_AL_FRACTION → AlX3 (三价), 缺口 × (1-GAP_AL_FRACTION) → NaX (一价)。
 # B 诊断 (2026-08-14): 缺口全 Al (比例=1.0) 使自然平衡 pH 4.36 偏离观测 5.0;
 # 全 Na (比例=0.0) 使 pH 5.1 自洽但盐基饱和度偏高。参数化在"pH 自洽"与
-# "盐基物理"间取平衡, 扫描确定默认值 (见 docs/V0_5_0_REPORT.md)。
+# "盐基物理"间取平衡, 扫描确定默认值 (见 docs/reports/V0_3_0_FINAL_REPORT.md)。
 GAP_AL_FRACTION = 0.3       # 缺口中 Al 占比 (扫描确定 2026-08-14: 0.3→首平衡 pH 4.92, Δ=0.08 最接近观测 5.0)
 
 # ---- AlX3 交换选择性校准参数 (v0.5.0, L9) ----
@@ -110,5 +110,5 @@ ALX3_SELECTIVITY_LOGK = 0.41   # 校准值 (默认=数据库值, 仅覆盖非默
 # ---- Al 动力学 (v0.6.0) 已回退 (v0.6.1) ----
 # KINETICS 方案被证据否定: 冻结 gibbsite 切断 L2 矿物回补, 反而加速 AlX3 耗尽
 # (y1 m7 vs 平衡相 y3); AlX3 耗尽主因是单层排水淋失 (结构性), 非矿物化。
-# 完整证据链见 docs/V0_6_1_REPORT.md。AL_KINETIC_* 常量已删除。
+# 完整证据链见 docs/reports/V0_3_0_FINAL_REPORT.md。AL_KINETIC_* 常量已删除。
 

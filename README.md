@@ -36,26 +36,38 @@ Soil-SCM/
 │   ├── conftest.py
 │   └── test_*.py
 ├── docs/                       # 项目文档
-│   ├── ROADMAP.md              # 优化路线图
-│   ├── OPTIMIZATION_PLAN.md    # 问题清单与优化计划（Q1-Q26）
-│   ├── V0_3_0_FINAL_REPORT.md  # v0.3.0 最终总结报告（v0.2.2 后全部优化合并）
-│   ├── L1_AL_SURFACE_METHOD.md # L1 Al³⁺ 表面络合简化方法报告（含缺点/优化方向）
-│   ├── Q1_ANALYSIS.md          # Q1 引擎分析
-│   ├── Q1_plus_ANALYSIS.md     # Q1+ 矿物量诊断
-│   ├── Q7_PRECIP_CHEMISTRY.md  # Q7 降水化学集成
-│   ├── V0_2_0_ENGINEERING_REPORT.md
-│   ├── V0_2_2_SHORT_TERM_REPORT.md
-│   └── GIT_GUIDE.md            # Git 协作指南
+│   ├── reports/                # 版本总结报告
+│   │   ├── V0_3_0_FINAL_REPORT.md  # v0.3.0 最终总结报告（v0.2.2 后全部优化合并）
+│   │   ├── V0_2_0_ENGINEERING_REPORT.md
+│   │   └── V0_2_2_SHORT_TERM_REPORT.md
+│   ├── analysis/               # 专项分析与规划
+│   │   ├── OPTIMIZATION_PLAN.md    # 问题清单与优化计划（Q1-Q26）
+│   │   ├── ROADMAP.md              # 优化路线图
+│   │   ├── L1_AL_SURFACE_METHOD.md # L1 Al³⁺ 表面络合简化方法报告（含缺点/优化方向）
+│   │   ├── Q1_ANALYSIS.md          # Q1 引擎分析
+│   │   ├── Q1_plus_ANALYSIS.md     # Q1+ 矿物量诊断
+│   │   └── Q7_PRECIP_CHEMISTRY.md  # Q7 降水化学集成
+│   ├── guides/                 # 指南
+│   │   └── GIT_GUIDE.md            # Git 协作指南
+│   └── images/                 # 文档示例图（USERGUIDE 案例图）
+├── tools/                      # 分析/绘图辅助脚本（从项目根运行）
+│   ├── plot_pH_scenarios.py        # 4 情景 pH 对比图
+│   ├── plot_ion_concentrations.py  # 离子浓度曲线图
+│   ├── plot_Q7_30yr.py             # Q7 降水化学 30 年模拟图
+│   ├── compare_before_after.py     # 50 年化学演化监控
+│   ├── plot_exp1_4layer.py         # 实验1: 4 层 30 年演化
+│   ├── plot_exp2_single_vs_multi.py# 实验2: 单层 vs 多层
+│   ├── plot_exp3_plot.py           # 实验3: 表层对比
+│   └── plot_exp3_surface_onoff.py  # 实验3: SURFACE 开关对比
 ├── .scratch/                   # 本地工单追踪（spec + 工单）
-│   └── soil-scm-overview/issues/
-├── output/                     # 运行产物（gitignore，自动生成）
-├── _plot_pH_scenarios.py       # 辅助：4 情景 pH 对比图
-├── _plot_ion_concentrations.py # 辅助：离子浓度曲线图
-├── _plot_Q7_30yr.py            # 辅助：Q7 降水化学 30 年模拟图
-├── _compare_before_after.py    # 辅助：50 年化学演化监控
-├── error.inp                   # PHREEQC 失败输入复现文件（Q18）
+│   └── soil-scm-overview/
+│       ├── TICKETS_SUMMARY.md  # 工单汇总表（成立时间/状态，2026-08-17 整理）
+│       ├── issues/             # 开发工单 01~28
+│       └── wayfinder/          # 架构决策工单 WF1~5
+├── output/                     # 运行产物（gitignore，自动生成；含 output/error.inp 失败复现文件）
 ├── main.py                     # 主程序入口
 ├── requirements.txt            # Python 依赖
+├── USERGUIDE.md                # 用户指南（安装/配置/情景/输出解读/FAQ）
 └── README.md
 ```
 
@@ -88,6 +100,8 @@ pytest tests/ -v
 ```
 
 ## 三、运行模拟
+
+> **完整操作指南**（配置字段详解、输入数据格式、模拟情景案例、输出解读、常见问题排查）见 **[`USERGUIDE.md`](USERGUIDE.md)**。
 
 ### 引擎与入渗配置（v0.2.2）
 
@@ -130,16 +144,16 @@ pytest tests/ -v
 > - `HENRY_CO2` / `KA1_H2CO3` / `KA2_HCO3` / `KW_WATER`：碳酸体系常数（25°C），决定初始 HCO₃⁻（与 GAS_PHASE pCO₂ 联动）
 > - `CHARGE_BALANCE_CL_RESIDUAL = 1e-6`：Cl⁻ 背景残留（电荷盈余大时由盈余决定）
 > - `SOLUTION_TOTAL_CATION_CONC = 2e-3`：初始溶液总阳离子浓度（mol/L，土壤溶液量级）
-> - 完整参数表与可修改性说明见 `docs/V0_3_0_FINAL_REPORT.md` 第四节
+> - 完整参数表与可修改性说明见 `docs/reports/V0_3_0_FINAL_REPORT.md` 第四节
 
 > **v0.3.0 化学参数（L9，非晶质 Al 相）**：
-> - `AMORPHOUS_ALOH3_MASS_FRACTION = 0.02`：非晶质氢氧化铝质量分数（红壤典型量级），`build_minerals()` 添加 `Al(OH)3(a)` 相（phreeqc.dat 原生相，提供 Al 缓冲源；扫描结论：无法根治 fertilizer 单层 AlX₃ 耗尽，见 `docs/V0_3_0_FINAL_REPORT.md` 第六节）
+> - `AMORPHOUS_ALOH3_MASS_FRACTION = 0.02`：非晶质氢氧化铝质量分数（红壤典型量级），`build_minerals()` 添加 `Al(OH)3(a)` 相（phreeqc.dat 原生相，提供 Al 缓冲源；扫描结论：无法根治 fertilizer 单层 AlX₃ 耗尽，见 `docs/reports/V0_3_0_FINAL_REPORT.md` 第六节）
 
 > **v0.3.0 化学参数（三支柱自洽化）**：
 > - `GAP_AL_FRACTION = 0.3`：CEC 缺口中 Al 占比（扫描确定：首平衡 pH 4.92 接近观测 5.0；缺口 Al/Na 按比例分配）
 > - `enable_pre_equilibration: true`（config）：初始状态预平衡（交换离子锚定 + 偏离度诊断，不锚定 pH——GAS_PHASE 缓冲吸收已验证）
 > - `ALX3_SELECTIVITY_LOGK = 0.41`：AlX₃ 交换 log_k（引擎 EXCHANGE_SPECIES 覆盖；**L9 扫描 0.41→10 全部无效**，结构性局限确认）
-> - 完整报告见 `docs/V0_3_0_FINAL_REPORT.md` 第三、六节
+> - 完整报告见 `docs/reports/V0_3_0_FINAL_REPORT.md` 第三、六节
 
 ### 运行模拟
 
@@ -225,16 +239,17 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 
 ### 辅助分析与绘图脚本
 
-根目录下 `_*.py` 为分析/绘图辅助脚本（独立运行，不参与主流程）：
+`tools/` 下的 `plot_*.py` 为分析/绘图辅助脚本（独立运行，不参与主流程；**需从项目根目录运行** `python tools/plot_xxx.py`）：
 
 | 脚本 | 说明 |
 |------|------|
-| `_plot_pH_scenarios.py` | 4 情景（natural / fertilizer / lime_only / fertilizer_lime）土壤 pH 演化对比图（5 年，官方引擎） |
-| `_plot_ion_concentrations.py` | fertilizer_lime 情景 30 年 pH + 11 种离子浓度曲线（PHREEQC 溶液输出，mol/kgw） |
-| `_plot_Q7_30yr.py` | Q7 降水化学集成 + F1 pCO₂ 传递后 natural 情景 30 年 pH 与全部离子浓度曲线 |
-| `_compare_before_after.py` | 官方引擎 50 年 fertilizer_lime 化学演化监控（pH / 盐基饱和度 / 交换性 Al / Ca 四联图） |
+| `tools/plot_pH_scenarios.py` | 4 情景（natural / fertilizer / lime_only / fertilizer_lime）土壤 pH 演化对比图（5 年，官方引擎） |
+| `tools/plot_ion_concentrations.py` | fertilizer_lime 情景 30 年 pH + 11 种离子浓度曲线（PHREEQC 溶液输出，mol/kgw） |
+| `tools/plot_Q7_30yr.py` | Q7 降水化学集成 + F1 pCO₂ 传递后 natural 情景 30 年 pH 与全部离子浓度曲线 |
+| `tools/compare_before_after.py` | 官方引擎 50 年 fertilizer_lime 化学演化监控（pH / 盐基饱和度 / 交换性 Al / Ca 四联图） |
+| `tools/plot_exp1_4layer.py` 等 | 实验验证绘图脚本（4 层演化 / 单层 vs 多层 / SURFACE 开关） |
 
-`error.inp` 为 PHREEQC 计算失败时**自动生成**的完整输入复现文件（Q18 异常分级，T01 修复）：当官方引擎 `RunString` 抛出异常并降级时，完整输入字符串写入 `error.inp`，每次失败刷新；写入失败不影响主流程（记录日志后继续降级模拟）。可据此复现与调试。
+`output/error.inp` 为 PHREEQC 计算失败时**自动生成**的完整输入复现文件（Q18 异常分级，T01 修复）：当官方引擎 `RunString` 抛出异常并降级时，完整输入字符串写入 `output/error.inp`，每次失败刷新；写入失败不影响主流程（记录日志后继续降级模拟）。可据此复现与调试。
 
 ## 八、后续扩展建议
 
@@ -262,22 +277,22 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 
 1. ~~**交换性 Al 缓冲库耗尽 → pH 突变**~~ ✅ **已解决（L2，v0.2.6）**：原单层模型 + 排水使交换性 Al 淋洗耗尽（第 8 年），pH 突升至 ~10。**根因是矿物相被冻结**（`_parse_official_output` 占位实现丢弃矿物演化）——现已实现**矿物演化回填**（`-equilibrium_phases` 读取矿物摩尔量），gibbsite 溶解回补交换 Al。验证：单层 12 年 AlX3 稳定、pH 平缓至 6.46（无突升）；4 层 8 年各层 Al 保留、pH 梯度稳定。
 2. **Al(OH)₄⁻ 两性溶解**：pH 升高后总 Al 浓度反而上升——Al 以铝酸根（Al(OH)₄⁻）形态碱性溶解，Al³⁺ 实际剧降（pH 10 时 ~10⁻²³）。
-3. **矿物量折中**：矿物量取物理值 0.001（`mineral_scale`），以避免矿物量大导致的碱性突变，但压缩了矿物缓冲容量（详见 `docs/Q1_plus_ANALYSIS.md`）。
+3. **矿物量折中**：矿物量取物理值 0.001（`mineral_scale`），以避免矿物量大导致的碱性突变，但压缩了矿物缓冲容量（详见 `docs/analysis/Q1_plus_ANALYSIS.md`）。
 4. **SURFACE 与雨季交互**：启用 SURFACE（`enable_surface: true`）后，Hfo 表面质子化在雨季强入渗时加速交换 Al 耗尽，pH 上升更快——建议与多分层配合使用，独立启用会加剧。
 5. **PHREEQC 无法维持溶液无机氮形态（v0.3.0 确认）**：`phreeqc.dat` 的 N 氧化还原平衡将任何注入溶液的无机氮（NH₄⁺/NO₃⁻）热力学平衡为 N₂（实测 pe=0~12 下 N(-3)/N(5)≈0）。L4 采用**模型库存层**方案（氮形态为模型状态，硝化产酸 2H⁺ 注入 REACTION）；这是既有局限的显式化——旧实现施肥氮同样 100% 流失为 N₂。
-6. **fertilizer 单层长期 AlX₃ 耗尽→pH 突升（结构性局限确认，v0.5.0）**：k₂=0.4 弱产酸下 AlX₃ 被盐基置换 + 排水淋失耗尽（约第 2-3 年）→ pH 突升 ~10。**完整证伪链**（v0.4.0+v0.5.0+v0.6.0）：MINERAL_SCALE 扫描、非晶质 Al(OH)₃ 相、预平衡、缺口修正、**AlX₃ 交换 log_k（0.41→10）全部无效**，Al KINETICS 亦证据否定——确认为模型架构层局限（**排水淋失为耗尽主因**，单层排水无法模拟 Al 垂直缓冲）。**建议**：fertilizer 情景使用多层（n_layers≥4，推迟耗尽）+ 文档记录；架构级解决（多层 + L6 逐层参数）列入 backlog。详见 `docs/V0_3_0_FINAL_REPORT.md` 第六节。
+6. **fertilizer 单层长期 AlX₃ 耗尽→pH 突升（结构性局限确认，v0.5.0）**：k₂=0.4 弱产酸下 AlX₃ 被盐基置换 + 排水淋失耗尽（约第 2-3 年）→ pH 突升 ~10。**完整证伪链**（v0.4.0+v0.5.0+v0.6.0）：MINERAL_SCALE 扫描、非晶质 Al(OH)₃ 相、预平衡、缺口修正、**AlX₃ 交换 log_k（0.41→10）全部无效**，Al KINETICS 亦证据否定——确认为模型架构层局限（**排水淋失为耗尽主因**，单层排水无法模拟 Al 垂直缓冲）。**建议**：fertilizer 情景使用多层（n_layers≥4，推迟耗尽）+ 文档记录；架构级解决（多层 + L6 逐层参数）列入 backlog。详见 `docs/reports/V0_3_0_FINAL_REPORT.md` 第六节。
 
-> ✅ **v0.1.4 已解决**：**降水化学集成（Q7）**——降水含 Cl⁻/SO₄²⁻/NO₃⁻/NH₄⁺ 等离子（据《2025年广东省生态环境状况公报》），原"保守离子 Cl⁻ 持续淋失"局限已解决（详见 `docs/Q7_PRECIP_CHEMISTRY.md`）。
+> ✅ **v0.1.4 已解决**：**降水化学集成（Q7）**——降水含 Cl⁻/SO₄²⁻/NO₃⁻/NH₄⁺ 等离子（据《2025年广东省生态环境状况公报》），原"保守离子 Cl⁻ 持续淋失"局限已解决（详见 `docs/analysis/Q7_PRECIP_CHEMISTRY.md`）。
 
 > ✅ **v0.2.4 工程化改进（T01/T02/T04）**：
 > - **T01**：PHREEQC 失败自动落盘 `error.inp` 复现文件（README 承诺兑现，含写入失败隔离）。
 > - **T02**：气候修正机制收敛——`MonthlyAction` 移除永不生效的 `precip_factor`/`temp_offset` 死字段，气候修正明确由气候强迫生成器（ClimateForcing）承担。
 > - **T04**：重复计算收敛与死函数清理——土壤质量/静态盐基饱和度/cmol 换算/pCO2 公式收敛为单一事实来源；`utils.py` 删除 6 个零调用函数。
 >
-> 详见 `docs/V0_3_0_FINAL_REPORT.md` 第三节（工程化地基里程碑）。
+> 详见 `docs/reports/V0_3_0_FINAL_REPORT.md` 第三节（工程化地基里程碑）。
 
 > ✅ **v0.2.5 中期架构（WF1-WF5）**：
 > - **多分层模型**：`n_layers` 配置（默认 1），4 层时推迟 pH 突升并建立垂直梯度（`run_monthly_multi_layer` 编排层）。
 > - **SURFACE 表面络合**：`enable_surface` 配置（默认 false），Hfo_s/Hfo_w 铁氧化物表面，P/Zn 吸附显著增强（红壤磷固定）；**Al 表面络合未实现**（研究空白，独立工单）。
 >
-> 详见 `docs/OPTIMIZATION_PLAN.md` 的 WF1-WF5 记录。
+> 详见 `docs/analysis/OPTIMIZATION_PLAN.md` 的 WF1-WF5 记录。
