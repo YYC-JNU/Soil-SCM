@@ -1,6 +1,11 @@
 # Soil-SCM: 土壤物理化学数值模式
 
-> **版本：v0.3.0**（2026-08-14，v0.2.2 后全部优化合并的大版本）
+> **版本：v0.3.1**（2026-08-17，项目整理版本）
+
+> **v0.3.1 更新说明**（2026-08-17）：
+> - **error.inp 路径修正**：PHREEQC 失败复现文件从根目录移入 `output/error.inp`（写入前自动创建目录，相关测试同步适配）
+> - **文件归置**：8 个辅助绘图脚本移入 `tools/`（去掉 `_` 前缀）；删除根目录 30+ 运行日志；`output/` 3 个历史 PNG 取消跟踪（修复 .gitignore 语义）
+> - **文档同步**：`docs/` 按类型分类（`reports/` / `analysis/` / `guides/`）；新增工单汇总表 `.scratch/soil-scm-overview/TICKETS_SUMMARY.md`；新增用户指南 `USERGUIDE.md`；README/USERGUIDE 全量引用同步（死链清零）
 
 基于 PHREEQC 地球化学引擎的土壤单点物理化学数值模式，用于模拟长期（数十年）施肥、酸化、淋溶与改良条件下的土壤化学演变（pH、盐基饱和度、交换性阳离子等）。
 
@@ -273,7 +278,7 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 - Parton W.J. et al. Analysis of factors controlling soil organic matter levels in Great Plains grasslands. SSSAJ, 1987, 51(5): 1173-1179.
 - Tang D., Larssen T., Lange R.D. et al. Soil acidification and soil quality in China. European Journal of Soil Science, 2006, 57(1): 1-11.
 
-## 十、已知模型局限（v0.3.0）
+## 十、已知模型局限（v0.3.1）
 
 1. ~~**交换性 Al 缓冲库耗尽 → pH 突变**~~ ✅ **已解决（L2，v0.2.6）**：原单层模型 + 排水使交换性 Al 淋洗耗尽（第 8 年），pH 突升至 ~10。**根因是矿物相被冻结**（`_parse_official_output` 占位实现丢弃矿物演化）——现已实现**矿物演化回填**（`-equilibrium_phases` 读取矿物摩尔量），gibbsite 溶解回补交换 Al。验证：单层 12 年 AlX3 稳定、pH 平缓至 6.46（无突升）；4 层 8 年各层 Al 保留、pH 梯度稳定。
 2. **Al(OH)₄⁻ 两性溶解**：pH 升高后总 Al 浓度反而上升——Al 以铝酸根（Al(OH)₄⁻）形态碱性溶解，Al³⁺ 实际剧降（pH 10 时 ~10⁻²³）。
