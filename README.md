@@ -1,6 +1,6 @@
 # Soil-SCM: 土壤物理化学数值模式
 
-> **版本：v0.6.1**（2026-08-14）
+> **版本：v0.3.0**（2026-08-14，v0.2.2 后全部优化合并的大版本）
 
 基于 PHREEQC 地球化学引擎的土壤单点物理化学数值模式，用于模拟长期（数十年）施肥、酸化、淋溶与改良条件下的土壤化学演变（pH、盐基饱和度、交换性阳离子等）。
 
@@ -38,12 +38,8 @@ Soil-SCM/
 ├── docs/                       # 项目文档
 │   ├── ROADMAP.md              # 优化路线图
 │   ├── OPTIMIZATION_PLAN.md    # 问题清单与优化计划（Q1-Q26）
-│   ├── V0_3_0_REPORT.md        # v0.3.0 工程报告（L4 硝化两步 + L5 电荷平衡）
-│   ├── V0_4_0_L9_SCAN.md       # v0.4.0 L9 MINERAL_SCALE 扫描记录（参数/相无效结论）
-│   ├── V0_5_0_REPORT.md        # v0.5.0 工程报告（三支柱：缺口参数化/预平衡/L9 证伪）
-│   ├── L1_AL_SURFACE_METHOD.md # v0.4.0 L1 Al³⁺ 表面络合简化方法报告（含缺点/优化方向）
-│   ├── V0_2_4_TICKET_SUMMARY.md # v0.2.4 工单验收汇总（T01/T02/T04）
-│   ├── V0_2_5_FINAL_REPORT.md   # v0.2.5 最终总结汇报（多分层+SURFACE）
+│   ├── V0_3_0_FINAL_REPORT.md  # v0.3.0 最终总结报告（v0.2.2 后全部优化合并）
+│   ├── L1_AL_SURFACE_METHOD.md # L1 Al³⁺ 表面络合简化方法报告（含缺点/优化方向）
 │   ├── Q1_ANALYSIS.md          # Q1 引擎分析
 │   ├── Q1_plus_ANALYSIS.md     # Q1+ 矿物量诊断
 │   ├── Q7_PRECIP_CHEMISTRY.md  # Q7 降水化学集成
@@ -128,22 +124,22 @@ pytest tests/ -v
 | `output` | `format` | `csv` | 输出格式：`csv` / `netcdf`（未装 netCDF4 时回退 CSV） |
 | `output` | `variables` | 见第七节 | 输出变量列表（Q11） |
 
-> **v0.3.0 新增化学参数（L4/L5，位于 `src/constants.py`，非 config 字段）**：
+> **v0.3.0 化学参数（L4/L5，位于 `src/constants.py`，非 config 字段）**：
 > - `NITRIFICATION_K1 = 1.0`：尿素水解速率（/month），默认当月全水解（urease 快速）
 > - `NITRIFICATION_K2 = 0.4`：硝化速率（/month），红壤酸性受抑取保守值（2-3 月完成大部分）
 > - `HENRY_CO2` / `KA1_H2CO3` / `KA2_HCO3` / `KW_WATER`：碳酸体系常数（25°C），决定初始 HCO₃⁻（与 GAS_PHASE pCO₂ 联动）
 > - `CHARGE_BALANCE_CL_RESIDUAL = 1e-6`：Cl⁻ 背景残留（电荷盈余大时由盈余决定）
 > - `SOLUTION_TOTAL_CATION_CONC = 2e-3`：初始溶液总阳离子浓度（mol/L，土壤溶液量级）
-> - 完整参数表与可修改性说明见 `docs/V0_3_0_REPORT.md` 第五节
+> - 完整参数表与可修改性说明见 `docs/V0_3_0_FINAL_REPORT.md` 第四节
 
-> **v0.4.0 新增（L9）**：
-> - `AMORPHOUS_ALOH3_MASS_FRACTION = 0.02`：非晶质氢氧化铝质量分数（红壤典型量级），`build_minerals()` 添加 `Al(OH)3(a)` 相（phreeqc.dat 原生相，提供 Al 缓冲源；扫描结论：无法根治 fertilizer 单层 AlX₃ 耗尽，见 `docs/V0_4_0_L9_SCAN.md`）
+> **v0.3.0 化学参数（L9，非晶质 Al 相）**：
+> - `AMORPHOUS_ALOH3_MASS_FRACTION = 0.02`：非晶质氢氧化铝质量分数（红壤典型量级），`build_minerals()` 添加 `Al(OH)3(a)` 相（phreeqc.dat 原生相，提供 Al 缓冲源；扫描结论：无法根治 fertilizer 单层 AlX₃ 耗尽，见 `docs/V0_3_0_FINAL_REPORT.md` 第六节）
 
-> **v0.5.0 新增（三支柱）**：
+> **v0.3.0 化学参数（三支柱自洽化）**：
 > - `GAP_AL_FRACTION = 0.3`：CEC 缺口中 Al 占比（扫描确定：首平衡 pH 4.92 接近观测 5.0；缺口 Al/Na 按比例分配）
 > - `enable_pre_equilibration: true`（config）：初始状态预平衡（交换离子锚定 + 偏离度诊断，不锚定 pH——GAS_PHASE 缓冲吸收已验证）
 > - `ALX3_SELECTIVITY_LOGK = 0.41`：AlX₃ 交换 log_k（引擎 EXCHANGE_SPECIES 覆盖；**L9 扫描 0.41→10 全部无效**，结构性局限确认）
-> - 完整报告见 `docs/V0_5_0_REPORT.md`
+> - 完整报告见 `docs/V0_3_0_FINAL_REPORT.md` 第三、六节
 
 ### 运行模拟
 
@@ -269,7 +265,7 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 3. **矿物量折中**：矿物量取物理值 0.001（`mineral_scale`），以避免矿物量大导致的碱性突变，但压缩了矿物缓冲容量（详见 `docs/Q1_plus_ANALYSIS.md`）。
 4. **SURFACE 与雨季交互**：启用 SURFACE（`enable_surface: true`）后，Hfo 表面质子化在雨季强入渗时加速交换 Al 耗尽，pH 上升更快——建议与多分层配合使用，独立启用会加剧。
 5. **PHREEQC 无法维持溶液无机氮形态（v0.3.0 确认）**：`phreeqc.dat` 的 N 氧化还原平衡将任何注入溶液的无机氮（NH₄⁺/NO₃⁻）热力学平衡为 N₂（实测 pe=0~12 下 N(-3)/N(5)≈0）。L4 采用**模型库存层**方案（氮形态为模型状态，硝化产酸 2H⁺ 注入 REACTION）；这是既有局限的显式化——旧实现施肥氮同样 100% 流失为 N₂。
-6. **fertilizer 单层长期 AlX₃ 耗尽→pH 突升（结构性局限确认，v0.5.0）**：k₂=0.4 弱产酸下 AlX₃ 被盐基置换 + 排水淋失耗尽（约第 2-3 年）→ pH 突升 ~10。**完整证伪链**（v0.4.0+v0.5.0）：MINERAL_SCALE 扫描、非晶质 Al(OH)₃ 相、预平衡、缺口修正、**AlX₃ 交换 log_k（0.41→10）全部无效**——确认为模型架构层局限（单层排水无法模拟 Al 垂直缓冲）。**建议**：fertilizer 情景使用多层（n_layers≥4，推迟耗尽）+ 文档记录；架构级解决（多层 + L6 逐层参数 / Al 动力学）列入 backlog。详见 `docs/V0_5_0_REPORT.md`。
+6. **fertilizer 单层长期 AlX₃ 耗尽→pH 突升（结构性局限确认，v0.5.0）**：k₂=0.4 弱产酸下 AlX₃ 被盐基置换 + 排水淋失耗尽（约第 2-3 年）→ pH 突升 ~10。**完整证伪链**（v0.4.0+v0.5.0+v0.6.0）：MINERAL_SCALE 扫描、非晶质 Al(OH)₃ 相、预平衡、缺口修正、**AlX₃ 交换 log_k（0.41→10）全部无效**，Al KINETICS 亦证据否定——确认为模型架构层局限（**排水淋失为耗尽主因**，单层排水无法模拟 Al 垂直缓冲）。**建议**：fertilizer 情景使用多层（n_layers≥4，推迟耗尽）+ 文档记录；架构级解决（多层 + L6 逐层参数）列入 backlog。详见 `docs/V0_3_0_FINAL_REPORT.md` 第六节。
 
 > ✅ **v0.1.4 已解决**：**降水化学集成（Q7）**——降水含 Cl⁻/SO₄²⁻/NO₃⁻/NH₄⁺ 等离子（据《2025年广东省生态环境状况公报》），原"保守离子 Cl⁻ 持续淋失"局限已解决（详见 `docs/Q7_PRECIP_CHEMISTRY.md`）。
 
@@ -278,7 +274,7 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 > - **T02**：气候修正机制收敛——`MonthlyAction` 移除永不生效的 `precip_factor`/`temp_offset` 死字段，气候修正明确由气候强迫生成器（ClimateForcing）承担。
 > - **T04**：重复计算收敛与死函数清理——土壤质量/静态盐基饱和度/cmol 换算/pCO2 公式收敛为单一事实来源；`utils.py` 删除 6 个零调用函数。
 >
-> 详见 `docs/V0_2_4_TICKET_SUMMARY.md`。
+> 详见 `docs/V0_3_0_FINAL_REPORT.md` 第三节（工程化地基里程碑）。
 
 > ✅ **v0.2.5 中期架构（WF1-WF5）**：
 > - **多分层模型**：`n_layers` 配置（默认 1），4 层时推迟 pH 突升并建立垂直梯度（`run_monthly_multi_layer` 编排层）。
