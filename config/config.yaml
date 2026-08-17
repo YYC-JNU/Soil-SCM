@@ -127,4 +127,5 @@ output:
   directory: ./output
   format: csv                    # 输出格式: csv / netcdf
   variables: [pH, base_saturation, CEC_occupied, exchangeable_Ca,
-              exchangeable_Al, mineral_mass, solution_ions]
+              exchangeable_Al, mineral_mass, solution_ions,
+              infiltration, drainage, stored_water, runoff]

@@ -156,6 +156,132 @@ def test_build_initial_layer_states_single_layer_ignores(profile, soil_info):
     assert profiles is None
 
 
+def test_build_initial_layer_states_n4_auto_hydrology_defaults(profile, soil_info):
+    """v0.5.0/T3: n_layers=4 且未配置 layer_overrides → 自动注入内置物理剖面默认 (水文)"""
+    from src.constants import (DEFAULT_4LAYER_DEPTHS, DEFAULT_4LAYER_CLAY_PCT,
+                               DEFAULT_4LAYER_POROSITY, DEFAULT_4LAYER_KSAT,
+                               DEFAULT_4LAYER_F0, DEFAULT_4LAYER_FC)
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    cfg = SimulationConfig(n_layers=4)
+    s0, states, pco2s, profiles = main._build_initial_layer_states(
+        e, _reader(), profile, soil_info, 0.015, cfg)
+    assert len(states) == 4
+    assert len(profiles) == 4
+    assert pco2s is not None
+    # 层厚默认 [20,20,20,40]
+    for i, d in enumerate(DEFAULT_4LAYER_DEPTHS):
+        assert profiles[i].effective_depth == d
+    # 孔隙度 + 反推容重 ρ=2.65(1−φ)
+    for i in range(4):
+        assert profiles[i].porosity == pytest.approx(DEFAULT_4LAYER_POROSITY[i])
+        assert profiles[i].bulk_density == pytest.approx(
+            2.65 * (1 - DEFAULT_4LAYER_POROSITY[i]))
+    # 水文参数 + 粘粒
+    assert profiles[0].ksat == DEFAULT_4LAYER_KSAT[0]
+    assert profiles[3].ksat == DEFAULT_4LAYER_KSAT[3]
+    assert profiles[0].infiltration_initial == DEFAULT_4LAYER_F0[0]
+    assert profiles[3].infiltration_steady == DEFAULT_4LAYER_FC[3]
+    assert profiles[0].clay_pct == DEFAULT_4LAYER_CLAY_PCT[0]
+    assert profiles[3].clay_pct == DEFAULT_4LAYER_CLAY_PCT[3]
+
+
+# ==================== v0.5.0/T4: 引擎水文集成 ====================
+
+def test_multi_layer_hydrology_inflow_and_drain(profile, soil_info, monkeypatch):
+    """v0.5.0/T4: run_monthly_multi_layer(hydrology) → 各层注入水量 + 层间排水"""
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    states = [e.build_initial_state(profile, soil_info, 0.015) for _ in range(2)]
+    inflows = [1.0e5, 3.0e4]  # 层1 入渗, 层2 接收上层排水
+    drains = [3.0e4, 2.0e4]
+
+    captured = []
+    orig = e.run_monthly_step
+
+    def spy(state, forcing, action, soil_profile):
+        captured.append(forcing.get('inflow_water_L', None))
+        return orig(state, forcing, action, soil_profile)
+
+    monkeypatch.setattr(e, "run_monthly_step", spy)
+    e.run_monthly_multi_layer(states, FORCING, ACTION, profile,
+                              hydrology={'inflows': inflows, 'drains': drains})
+    assert captured == inflows
+
+
+def test_engine_build_input_uses_inflow_water(profile, soil_info):
+    """v0.5.0/T4: _build_phreeqc_input REACTION H2O 用该层来水量"""
+    from src.scenario_controller import MonthlyAction as _MA
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    forcing = dict(FORCING)
+    forcing['inflow_water_L'] = 1000.0
+    inp = e._build_phreeqc_input(state, forcing, _MA(), profile)
+    assert "H2O" in inp
+    # 该层来水为 0 → 无 H2O 行
+    forcing2 = dict(FORCING)
+    forcing2['inflow_water_L'] = 0.0
+    inp2 = e._build_phreeqc_input(state, forcing2, _MA(), profile)
+    assert "H2O" not in inp2
+
+
+# ==================== v0.5.0/T5: main 水文集成 + 输出 ====================
+
+def test_apply_hydrology_month(profile, soil_info):
+    """v0.5.0/T5: 月度水文 (随机降雨+Horton+级联) → inflows/drains/stored_water"""
+    from src.config_manager import SimulationConfig as _SC
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    cfg = _SC(n_layers=4)
+    _, states, _, profiles = main._build_initial_layer_states(
+        e, _reader(), profile, soil_info, 0.015, cfg)
+    hydrology, runoff_mm, runoff_extra = main._apply_hydrology_month(
+        states, profiles, FORCING, 0, 0, seed=42)
+    assert len(hydrology['inflows']) == 4
+    assert len(hydrology['drains']) == 4
+    assert hydrology['inflows'][0] > 0                      # 层1 入渗水
+    assert hydrology['inflows'][1] == hydrology['drains'][0]  # 层2 接收上层排水
+    # 月降水守恒: 入渗(mm) + 径流(mm) = 月降水
+    inf_mm = hydrology['inflows'][0] / 10000.0
+    assert inf_mm + runoff_mm == pytest.approx(FORCING['precip'])
+    # 持水生效: 至少一层有滞水
+    assert any(s.stored_water > 0 for s in states)
+
+
+def test_hydrology_multi_layer_month_step(profile, soil_info):
+    """v0.5.0/T5: 4 层水文模式月度步 E2E 运行"""
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    cfg = SimulationConfig(n_layers=4)
+    _, states, pco2s, profiles = main._build_initial_layer_states(
+        e, _reader(), profile, soil_info, 0.015, cfg)
+    hydrology, _, _ = main._apply_hydrology_month(
+        states, profiles, FORCING, 0, 0, seed=42)
+    new_states, diags = e.run_monthly_multi_layer(
+        states, FORCING, ACTION, profile,
+        layer_pco2s=pco2s, hydrology=hydrology)
+    assert len(new_states) == 4
+    assert len(diags) == 4
+    assert all(s.ph > 0 for s in new_states)
+
+
+def test_hydrology_diagnostics_extracted(profile, soil_info):
+    """v0.5.0/T5: 层诊断附加水文列 (infiltration/drainage/stored_water)"""
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    cfg = SimulationConfig(n_layers=4)
+    _, states, pco2s, profiles = main._build_initial_layer_states(
+        e, _reader(), profile, soil_info, 0.015, cfg)
+    hydrology, runoff_mm, runoff_extra = main._apply_hydrology_month(
+        states, profiles, FORCING, 0, 0, seed=42)
+    new_states, diags = e.run_monthly_multi_layer(
+        states, FORCING, ACTION, profile,
+        layer_pco2s=pco2s, hydrology=hydrology)
+    layer_diags = main._extract_diagnostics_with_hydrology(
+        new_states, hydrology, runoff_mm, runoff_extra, diags,
+        ["pH", "base_saturation", "CEC_occupied", "exchangeable_Ca",
+         "exchangeable_Al", "mineral_mass", "solution_ions"])
+    assert "infiltration" in layer_diags[0]
+    assert "drainage" in layer_diags[0]
+    assert "stored_water" in layer_diags[0]
+    assert "runoff" in layer_diags[0]
+
+
 # ==================== T5: 诊断实验逻辑 (impact_tag/depletion_year) ====================
 
 import sys

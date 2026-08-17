@@ -55,6 +55,7 @@ class SoilState:
     n_urea: float = 0.0          # 尿素形态氮 (mol N), 水解前库存
     n_nh4: float = 0.0           # 铵态氮 (mol N), 由 SELECTED_OUTPUT N(-3) 回填
     n_no3: float = 0.0           # 硝态氮 (mol N), 由 SELECTED_OUTPUT N(5) 回填
+    stored_water: float = 0.0    # v0.5.0: 本层滞留水量 (L/ha), 跨月累积 (水文盒子)
 
 
 def advance_nitrification(state: SoilState, action,
@@ -425,7 +426,8 @@ class PhreeqcEngine:
                                 monthly_forcing: dict,
                                 action,
                                 soil_profile,
-                                layer_pco2s=None) -> Tuple[list, list]:
+                                layer_pco2s=None,
+                                hydrology=None) -> Tuple[list, list]:
         """执行多分层月度计算步 (WF2, 基于 WF1 架构决策)
 
         架构 (WF1 Q1-Q4, Q7):
@@ -439,12 +441,18 @@ class PhreeqcEngine:
         L6 (v0.4.0): 可选逐层 pCO₂ — 各层月度 GAS_PHASE 固定分压按层注入
           (真实剖面表层低/底层高的 pCO₂ 梯度全程保持), 缺省回退全局 forcing。
 
+        v0.5.0 水文模式: hydrology = {'inflows': List[L/ha], 'drains': List[L/ha]}
+          - inflows[i]: 第 i 层本月注入水量 (层1=入渗, 下层=上层排水), 替代
+            precip×infiltration 计算; 进入 REACTION H2O 与降水化学离子
+          - drains[i]: 第 i 层排水量 (Ksat 限制后), 用于层间溶质传递
+
         参数:
             states: List[SoilState] — 各层当前状态 (长度 = n_layers)
             monthly_forcing: 当月气候强迫
             action: 当月操作指令
             soil_profile: 土壤剖面数据 (各层默认参数相同, ROADMAP 约束)
             layer_pco2s: List[float] 或 None — 各层 pCO₂ 覆盖值 (长度=n_layers)
+            hydrology: dict 或 None — 水文模式各层入渗/排水量
 
         返回:
             (List[SoilState], List[DiagnosticOutput]) — 更新后各层状态与诊断
@@ -465,6 +473,9 @@ class PhreeqcEngine:
             # L6: 逐层 pCO₂ 注入 (缺省回退全局 forcing['pCO2'])
             if layer_pco2s is not None:
                 layer_forcing['pCO2'] = layer_pco2s[i]
+            # v0.5.0: 水文模式各层注入水量 (替代 precip×infiltration)
+            if hydrology:
+                layer_forcing['inflow_water_L'] = hydrology['inflows'][i]
             if inflow_ions:
                 # 下层: 接收上层排水溶质 (Q2/Q7 平流守恒)
                 layer_forcing['inflow_ions'] = inflow_ions
@@ -475,10 +486,14 @@ class PhreeqcEngine:
 
             # 计算本层排水携带的溶质 → 作为下一层输入 (Q7 守恒核算)
             if i < n - 1:
-                # 排水量 = 入渗水量 (L), 由 precip_infiltration 决定
-                # 1 mm 降水 × 10000 m2/ha × 入渗系数 = L/ha (与引擎内一致)
-                drain_water_L = (monthly_forcing.get('precip', 0.0)
-                                 * 10000.0 * self.precip_infiltration)
+                if hydrology:
+                    # v0.5.0: 排水量由水文级联 (Ksat 限制) 决定
+                    drain_water_L = hydrology['drains'][i]
+                else:
+                    # 排水量 = 入渗水量 (L), 由 precip_infiltration 决定
+                    # 1 mm 降水 × 10000 m2/ha × 入渗系数 = L/ha (与引擎内一致)
+                    drain_water_L = (monthly_forcing.get('precip', 0.0)
+                                     * 10000.0 * self.precip_infiltration)
                 inflow_ions = {}
                 for ion, conc in new_state.solution.items():
                     if ion in ('temp', 'pH', 'pe', 'units'):
@@ -705,14 +720,19 @@ class PhreeqcEngine:
         precip_mm = forcing['precip']
         reaction_lines = []
 
-        if precip_mm > 0:
-            water_mol = (precip_mm * 10000.0 * 55.5
-                         * self.precip_infiltration)
-            reaction_lines.append(f"  H2O    {water_mol:.6e}  # 降水入渗")
-            # Q7: 降水化学离子 (酸雨组分) 随入渗水进入溶液
-            # 入渗水量(L) = 降水(mm) × 10000(m2/ha) × 入渗系数 (1mm=1L/m2)
-            if self.precip_chem is not None:
+        if precip_mm > 0 or forcing.get('inflow_water_L'):
+            # v0.5.0: 水文模式用该层注入水量 (inflow_water_L, L/ha), 否则用
+            # 降水×入渗系数; 水量为 0 时不注入
+            inflow_water_L = forcing.get('inflow_water_L')
+            if inflow_water_L is not None:
+                water_L = inflow_water_L
+            else:
                 water_L = precip_mm * 10000.0 * self.precip_infiltration
+            water_mol = water_L * 55.5  # 1 L H2O ≈ 55.5 mol
+            if water_mol > 0:
+                reaction_lines.append(f"  H2O    {water_mol:.6e}  # 降水入渗")
+            # Q7: 降水化学离子 (酸雨组分) 随入渗水进入溶液
+            if self.precip_chem is not None and water_L > 0:
                 amounts = self.precip_chem.reaction_amounts(water_L)
                 for sp, mol in amounts.items():
                     if mol > 0:

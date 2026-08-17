@@ -23,7 +23,7 @@ from pathlib import Path
 # 添加 src 到路径
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.config_manager import ConfigManager
+from src.config_manager import ConfigManager, LayerOverrideConfig
 from src.soil_database import SoilDatabase, apply_mineral_overrides
 from src.input_reader import InputReader
 from src.climate_forcing import ClimateForcing
@@ -32,6 +32,9 @@ from src.phreeqc_engine import PhreeqcEngine
 from src.output_writer import OutputWriter
 from src.initial_condition import InitialConditionBuilder
 from src.logging_config import setup_logging
+from src.constants import (DEFAULT_4LAYER_DEPTHS, DEFAULT_4LAYER_CLAY_PCT,
+                           DEFAULT_4LAYER_POROSITY, DEFAULT_4LAYER_KSAT,
+                           DEFAULT_4LAYER_F0, DEFAULT_4LAYER_FC)
 
 
 def _extract_diagnostics(soil_state, diag, variables):
@@ -107,10 +110,78 @@ def _build_initial_layer_states(engine, reader, soil_profile, soil_info,
             for i in range(n_layers)]
         return soil_states[0], soil_states, layer_pco2s, layer_profiles
 
+    if n_layers == 4:
+        # v0.5.0: n_layers=4 且未配置 layer_overrides → 自动注入内置物理剖面默认
+        # (真实红壤剖面: 表层薄/粘粒少/孔隙度大/导水强 → 底层厚/致密/导水弱)
+        layer_profiles = []
+        layer_mineral_infos = []
+        layer_pco2s = []
+        for i in range(4):
+            lo = LayerOverrideConfig(
+                clay_pct=DEFAULT_4LAYER_CLAY_PCT[i],
+                porosity=DEFAULT_4LAYER_POROSITY[i],
+                ksat=DEFAULT_4LAYER_KSAT[i],
+                infiltration_initial=DEFAULT_4LAYER_F0[i],
+                infiltration_steady=DEFAULT_4LAYER_FC[i])
+            depth = DEFAULT_4LAYER_DEPTHS[i]
+            p = reader.apply_layer_override(soil_profile, lo, depth)
+            layer_profiles.append(p)
+            layer_mineral_infos.append(soil_info)
+            layer_pco2s.append(initial_pCO2)
+        soil_states = [engine.build_initial_state(
+            layer_profiles[i], layer_mineral_infos[i], layer_pco2s[i])
+            for i in range(4)]
+        return soil_states[0], soil_states, layer_pco2s, layer_profiles
+
     # 各层默认参数相同 (现状行为, WF2/Q1)
     soil_states = [engine.build_initial_state(
         soil_profile, soil_info, initial_pCO2) for _ in range(n_layers)]
     return soil_states[0], soil_states, None, None
+
+
+def _apply_hydrology_month(soil_states, layer_profiles, forcing,
+                           year, month, seed=42):
+    """v0.5.0: 月度水文 (随机降雨 + Horton 入渗 + 层间级联)
+
+    就地更新各层 stored_water (跨月滞水); 返回引擎需要的各层入渗/排水量。
+
+    返回:
+        (hydrology_dict, runoff_mm, runoff_extra_L)
+        - hydrology_dict: {'inflows': [L/ha 各层注入水量], 'drains': [L/ha 各层排水]}
+        - runoff_mm: 超渗径流 (mm, = 月降水 − 月入渗)
+        - runoff_extra_L: 超饱和溢出 (L/ha, 积水/侧排)
+    """
+    from src.hydrology import monthly_hydrology, LayerCascade
+    inf_mm, runoff_mm, _ = monthly_hydrology(
+        forcing.get('precip', 0.0), year, month, layer_profiles[0], seed)
+    inf_L = inf_mm * 10000.0
+    cascade = LayerCascade(layer_profiles)
+    drains, runoff_extra, _ = cascade.run(inf_L, soil_states)
+    inflows = [inf_L] + drains[:-1]  # 层1=入渗, 下层=上层排水
+    return {'inflows': inflows, 'drains': drains}, runoff_mm, runoff_extra
+
+
+def _extract_diagnostics_with_hydrology(soil_states, hydrology, runoff_mm,
+                                        runoff_extra, diag_objs, variables):
+    """v0.5.0: 提取层诊断并附加水文列 (infiltration/drainage/stored_water/runoff)
+
+    水文列值:
+      - infiltration: 该层本月注入水量 (L/ha; 层1=入渗, 下层=上层排水)
+      - drainage:     该层排水量 (L/ha, Ksat 限制后)
+      - stored_water: 该层跨月滞水 (L/ha)
+      - runoff:       表层径流合计 (mm×10000 + 超饱和溢出, L/ha)
+    """
+    layer_diags = [_extract_diagnostics(s, d, variables)
+                   for s, d in zip(soil_states, diag_objs)]
+    n = len(soil_states)
+    for i in range(n):
+        inflow = (hydrology['inflows'][i] if i == 0
+                  else hydrology['drains'][i - 1])
+        layer_diags[i]['infiltration'] = inflow
+        layer_diags[i]['drainage'] = hydrology['drains'][i]
+        layer_diags[i]['stored_water'] = soil_states[i].stored_water
+    layer_diags[0]['runoff'] = runoff_mm * 10000.0 + runoff_extra
+    return layer_diags
 
 
 def run_simulation(config_path: str = "config/config.yaml"):
@@ -300,23 +371,41 @@ def run_simulation(config_path: str = "config/config.yaml"):
 
             # 执行化学计算
             if n_layers > 1:
-                # WF2/Q4: 多分层 — 高层编排层 (层循环 + 级联平流)
-                if sub_steps > 0:
-                    n_sub = int(30 / sub_steps)
-                    for sub in range(n_sub):
-                        sub_forcing = forcing.copy()
-                        sub_forcing['precip'] = forcing['precip'] / n_sub
-                        soil_states, diags = engine.run_monthly_multi_layer(
-                            soil_states, sub_forcing, action, soil_profile,
-                            layer_pco2s=layer_pco2s)
-                else:
+                # v0.5.0: 水文模式 (4 层内置默认或 layer_overrides 含水文)
+                hydrology_enabled = (
+                    layer_profiles is not None
+                    and getattr(layer_profiles[0], 'infiltration_initial', 0.0) > 0.0)
+                if hydrology_enabled:
+                    # 水文盒子模型: 月度一次 (随机降雨+Horton+级联), 替代
+                    # precip_infiltration; 子时间步不适用 (水文为月度盒子)
+                    hydrology, runoff_mm, runoff_extra = _apply_hydrology_month(
+                        soil_states, layer_profiles, forcing, year, month,
+                        cfg.simulation.hydrology_seed)
                     soil_states, diags = engine.run_monthly_multi_layer(
                         soil_states, forcing, action, soil_profile,
-                        layer_pco2s=layer_pco2s)
-                # WF2/Q6: 逐层诊断 + 层后缀输出
-                layer_diagnostics = [
-                    _extract_diagnostics(s, d, cfg.output.variables)
-                    for s, d in zip(soil_states, diags)]
+                        layer_pco2s=layer_pco2s, hydrology=hydrology)
+                    # WF2/Q6 + v0.5.0: 逐层诊断 + 水文列 + 层后缀输出
+                    layer_diagnostics = _extract_diagnostics_with_hydrology(
+                        soil_states, hydrology, runoff_mm, runoff_extra,
+                        diags, cfg.output.variables)
+                else:
+                    # WF2/Q4: 多分层 — 高层编排层 (层循环 + 级联平流)
+                    if sub_steps > 0:
+                        n_sub = int(30 / sub_steps)
+                        for sub in range(n_sub):
+                            sub_forcing = forcing.copy()
+                            sub_forcing['precip'] = forcing['precip'] / n_sub
+                            soil_states, diags = engine.run_monthly_multi_layer(
+                                soil_states, sub_forcing, action, soil_profile,
+                                layer_pco2s=layer_pco2s)
+                    else:
+                        soil_states, diags = engine.run_monthly_multi_layer(
+                            soil_states, forcing, action, soil_profile,
+                            layer_pco2s=layer_pco2s)
+                    # WF2/Q6: 逐层诊断 + 层后缀输出
+                    layer_diagnostics = [
+                        _extract_diagnostics(s, d, cfg.output.variables)
+                        for s, d in zip(soil_states, diags)]
                 output_writer.record_multi_step(
                     year + 1, month + 1, layer_diagnostics)
             else:

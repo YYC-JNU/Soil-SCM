@@ -38,6 +38,12 @@ class LayerOverrideConfig:
     exch_h: Optional[float] = None
     pCO2: Optional[float] = None
     minerals: Dict[str, float] = field(default_factory=dict)
+    # v0.5.0 水文: 逐层土壤水文参数 (孔隙度覆盖时反推容重 ρ=2.65(1−φ))
+    clay_pct: Optional[float] = None             # 粘粒含量 (%)
+    porosity: Optional[float] = None             # 孔隙度 (0~1), 覆盖容重派生
+    ksat: Optional[float] = None                 # 饱和导水率 (cm/day)
+    infiltration_initial: Optional[float] = None  # 初渗率 f0 (mm/min)
+    infiltration_steady: Optional[float] = None   # 稳渗率 fc (mm/min)
 
 
 @dataclass
@@ -57,6 +63,7 @@ class SimulationConfig:
     layer_overrides: List[LayerOverrideConfig] = field(default_factory=list)  # L6: 逐层参数覆盖 (密集列表, 长度=n_layers)
     nitrification_k1: float = NITRIFICATION_K1  # L4: 尿素水解速率 (/月), 1.0=当月全水解
     nitrification_k2: float = NITRIFICATION_K2  # L4: 硝化速率 (/月), NH4+→NO3- 比例
+    hydrology_seed: int = 42                    # v0.5.0: 随机降雨生成种子 (可复现)
 
 
 @dataclass
@@ -244,7 +251,12 @@ class ConfigManager:
                     exch_al=item.get('exch_al'),
                     exch_h=item.get('exch_h'),
                     pCO2=item.get('pCO2'),
-                    minerals=dict(item.get('minerals', {}))
+                    minerals=dict(item.get('minerals', {})),
+                    clay_pct=item.get('clay_pct'),
+                    porosity=item.get('porosity'),
+                    ksat=item.get('ksat'),
+                    infiltration_initial=item.get('infiltration_initial'),
+                    infiltration_steady=item.get('infiltration_steady')
                 ))
             layer_depths = s.get('layer_depths')  # None 或 List[float]
             config.simulation = SimulationConfig(
@@ -261,7 +273,8 @@ class ConfigManager:
                 layer_depths=(list(layer_depths) if layer_depths is not None else None),
                 layer_overrides=overrides,
                 nitrification_k1=s.get('nitrification_k1', NITRIFICATION_K1),
-                nitrification_k2=s.get('nitrification_k2', NITRIFICATION_K2)
+                nitrification_k2=s.get('nitrification_k2', NITRIFICATION_K2),
+                hydrology_seed=s.get('hydrology_seed', 42)
             )
 
         # 解析 soil_data (v0.2.3: 支持 config 内联字段, -1=回退 CSV)
@@ -522,6 +535,33 @@ class ConfigManager:
                     logger.warning(
                         "layer_overrides[%d] 矿物质量分数总和 %.3f != 1 "
                         "(增量替换语义, 不归一化), 请确认剖面数据", i, total)
+            # v0.5.0 水文值域校验
+            if lo.porosity is not None and not (0.0 < lo.porosity < 1.0):
+                raise ValueError(
+                    f"[layer_overrides[{i}]/porosity 参数存在问题: {lo.porosity} "
+                    f"超出范围 (0,1), 请确认后再输入]")
+            if lo.ksat is not None and lo.ksat <= 0:
+                raise ValueError(
+                    f"[layer_overrides[{i}]/ksat 参数存在问题: 饱和导水率必须大于 0, "
+                    f"请确认后再输入]")
+            if lo.clay_pct is not None and not (0.0 <= lo.clay_pct <= 100.0):
+                raise ValueError(
+                    f"[layer_overrides[{i}]/clay_pct 参数存在问题: {lo.clay_pct} "
+                    f"超出范围 (0~100), 请确认后再输入]")
+            f0 = lo.infiltration_initial
+            fc = lo.infiltration_steady
+            if f0 is not None and not (0.0 < f0 <= 3.0):
+                raise ValueError(
+                    f"[layer_overrides[{i}]/infiltration_initial 参数存在问题: "
+                    f"初渗率 {f0} 超出合理范围 (0~3 mm/min), 请确认后再输入]")
+            if fc is not None and not (0.0 <= fc < 3.0):
+                raise ValueError(
+                    f"[layer_overrides[{i}]/infiltration_steady 参数存在问题: "
+                    f"稳渗率 {fc} 超出合理范围 (0~3 mm/min), 请确认后再输入]")
+            if f0 is not None and fc is not None and f0 <= fc:
+                raise ValueError(
+                    f"[layer_overrides[{i}]/infiltration 参数存在问题: "
+                    f"初渗率 {f0} 必须大于稳渗率 {fc}, 请确认后再输入]")
 
     def _validate_precip_chemistry(self):
         """校验降水化学配置 (v0.2.3)
