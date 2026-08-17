@@ -17,6 +17,28 @@ simulation:
   n_layers: 1                        # WF2: 分层数 (1=单层, 4=多分层; 各层默认参数相同)
   enable_surface: false              # WF4: SURFACE 表面络合 (Hfo_s/Hfo_w 铁氧化物), P/Zn 吸附生效
 
+  # ---- L6 (v0.4.0): 逐层参数覆盖 (真实剖面约束, 仅 n_layers>1 时生效) ----
+  # layer_depths: 每层厚度 (cm), 长度必须 = n_layers; 每层 effective_depth 由此派生
+  # layer_overrides: 密集列表, 长度必须 = n_layers; 每项为该层覆盖 dict (部分覆盖,
+  #   未写字段回退默认; 空 {} 表示该层无覆盖); 可覆盖字段:
+  #   ph / organic_matter / cec / bulk_density / exch_ca~exch_h / pCO2 / minerals
+  #   (minerals = 矿物质量分数增量替换, 只替换指定矿物, 不归一化)
+  # n_layers=1 时配置将被忽略 (单层回归护栏)
+  # layer_depths: [10, 10, 20, 20]
+  # layer_overrides:
+  #   - ph: 4.5
+  #     organic_matter: 30.0
+  #     cec: 15.0
+  #     bulk_density: 1.1
+  #     exch_al: 3.0
+  #     pCO2: 0.020
+  #     minerals: {goethite: 0.10}
+  #   - {}
+  #   - cec: 10.0
+  #     bulk_density: 1.35
+  #   - bulk_density: 1.5
+  #     pCO2: 0.030
+
 soil_data:
   input_file: data/soil_survey.csv
   exchangeable_ions_file: data/exchangeable_ions.csv

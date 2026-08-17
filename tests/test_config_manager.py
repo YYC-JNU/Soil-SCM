@@ -1,4 +1,5 @@
 import pytest
+import logging
 from src.config_manager import ConfigManager
 
 
@@ -230,3 +231,123 @@ def test_precip_json_missing_raises(tmp_path):
         encoding="utf-8")
     with pytest.raises(FileNotFoundError):
         ConfigManager(str(p))
+
+
+# ==================== L6 (v0.4.0): layer_overrides / layer_depths ====================
+
+FULL_LAYER_OVERRIDES_YAML = """\
+simulation:
+  n_years: 2
+  n_layers: 4
+  layer_depths: [10, 10, 20, 20]
+  layer_overrides:
+    - ph: 4.5
+      organic_matter: 30.0
+      cec: 15.0
+      bulk_density: 1.1
+      exch_ca: 3.5
+      exch_mg: 1.0
+      exch_k: 0.4
+      exch_na: 0.2
+      exch_al: 3.0
+      exch_h: 1.0
+      pCO2: 0.020
+      minerals:
+        goethite: 0.08
+    - {}
+    - cec: 10.0
+      bulk_density: 1.35
+    - bulk_density: 1.5
+      pCO2: 0.030
+"""
+
+
+def test_layer_overrides_default_empty(cfg):
+    """默认 config: layer_overrides 为空列表, layer_depths 为 None"""
+    assert cfg.config.simulation.layer_overrides == []
+    assert cfg.config.simulation.layer_depths is None
+
+
+def test_layer_overrides_full_parse(tmp_path):
+    """L6/T1: 密集列表解析 — 7 类覆盖字段正确映射到 dataclass"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text(FULL_LAYER_OVERRIDES_YAML, encoding="utf-8")
+    cfg = ConfigManager(str(p))
+    sim = cfg.config.simulation
+    assert sim.layer_depths == [10, 10, 20, 20]
+    assert len(sim.layer_overrides) == 4
+
+    lo0 = sim.layer_overrides[0]
+    assert lo0.ph == 4.5
+    assert lo0.organic_matter == 30.0
+    assert lo0.cec == 15.0
+    assert lo0.bulk_density == 1.1
+    assert lo0.exch_al == 3.0
+    assert lo0.pCO2 == 0.020
+    assert lo0.minerals == {"goethite": 0.08}
+
+    # 空 dict 层: 全字段 None
+    lo1 = sim.layer_overrides[1]
+    assert lo1.ph is None
+    assert lo1.cec is None
+    assert lo1.minerals == {}
+
+    lo2 = sim.layer_overrides[2]
+    assert lo2.cec == 10.0
+    assert lo2.bulk_density == 1.35
+    assert lo2.ph is None
+
+
+def test_layer_overrides_length_mismatch_raises(tmp_path):
+    """L6/T1: 密集列表长度 != n_layers → 报错"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text(
+        "simulation:\n  n_years: 2\n  n_layers: 4\n  layer_overrides:\n"
+        "    - cec: 15.0\n    - {}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="layer_overrides"):
+        ConfigManager(str(p))
+
+
+def test_layer_depths_length_mismatch_raises(tmp_path):
+    """L6/T1: layer_depths 长度 != n_layers → 报错"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text(
+        "simulation:\n  n_years: 2\n  n_layers: 4\n  layer_depths: [10, 10]\n",
+        encoding="utf-8")
+    with pytest.raises(ValueError, match="layer_depths"):
+        ConfigManager(str(p))
+
+
+def test_layer_overrides_invalid_ph_raises(tmp_path):
+    """L6/T1: 覆盖字段值域非法 (ph=12 越界) → 报错"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text(
+        "simulation:\n  n_years: 2\n  n_layers: 2\n  layer_overrides:\n"
+        "    - ph: 12.0\n    - {}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="ph"):
+        ConfigManager(str(p))
+
+
+def test_layer_overrides_single_layer_ignored(tmp_path, caplog):
+    """L6/T1: n_layers=1 时 overrides 不报错, 警告被忽略"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text(
+        "simulation:\n  n_years: 2\n  n_layers: 1\n  layer_overrides:\n"
+        "    - cec: 15.0\n", encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        cfg = ConfigManager(str(p))
+    assert cfg.config.simulation.layer_overrides[0].cec == 15.0
+    assert any("忽略" in r.message for r in caplog.records)
+
+
+def test_layer_overrides_minerals_sum_warns(tmp_path, caplog):
+    """L6/T1: 矿物质量分数总和 != 1 → 警告不报错 (不归一化)"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text(
+        "simulation:\n  n_years: 2\n  n_layers: 2\n  layer_overrides:\n"
+        "    - minerals:\n        goethite: 0.08\n    - {}\n",
+        encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        cfg = ConfigManager(str(p))
+    assert cfg.config.simulation.layer_overrides[0].minerals == {"goethite": 0.08}
+    assert any("总和" in r.message for r in caplog.records)

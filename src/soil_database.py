@@ -11,6 +11,9 @@ import os
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 from dataclasses import dataclass
+from src.logging_config import get_logger
+
+logger = get_logger("soil_database")
 
 
 @dataclass
@@ -214,4 +217,44 @@ class SoilDatabase:
         for ref in info.references:
             print(f"  - {ref}")
         print(f"{'='*50}\n")
+
+
+def apply_mineral_overrides(mineral_info: SoilTypeInfo,
+                            overrides: Dict[str, float]) -> SoilTypeInfo:
+    """矿物增量覆盖 (L6, v0.4.0): 返回覆盖后的新 SoilTypeInfo
+
+    只替换 overrides 中指定的矿物质量分数, 未覆盖矿物保留原值; **不归一化**
+    (质量分数总和 ≠ 1 时由 config 校验层警告, 覆盖意图不被归一化扭曲)。
+    overrides 中出现默认矿物库不存在的矿物名 → 警告并忽略 (需摩尔质量等
+    数据, 超出增量覆盖范围)。
+
+    参数:
+        mineral_info: 原始 SoilTypeInfo (默认来自 soil_mineral_db)
+        overrides: {矿物名: 质量分数} 增量覆盖 dict
+    返回:
+        SoilTypeInfo: 覆盖后的新对象 (不影响 mineral_info)
+    """
+    new_minerals = {}
+    for mname, minfo in mineral_info.minerals.items():
+        frac = overrides.get(mname, minfo.mass_fraction)
+        new_minerals[mname] = MineralInfo(
+            name=mname, mass_fraction=frac,
+            molar_mass=minfo.molar_mass, specific_area=minfo.specific_area)
+
+    unknown = [m for m in overrides if m not in mineral_info.minerals]
+    if unknown:
+        logger.warning("矿物覆盖跳过未知矿物: %s (默认矿物库无此矿物)",
+                       ", ".join(unknown))
+
+    return SoilTypeInfo(
+        name=mineral_info.name,
+        description=mineral_info.description,
+        ph_range=mineral_info.ph_range,
+        minerals=new_minerals,
+        cec_range=mineral_info.cec_range,
+        om_range=mineral_info.om_range,
+        pCO2=mineral_info.pCO2,
+        pCO2_beta=mineral_info.pCO2_beta,
+        references=mineral_info.references,
+    )
 

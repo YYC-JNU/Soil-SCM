@@ -85,3 +85,72 @@ def test_profile_config_no_csv_ok(tmp_path):
         survey_config=SURVEY_CONFIG, exchangeable_config=EXCH_CONFIG)
     assert profile.ph == 5.5
     assert profile.exch_ca == 4.0
+
+
+# ==================== L6 (v0.4.0): 逐层 profile 构建 ====================
+
+from src.config_manager import LayerOverrideConfig
+
+
+def test_apply_layer_override_partial(profile):
+    """L6/T2: 部分覆盖 — 只覆盖指定字段, 其余保持默认; effective_depth 由层深派生"""
+    reader = _reader()
+    lo = LayerOverrideConfig(cec=15.0, bulk_density=1.1, exch_al=3.0)
+    p = reader.apply_layer_override(profile, lo, depth=10.0)
+    assert p is not profile
+    assert p.cec == 15.0
+    assert p.bulk_density == 1.1
+    assert p.exch_al == 3.0
+    assert p.effective_depth == 10.0
+    # 未覆盖字段保持默认
+    assert p.ph == profile.ph == 5.0
+    assert p.organic_matter == profile.organic_matter
+    assert p.exch_ca == profile.exch_ca
+
+
+def test_apply_layer_override_empty(profile):
+    """L6/T2: 空覆盖 → 完全回退默认, 仅 effective_depth 按层深派生; 原对象不变"""
+    reader = _reader()
+    p = reader.apply_layer_override(profile, LayerOverrideConfig(), depth=20.0)
+    assert p.effective_depth == 20.0
+    assert p.cec == profile.cec
+    assert p.ph == profile.ph
+    assert p.exch_al == profile.exch_al
+    # 原对象不被修改 (深拷贝语义)
+    assert profile.effective_depth != 20.0
+
+
+def test_apply_layer_override_full(profile):
+    """L6/T2: 全字段覆盖 (ph/有机质/CEC/容重/交换性离子×6)"""
+    reader = _reader()
+    lo = LayerOverrideConfig(ph=4.5, organic_matter=30.0, cec=15.0,
+                             bulk_density=1.2, exch_ca=3.5, exch_mg=1.0,
+                             exch_k=0.4, exch_na=0.2, exch_al=3.0, exch_h=1.0)
+    p = reader.apply_layer_override(profile, lo, depth=10.0)
+    assert p.ph == 4.5
+    assert p.organic_matter == 30.0
+    assert p.cec == 15.0
+    assert p.bulk_density == 1.2
+    assert p.exch_ca == 3.5
+    assert p.exch_mg == 1.0
+    assert p.exch_k == 0.4
+    assert p.exch_na == 0.2
+    assert p.exch_al == 3.0
+    assert p.exch_h == 1.0
+    assert p.effective_depth == 10.0
+
+
+def test_apply_mineral_overrides_increment(soil_info):
+    """L6/T2: 矿物增量替换 — 只替换指定矿物质量分数, 未覆盖矿物保留, 不归一化"""
+    from src.soil_database import apply_mineral_overrides
+    orig_goethite = soil_info.minerals["goethite"].mass_fraction
+    overridden = apply_mineral_overrides(soil_info, {"goethite": 0.10})
+    assert overridden is not soil_info
+    assert overridden.minerals["goethite"].mass_fraction == 0.10
+    # 未覆盖矿物保留原质量分数
+    for name, minfo in soil_info.minerals.items():
+        if name != "goethite":
+            assert (overridden.minerals[name].mass_fraction
+                    == pytest.approx(minfo.mass_fraction))
+    # 原对象不变
+    assert soil_info.minerals["goethite"].mass_fraction == pytest.approx(orig_goethite)

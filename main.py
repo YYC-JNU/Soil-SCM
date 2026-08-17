@@ -16,6 +16,7 @@ Soil-SCM: 土壤物理化学数值模式
 import sys
 import argparse
 import json
+import logging
 import numpy as np
 from pathlib import Path
 
@@ -23,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.config_manager import ConfigManager
-from src.soil_database import SoilDatabase
+from src.soil_database import SoilDatabase, apply_mineral_overrides
 from src.input_reader import InputReader
 from src.climate_forcing import ClimateForcing
 from src.scenario_controller import ScenarioController
@@ -60,6 +61,56 @@ def _extract_diagnostics(soil_state, diag, variables):
     if 'solution_ions' in variables and diag.solution_ions:
         diagnostics['solution_ions'] = json.dumps(diag.solution_ions)
     return diagnostics
+
+
+def _build_initial_layer_states(engine, reader, soil_profile, soil_info,
+                                initial_pCO2, simulation_cfg):
+    """构建初始状态列表 (L6, v0.4.0: 支持逐层参数覆盖)
+
+    n_layers>1 且配置 layer_overrides 时: 逐层应用覆盖 (部分覆盖回退默认),
+    effective_depth 由 layer_depths[i] 派生; 返回逐层 profiles/pCO₂s 供
+    月度循环与预平衡使用。否则各层默认参数相同 (ROADMAP 约束, 现状行为)。
+
+    返回:
+        (soil_state, soil_states, layer_pco2s, layer_profiles)
+        - layer_pco2s/layer_profiles: 有覆盖时逐层列表, 否则 None
+    """
+    n_layers = getattr(simulation_cfg, 'n_layers', 1)
+    layer_depths = getattr(simulation_cfg, 'layer_depths', None)
+    layer_overrides = getattr(simulation_cfg, 'layer_overrides', None) or []
+
+    if n_layers > 1 and layer_overrides:
+        if layer_depths is None:
+            # L6: 有逐层覆盖但未配置 layer_depths → 每层厚度用默认 profile,
+            # 输出后缀将走等分兜底 (物理厚度与列名仍可能错位), 提示用户
+            logging.getLogger("main").warning(
+                "已配置 layer_overrides 但未配置 layer_depths: 各层 "
+                "effective_depth 将用默认剖面厚度, 输出列后缀走等分兜底; "
+                "建议配置 simulation.layer_depths 使列名与物理厚度一致")
+        # L6: 逐层 profile/矿物/pCO2 构建 (密集列表长度已由 config 校验)
+        layer_profiles = []
+        layer_mineral_infos = []
+        layer_pco2s = []
+        for i in range(n_layers):
+            lo = layer_overrides[i]
+            depth = (layer_depths[i] if layer_depths
+                     else soil_profile.effective_depth)
+            p = reader.apply_layer_override(soil_profile, lo, depth)
+            layer_profiles.append(p)
+            m = (apply_mineral_overrides(soil_info, lo.minerals)
+                 if lo.minerals else soil_info)
+            layer_mineral_infos.append(m)
+            pco2 = lo.pCO2 if lo.pCO2 is not None else initial_pCO2
+            layer_pco2s.append(pco2)
+        soil_states = [engine.build_initial_state(
+            layer_profiles[i], layer_mineral_infos[i], layer_pco2s[i])
+            for i in range(n_layers)]
+        return soil_states[0], soil_states, layer_pco2s, layer_profiles
+
+    # 各层默认参数相同 (现状行为, WF2/Q1)
+    soil_states = [engine.build_initial_state(
+        soil_profile, soil_info, initial_pCO2) for _ in range(n_layers)]
+    return soil_states[0], soil_states, None, None
 
 
 def run_simulation(config_path: str = "config/config.yaml"):
@@ -179,21 +230,32 @@ def run_simulation(config_path: str = "config/config.yaml"):
                            enable_surface=getattr(cfg.simulation, 'enable_surface', False))
 
     # 构建初始状态 (initial_pCO2 已在阶段 4 中计算)
-    # WF2/Q1: 多分层时构建 List[SoilState] (各层默认参数相同, ROADMAP 约束)
+    # WF2/Q1: 多分层时构建 List[SoilState]; L6 (v0.4.0): 支持逐层参数覆盖
     n_layers = getattr(cfg.simulation, 'n_layers', 1)
-    soil_state = engine.build_initial_state(
-        soil_profile, soil_info, initial_pCO2)
-    soil_states = [engine.build_initial_state(
-        soil_profile, soil_info, initial_pCO2) for _ in range(n_layers)]
+    layer_depths = getattr(cfg.simulation, 'layer_depths', None)
+    layer_overrides = getattr(cfg.simulation, 'layer_overrides', None) or []
+    soil_state, soil_states, layer_pco2s, layer_profiles = \
+        _build_initial_layer_states(
+            engine, reader, soil_profile, soil_info, initial_pCO2,
+            cfg.simulation)
 
     # v0.5.0: 初始状态预平衡 (热力学自洽, 默认开启, L9 落地)
     # 无干预多步平衡让溶液/交换/矿物三相重新分配至稳态, 避免首次平衡
     # 剧烈重分配 (矿物量大时交换 Al 被矿物相吸收 → fertilizer 长期耗尽)
+    # L6 (v0.4.0): 逐层覆盖时每层独立预平衡 (各层 profile 作观测锚定)
     if getattr(cfg.simulation, 'enable_pre_equilibration', True):
         pre_steps = getattr(cfg.simulation, 'pre_equilibration_max_steps', 60)
-        soil_state = engine.pre_equilibrate(soil_state, soil_profile, pre_steps)
-        soil_states = [engine.pre_equilibrate(s, soil_profile, pre_steps)
-                       for s in soil_states]
+        if layer_profiles is not None:
+            soil_state = engine.pre_equilibrate(
+                soil_state, layer_profiles[0], pre_steps)
+            soil_states = [engine.pre_equilibrate(
+                s, layer_profiles[i], pre_steps)
+                for i, s in enumerate(soil_states)]
+        else:
+            soil_state = engine.pre_equilibrate(
+                soil_state, soil_profile, pre_steps)
+            soil_states = [engine.pre_equilibrate(s, soil_profile, pre_steps)
+                           for s in soil_states]
 
     print(f"\n初始状态:")
     if n_layers > 1:
@@ -243,10 +305,12 @@ def run_simulation(config_path: str = "config/config.yaml"):
                         sub_forcing = forcing.copy()
                         sub_forcing['precip'] = forcing['precip'] / n_sub
                         soil_states, diags = engine.run_monthly_multi_layer(
-                            soil_states, sub_forcing, action, soil_profile)
+                            soil_states, sub_forcing, action, soil_profile,
+                            layer_pco2s=layer_pco2s)
                 else:
                     soil_states, diags = engine.run_monthly_multi_layer(
-                        soil_states, forcing, action, soil_profile)
+                        soil_states, forcing, action, soil_profile,
+                        layer_pco2s=layer_pco2s)
                 # WF2/Q6: 逐层诊断 + 层后缀输出
                 layer_diagnostics = [
                     _extract_diagnostics(s, d, cfg.output.variables)

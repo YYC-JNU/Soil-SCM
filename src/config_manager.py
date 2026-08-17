@@ -19,6 +19,27 @@ logger = get_logger("config_manager")
 
 
 @dataclass
+class LayerOverrideConfig:
+    """单层覆盖配置 (L6, v0.4.0)
+
+    字段为 None 表示该层该字段回退全局默认 profile (部分覆盖语义)。
+    minerals 为矿物质量分数增量替换 dict (只替换指定矿物, 不归一化, 总和≠1 警告)。
+    """
+    ph: Optional[float] = None
+    organic_matter: Optional[float] = None
+    cec: Optional[float] = None
+    bulk_density: Optional[float] = None
+    exch_ca: Optional[float] = None
+    exch_mg: Optional[float] = None
+    exch_k: Optional[float] = None
+    exch_na: Optional[float] = None
+    exch_al: Optional[float] = None
+    exch_h: Optional[float] = None
+    pCO2: Optional[float] = None
+    minerals: Dict[str, float] = field(default_factory=dict)
+
+
+@dataclass
 class SimulationConfig:
     """模拟控制参数"""
     n_years: int = 50
@@ -31,6 +52,8 @@ class SimulationConfig:
     enable_surface: bool = False  # WF4: 启用 SURFACE 表面络合 (Hfo_s/Hfo_w), 默认关闭
     enable_pre_equilibration: bool = True  # v0.5.0: 初始状态预平衡 (热力学自洽, 默认开启)
     pre_equilibration_max_steps: int = 60  # v0.5.0: 预平衡最大步数 (收敛判据见引擎)
+    layer_depths: Optional[List[float]] = None  # L6: 每层厚度 (cm), None=等分兜底; 每层 effective_depth 由此派生
+    layer_overrides: List[LayerOverrideConfig] = field(default_factory=list)  # L6: 逐层参数覆盖 (密集列表, 长度=n_layers)
 
 
 @dataclass
@@ -200,6 +223,27 @@ class ConfigManager:
         # 解析 simulation
         if 'simulation' in raw:
             s = raw['simulation']
+            # L6: layer_overrides 密集列表解析 (元素为 dict, 缺失字段保持 None)
+            overrides_raw = s.get('layer_overrides', []) or []
+            overrides = []
+            for item in overrides_raw:
+                if not isinstance(item, dict):
+                    item = {}
+                overrides.append(LayerOverrideConfig(
+                    ph=item.get('ph'),
+                    organic_matter=item.get('organic_matter'),
+                    cec=item.get('cec'),
+                    bulk_density=item.get('bulk_density'),
+                    exch_ca=item.get('exch_ca'),
+                    exch_mg=item.get('exch_mg'),
+                    exch_k=item.get('exch_k'),
+                    exch_na=item.get('exch_na'),
+                    exch_al=item.get('exch_al'),
+                    exch_h=item.get('exch_h'),
+                    pCO2=item.get('pCO2'),
+                    minerals=dict(item.get('minerals', {}))
+                ))
+            layer_depths = s.get('layer_depths')  # None 或 List[float]
             config.simulation = SimulationConfig(
                 n_years=s.get('n_years', 50),
                 time_step=s.get('time_step', 'monthly'),
@@ -210,7 +254,9 @@ class ConfigManager:
                 n_layers=s.get('n_layers', 1),
                 enable_surface=s.get('enable_surface', False),
                 enable_pre_equilibration=s.get('enable_pre_equilibration', True),
-                pre_equilibration_max_steps=s.get('pre_equilibration_max_steps', 60)
+                pre_equilibration_max_steps=s.get('pre_equilibration_max_steps', 60),
+                layer_depths=(list(layer_depths) if layer_depths is not None else None),
+                layer_overrides=overrides
             )
 
         # 解析 soil_data (v0.2.3: 支持 config 内联字段, -1=回退 CSV)
@@ -392,8 +438,77 @@ class ConfigManager:
         # ---- precipitation_chemistry 校验 (v0.2.3) ----
         self._validate_precip_chemistry()
 
+        # ---- L6: layer_overrides / layer_depths 校验 (v0.4.0) ----
+        self._validate_layer_overrides()
+
         # 创建输出目录
         os.makedirs(self.config.output.directory, exist_ok=True)
+
+    def _validate_layer_overrides(self):
+        """校验逐层参数覆盖 (L6, v0.4.0)
+
+        规则:
+            1. n_layers=1 且 layer_overrides/layer_depths 非空 → 警告 + 忽略 (单层回归护栏)
+            2. n_layers>1: 密集列表长度必须 = n_layers (否则报错)
+            3. 覆盖字段值域校验 (ph∈(3,10), cec/bulk_density/pCO2>0, exch_*≥0, 质量分数∈(0,1))
+            4. minerals 质量分数总和≠1 → 警告 (增量替换, 不归一化)
+        """
+        sim = self.config.simulation
+        n = sim.n_layers
+        overrides = sim.layer_overrides
+        depths = sim.layer_depths
+
+        if n == 1:
+            if overrides or depths:
+                logger.warning(
+                    "n_layers=1 时 layer_overrides/layer_depths 将被忽略 "
+                    "(单层回归护栏), 请仅在 n_layers>1 时配置")
+            return
+
+        if overrides and len(overrides) != n:
+            raise ValueError(
+                f"['layer_overrides' 参数存在问题: 密集列表长度 {len(overrides)} "
+                f"必须等于 n_layers {n}, 请确认后再输入]")
+        if depths is not None and len(depths) != n:
+            raise ValueError(
+                f"['layer_depths' 参数存在问题: 列表长度 {len(depths)} "
+                f"必须等于 n_layers {n}, 请确认后再输入]")
+
+        for i, lo in enumerate(overrides):
+            if lo.ph is not None and not (3.0 <= lo.ph <= 10.0):
+                raise ValueError(
+                    f"[layer_overrides[{i}]/ph 参数存在问题: {lo.ph} 超出物理范围 (3~10), "
+                    f"请确认后再输入]")
+            if lo.cec is not None and lo.cec <= 0:
+                raise ValueError(
+                    f"[layer_overrides[{i}]/cec 参数存在问题: 必须大于 0, "
+                    f"请确认后再输入]")
+            if lo.bulk_density is not None and lo.bulk_density <= 0:
+                raise ValueError(
+                    f"[layer_overrides[{i}]/bulk_density 参数存在问题: 必须大于 0, "
+                    f"请确认后再输入]")
+            if lo.pCO2 is not None and lo.pCO2 <= 0:
+                raise ValueError(
+                    f"[layer_overrides[{i}]/pCO2 参数存在问题: 必须大于 0, "
+                    f"请确认后再输入]")
+            for fld in ('exch_ca', 'exch_mg', 'exch_k', 'exch_na',
+                        'exch_al', 'exch_h'):
+                v = getattr(lo, fld)
+                if v is not None and v < 0:
+                    raise ValueError(
+                        f"[layer_overrides[{i}]/{fld} 参数存在问题: 不能为负, "
+                        f"请确认后再输入]")
+            if lo.minerals:
+                for mname, frac in lo.minerals.items():
+                    if not (0.0 < frac < 1.0):
+                        raise ValueError(
+                            f"[layer_overrides[{i}]/minerals.{mname} 参数存在问题: "
+                            f"质量分数 {frac} 超出范围 (0,1), 请确认后再输入]")
+                total = sum(lo.minerals.values())
+                if abs(total - 1.0) > 1e-6:
+                    logger.warning(
+                        "layer_overrides[%d] 矿物质量分数总和 %.3f != 1 "
+                        "(增量替换语义, 不归一化), 请确认剖面数据", i, total)
 
     def _validate_precip_chemistry(self):
         """校验降水化学配置 (v0.2.3)
