@@ -15,17 +15,18 @@
 
 import numpy as np
 from src.logging_config import get_logger
+from src.constants import DEFAULT_SURFACE_INFILTRATION_COEFF
 
 logger = get_logger("hydrology")
 
 # ---- 水文默认常量 (Q19 收敛) ----
 HORTON_DECAY_K_PER_H = 5.0          # Horton 衰减系数 (/h)
-SURFACE_INFILTRATION_COEFF = 0.75   # 表层入渗上限系数 (降水耗尽则全入渗)
 EVENT_HOURS = 2.0                   # 单场降雨历时 (h)
 N_EVENTS_MIN = 4                    # 每月最少场次
 N_EVENTS_MAX = 12                   # 每月最多场次
 PARTICLE_DENSITY = 2.65             # 土壤颗粒密度 (g/cm³), 孔隙度反推容重
 DEFAULT_SEED = 42                   # 随机降雨默认种子
+# 表层入渗上限系数默认来自 constants (v0.5.1 起 config 驱动: simulation.surface_infiltration_coeff)
 
 
 def generate_rainfall(monthly_precip_mm: float, year: int, month: int,
@@ -50,7 +51,7 @@ def horton_event_infiltration(precip_mm: float, f0_mm_min: float,
                               fc_mm_min: float,
                               k_per_h: float = HORTON_DECAY_K_PER_H,
                               hours: float = EVENT_HOURS,
-                              surface_coeff: float = SURFACE_INFILTRATION_COEFF) -> float:
+                              surface_coeff: float = DEFAULT_SURFACE_INFILTRATION_COEFF) -> float:
     """Horton 单场入渗量 (mm)
 
     A = fc×T + (f0−fc)/k·(1−e^(−kT))  (k: /h, T: h)
@@ -60,6 +61,7 @@ def horton_event_infiltration(precip_mm: float, f0_mm_min: float,
         precip_mm: 单场降水量 (mm)
         f0_mm_min: 初渗率 (mm/min)
         fc_mm_min: 稳渗率 (mm/min)
+        surface_coeff: 表层入渗上限系数 (v0.5.1 config 驱动, 默认 0.75)
     返回:
         float: 单场入渗量 (mm)
     """
@@ -73,18 +75,22 @@ def horton_event_infiltration(precip_mm: float, f0_mm_min: float,
 
 
 def monthly_hydrology(monthly_precip_mm: float, year: int, month: int,
-                      surface_profile, seed: int = DEFAULT_SEED):
+                      surface_profile, seed: int = DEFAULT_SEED,
+                      surface_coeff: float = DEFAULT_SURFACE_INFILTRATION_COEFF):
     """月度入渗-径流分配 (表层 Horton)
 
     参数:
         surface_profile: 表层 SoilProfile (含 infiltration_initial/steady)
+        seed: 随机降雨种子
+        surface_coeff: 表层入渗上限系数 (v0.5.1 config 驱动)
     返回:
         (infiltration_mm, runoff_mm, events): 月入渗/月径流/场次列表
     """
     events = generate_rainfall(monthly_precip_mm, year, month, seed)
     f0 = surface_profile.infiltration_initial
     fc = surface_profile.infiltration_steady
-    infiltration = sum(horton_event_infiltration(p, f0, fc) for p in events)
+    infiltration = sum(horton_event_infiltration(
+        p, f0, fc, surface_coeff=surface_coeff) for p in events)
     infiltration = min(infiltration, monthly_precip_mm)
     runoff = monthly_precip_mm - infiltration
     return infiltration, runoff, events

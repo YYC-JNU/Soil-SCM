@@ -34,7 +34,8 @@ from src.initial_condition import InitialConditionBuilder
 from src.logging_config import setup_logging
 from src.constants import (DEFAULT_4LAYER_DEPTHS, DEFAULT_4LAYER_CLAY_PCT,
                            DEFAULT_4LAYER_POROSITY, DEFAULT_4LAYER_KSAT,
-                           DEFAULT_4LAYER_F0, DEFAULT_4LAYER_FC)
+                           DEFAULT_4LAYER_F0, DEFAULT_4LAYER_FC,
+                           DEFAULT_SURFACE_INFILTRATION_COEFF)
 
 
 def _extract_diagnostics(soil_state, diag, variables):
@@ -140,10 +141,12 @@ def _build_initial_layer_states(engine, reader, soil_profile, soil_info,
 
 
 def _apply_hydrology_month(soil_states, layer_profiles, forcing,
-                           year, month, seed=42):
+                           year, month, seed=42,
+                           surface_coeff=DEFAULT_SURFACE_INFILTRATION_COEFF):
     """v0.5.0: 月度水文 (随机降雨 + Horton 入渗 + 层间级联)
 
     就地更新各层 stored_water (跨月滞水); 返回引擎需要的各层入渗/排水量。
+    v0.5.1: surface_coeff 表层入渗上限系数 (config 驱动)。
 
     返回:
         (hydrology_dict, runoff_mm, runoff_extra_L)
@@ -153,7 +156,8 @@ def _apply_hydrology_month(soil_states, layer_profiles, forcing,
     """
     from src.hydrology import monthly_hydrology, LayerCascade
     inf_mm, runoff_mm, _ = monthly_hydrology(
-        forcing.get('precip', 0.0), year, month, layer_profiles[0], seed)
+        forcing.get('precip', 0.0), year, month, layer_profiles[0], seed,
+        surface_coeff)
     inf_L = inf_mm * 10000.0
     cascade = LayerCascade(layer_profiles)
     drains, runoff_extra, _ = cascade.run(inf_L, soil_states)
@@ -380,7 +384,8 @@ def run_simulation(config_path: str = "config/config.yaml"):
                     # precip_infiltration; 子时间步不适用 (水文为月度盒子)
                     hydrology, runoff_mm, runoff_extra = _apply_hydrology_month(
                         soil_states, layer_profiles, forcing, year, month,
-                        cfg.simulation.hydrology_seed)
+                        cfg.simulation.hydrology_seed,
+                        cfg.simulation.surface_infiltration_coeff)
                     soil_states, diags = engine.run_monthly_multi_layer(
                         soil_states, forcing, action, soil_profile,
                         layer_pco2s=layer_pco2s, hydrology=hydrology)

@@ -21,6 +21,7 @@
 # nitrification_k1     | float | 1.0              | /月 | 0~1 (尿素水解速率)
 # nitrification_k2     | float | 0.4              | /月 | 0~1 (硝化速率)
 # hydrology_seed       | int   | 42               | -   | 随机降雨种子 (可复现)
+# surface_infiltration_coeff | float | 0.75        | 0~1 | 表层入渗上限系数 (Horton: min(场降水×coeff, 能力))
 # layer_depths         | list  | null             | cm | 长度 = n_layers; null=等分兜底 (L6)
 # layer_overrides      | list  | []               | -  | 密集列表长度 = n_layers; 部分覆盖 (L6)
 #   clay_pct           | float | -                | %  | 粘粒含量 (v0.5.0 水文)

@@ -1,6 +1,11 @@
 # Soil-SCM: 土壤物理化学数值模式
 
-> **版本：v0.5.0**（2026-08-17，逐层土壤水文盒子模型）
+> **版本：v0.5.1**（2026-08-17，表层入渗系数 config 化 + 敏感性实验）
+
+> **v0.5.1 更新说明**（2026-08-17）：
+> - **表层入渗系数 config 化**：新增 `simulation.surface_infiltration_coeff`（默认 0.75，0~1）替代 `hydrology.py` 硬编码；Horton 入渗 = min(场降水×系数, 能力)
+> - **敏感性实验**：`tools/sensitivity_infiltration.py` 表层入渗率 5%~95%（5% 间隔）对 4 层 15 年 natural 最终 pH 的扫描（seed=42，CSV 断点续跑，散点图 RdYlBu_r）；**发现层间"级联穿透阈值"**（L2~0.25 / L3~0.45 / L4~0.65 入渗系数突跃中和强酸）——详见 `docs/analysis/SENSITIVITY_INFILTRATION.md`
+> - **测试**：164 → **168 passed**（+4：config 解析/校验 + surface_coeff 生效）
 
 > **v0.5.0 更新说明**（2026-08-17）：
 > - **逐层水文盒子模型**：Horton 入渗（随机日降雨 seed 可配、初渗/稳渗率、表层入渗系数 0.75）+ Ksat 层间渗漏 + 孔隙度持水 + 跨月滞水（`stored_water`）；`n_layers=4` **自动启用内置物理剖面默认**（厚度[20,20,20,40]cm/粘粒/孔隙度/Ksat/初渗/稳渗）；孔隙度反推容重 ρ=2.65(1−φ)

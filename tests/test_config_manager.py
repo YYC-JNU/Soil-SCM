@@ -461,3 +461,33 @@ def test_hydrology_f0_lt_fc_raises(tmp_path):
         "    - {}\n", encoding="utf-8")
     with pytest.raises(ValueError, match="infiltration"):
         ConfigManager(str(p))
+
+
+# ==================== v0.5.1: 表层入渗系数 config 化 ====================
+
+def test_surface_infiltration_coeff_default(cfg):
+    """默认表层入渗系数 = 0.75 (constants 单一来源)"""
+    assert cfg.config.simulation.surface_infiltration_coeff == 0.75
+
+
+def test_surface_infiltration_coeff_parse(tmp_path):
+    """YAML 覆盖表层入渗系数 → 解析生效"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text("simulation:\n  n_years: 2\n  surface_infiltration_coeff: 0.5\n",
+                 encoding="utf-8")
+    sim = ConfigManager(str(p)).config.simulation
+    assert sim.surface_infiltration_coeff == 0.5
+
+
+def test_surface_infiltration_coeff_invalid(tmp_path):
+    """表层入渗系数 ≤ 0 或 > 1 → 报错"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text("simulation:\n  n_years: 2\n  surface_infiltration_coeff: 0.0\n",
+                 encoding="utf-8")
+    with pytest.raises(ValueError, match="surface_infiltration"):
+        ConfigManager(str(p))
+    p2 = tmp_path / "cfg.yaml"
+    p2.write_text("simulation:\n  n_years: 2\n  surface_infiltration_coeff: 1.5\n",
+                  encoding="utf-8")
+    with pytest.raises(ValueError, match="surface_infiltration"):
+        ConfigManager(str(p2))
