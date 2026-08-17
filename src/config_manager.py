@@ -64,6 +64,7 @@ class SimulationConfig:
     nitrification_k1: float = NITRIFICATION_K1  # L4: 尿素水解速率 (/月), 1.0=当月全水解
     nitrification_k2: float = NITRIFICATION_K2  # L4: 硝化速率 (/月), NH4+→NO3- 比例
     hydrology_seed: int = 42                    # v0.5.0: 随机降雨生成种子 (可复现)
+    surface_infiltration_coeff: float = 0.75    # v0.5.1: 表层入渗上限系数 (0~1, Horton: 入渗=min(场降水×coeff, 能力))
 
 
 @dataclass
@@ -274,7 +275,8 @@ class ConfigManager:
                 layer_overrides=overrides,
                 nitrification_k1=s.get('nitrification_k1', NITRIFICATION_K1),
                 nitrification_k2=s.get('nitrification_k2', NITRIFICATION_K2),
-                hydrology_seed=s.get('hydrology_seed', 42)
+                hydrology_seed=s.get('hydrology_seed', 42),
+                surface_infiltration_coeff=s.get('surface_infiltration_coeff', 0.75)
             )
 
         # 解析 soil_data (v0.2.3: 支持 config 内联字段, -1=回退 CSV)
@@ -466,6 +468,13 @@ class ConfigManager:
                 raise ValueError(
                     f"['simulation.{name}' 参数存在问题: 速率 {k} 超出范围 (0~1), "
                     f"请确认后再输入]")
+
+        # ---- v0.5.1: 表层入渗系数校验 (0~1) ----
+        coeff = self.config.simulation.surface_infiltration_coeff
+        if not (0.0 < coeff <= 1.0):
+            raise ValueError(
+                f"['simulation.surface_infiltration_coeff' 参数存在问题: "
+                f"系数 {coeff} 超出范围 (0~1], 请确认后再输入]")
 
         # 创建输出目录
         os.makedirs(self.config.output.directory, exist_ok=True)

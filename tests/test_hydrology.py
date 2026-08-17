@@ -9,7 +9,8 @@ import pytest
 import numpy as np
 from src.hydrology import (generate_rainfall, horton_event_infiltration,
                            monthly_hydrology, LayerCascade,
-                           HORTON_DECAY_K_PER_H, SURFACE_INFILTRATION_COEFF)
+                           HORTON_DECAY_K_PER_H)
+from src.constants import DEFAULT_SURFACE_INFILTRATION_COEFF
 from src.input_reader import InputReader
 from src.config_manager import LayerOverrideConfig
 from src.phreeqc_engine import SoilState
@@ -62,7 +63,21 @@ def test_horton_event_infiltration_cap_and_depletion():
     # 小降水 (10mm): 10×0.75=7.5 < 55.2 → 全入渗 (降水耗尽)
     inf2 = horton_event_infiltration(10.0, surf.infiltration_initial,
                                      surf.infiltration_steady)
-    assert inf2 == pytest.approx(10.0 * SURFACE_INFILTRATION_COEFF)
+    assert inf2 == pytest.approx(10.0 * DEFAULT_SURFACE_INFILTRATION_COEFF)
+
+
+def test_horton_surface_coeff_parameter():
+    """v0.5.1: surface_coeff 参数控制入渗上限 (config 驱动)"""
+    surf = _surface_profile()
+    # 50×0.9=45 < 能力55.2 → 45; 50×0.2=10 < 55.2 → 10
+    inf_high = horton_event_infiltration(50.0, surf.infiltration_initial,
+                                         surf.infiltration_steady,
+                                         surface_coeff=0.9)
+    inf_low = horton_event_infiltration(50.0, surf.infiltration_initial,
+                                        surf.infiltration_steady,
+                                        surface_coeff=0.2)
+    assert inf_high == pytest.approx(45.0)
+    assert inf_low == pytest.approx(10.0)
 
 
 def test_monthly_hydrology_conserves_water():
