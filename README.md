@@ -1,11 +1,17 @@
 # Soil-SCM: 土壤物理化学数值模式
 
-> **版本：v0.4.0**（2026-08-17，L6 逐层参数覆盖）
+> **版本：v0.5.0**（2026-08-17，逐层土壤水文盒子模型）
+
+> **v0.5.0 更新说明**（2026-08-17）：
+> - **逐层水文盒子模型**：Horton 入渗（随机日降雨 seed 可配、初渗/稳渗率、表层入渗系数 0.75）+ Ksat 层间渗漏 + 孔隙度持水 + 跨月滞水（`stored_water`）；`n_layers=4` **自动启用内置物理剖面默认**（厚度[20,20,20,40]cm/粘粒/孔隙度/Ksat/初渗/稳渗）；孔隙度反推容重 ρ=2.65(1−φ)
+> - **配置**：`layer_overrides` 扩展 5 水文字段 + `hydrology_seed`（默认 42，可复现）；`n_layers=1` 完全回退现状（回归护栏）
+> - **输出**：新增逐层水文列（infiltration/drainage/stored_water/runoff）
+> - **基线漂移（如实记录）**：水文模式入渗量 ~14 倍于旧（年 ~1349mm vs 95mm）→ 表层 pH 升高、AlX₃ 垂直重分配（底层累积）——详见 `docs/analysis/HYDROLOGY_BOX.md`，参数（0.75 系数/入渗率/降雨假设）需结合研究区标定
+> - **测试**：145 → **164 passed**（新增 19 项：水文配置/随机降雨/Horton/级联/引擎集成/main 编排）
 
 > **v0.4.0 更新说明**（2026-08-17）：
 > - **L6 逐层参数覆盖（layer_overrides）**：新增 `simulation.layer_overrides`（config 内联密集列表，长度必须 = n_layers，逐层覆盖 ph/有机质/CEC/容重/交换性离子×6/pCO2/矿物质量分数）+ `simulation.layer_depths`（每层厚度 cm，派生每层 `effective_depth`，修正输出列后缀与物理厚度错位）；部分覆盖回退默认、`n_layers=1` 忽略+警告、矿物增量替换不归一化、每层独立预平衡、月度 pCO₂ 按层注入
 > - **诊断实验**：`tools/plot_L6_layer_overrides.py` 真实剖面 vs 等参基线（fertilizer 长期）对比图，逐层标注 good/bad influence（绿=缓冲增强/耗尽推迟，红=更早耗尽/酸化加剧）；实测记录见 `docs/analysis/L6_LAYER_OVERRIDES.md`
-> - **测试**：115 → **139 passed**（新增 24 项：配置解析/校验、逐层 profile 构建、引擎 pCO₂ 注入、main 多层编排、诊断判定逻辑）
 > - **版本纪律**：L6 为 L9 唯一未被证伪的结构性方向（多层 + 真实剖面约束），完整证伪链见 `docs/reports/V0_3_0_FINAL_REPORT.md` 第六节
 
 > **v0.3.1 更新说明**（2026-08-17，项目整理版本）：
@@ -137,7 +143,9 @@ pytest tests/ -v
 | `simulation` | `pre_equilibration_max_steps` | `60` | 预平衡最大迭代步数 |
 | `simulation` | `nitrification_k1` | `1.0` | 尿素水解速率（/月，L4；`0~1`，1.0=当月全水解） |
 | `simulation` | `nitrification_k2` | `0.4` | 硝化速率（/月，L4；`0~1`，NH₄⁺→NO₃⁻ 比例） |
-| `simulation` | `sub_time_step_days` | `0` | 子时间步长（天）：`0`=关闭，`1~7`=启用（与月步长结果一致，Q10） |
+| `simulation` | `hydrology_seed` | `42` | 随机降雨种子（v0.5.0；同 seed 可复现） |
+| `simulation` | `layer_overrides` 水文 | — | 逐层水文字段（v0.5.0）：`clay_pct`/`porosity`/`ksat`/`infiltration_initial`/`infiltration_steady`；`n_layers=4` 自动启用内置默认 |
+| `simulation` | `sub_time_step_days` | `0` | 子时间步长（天）：`0`=关闭，`1~7`=启用（与月步长结果一致，Q10；水文模式不适用） |
 | `climate` | `base_annual_precip` | `1893.0` | 基准年降水量（mm/yr） |
 | `climate` | `base_annual_temp` | `25.0` | 基准年平均温度（°C） |
 | `climate` | `precip_increase_rate` | `0.02` | `precip_increase` 情景：每年降水增加比例 |

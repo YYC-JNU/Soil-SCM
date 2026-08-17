@@ -47,6 +47,11 @@ class SoilProfile:
     exch_al: float = 0.0
     exch_h: float = 0.0
 
+    # v0.5.0 水文 (逐层土壤水文盒子模型)
+    ksat: float = 0.0                   # 饱和导水率 (cm/day)
+    infiltration_initial: float = 0.0   # 初渗率 f0 (mm/min)
+    infiltration_steady: float = 0.0    # 稳渗率 fc (mm/min)
+
     # 衍生量
     @property
     def base_saturation(self) -> float:
@@ -249,6 +254,17 @@ class InputReader:
             v = getattr(override, fld, None)
             if v is not None:
                 setattr(prof, fld, v)
+        # v0.5.0 水文: 水文字段应用 (clay_pct 已有; ksat/初渗/稳渗)
+        for fld in ('clay_pct', 'ksat', 'infiltration_initial',
+                    'infiltration_steady'):
+            v = getattr(override, fld, None)
+            if v is not None:
+                setattr(prof, fld, v)
+        # v0.5.0 水文: 孔隙度覆盖 → 反推容重 ρ=2.65(1−φ) (覆盖 bulk_density;
+        # porosity property = 1−ρ/2.65 自然返回给定 φ, 保持物理自洽)
+        porosity = getattr(override, 'porosity', None)
+        if porosity is not None:
+            prof.bulk_density = 2.65 * (1.0 - porosity)
         return prof
 
     def _default_soil_survey(self) -> dict:

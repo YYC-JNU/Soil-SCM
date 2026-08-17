@@ -20,8 +20,17 @@
 # pre_equilibration_max_steps | int | 60         | -  | >0
 # nitrification_k1     | float | 1.0              | /月 | 0~1 (尿素水解速率)
 # nitrification_k2     | float | 0.4              | /月 | 0~1 (硝化速率)
+# hydrology_seed       | int   | 42               | -   | 随机降雨种子 (可复现)
 # layer_depths         | list  | null             | cm | 长度 = n_layers; null=等分兜底 (L6)
 # layer_overrides      | list  | []               | -  | 密集列表长度 = n_layers; 部分覆盖 (L6)
+#   clay_pct           | float | -                | %  | 粘粒含量 (v0.5.0 水文)
+#   porosity           | float | -                | 0~1| 孔隙度, 反推容重 ρ=2.65(1−φ)
+#   ksat               | float | -                | cm/day | 饱和导水率 (>0)
+#   infiltration_initial | float | -              | mm/min | 初渗率 f0 (>fc)
+#   infiltration_steady | float | -               | mm/min | 稳渗率 fc (≥0)
+#   (n_layers=4 且未配置 layer_overrides → 自动启用内置物理剖面默认: 厚度[20,20,20,40]/
+#    粘粒[25,35,45,50]/孔隙度[55,47,45,43]/Ksat[76.8,24.5,7.2,2.9]/f0[1.0,0.4,0.15,0.04]/
+#    fc[0.4,0.2,0.08,0.02] — 详见 docs/analysis/HYDROLOGY_BOX.md)
 #
 # === soil_data ===
 # input_file               | str | data/soil_survey.csv       | - | CSV 文件路径

@@ -402,3 +402,62 @@ def test_nitrification_rates_invalid(tmp_path):
                   encoding="utf-8")
     with pytest.raises(ValueError, match="nitrification"):
         ConfigManager(str(p2))
+
+
+# ==================== v0.5.0: 水文配置扩展 (T1) ====================
+
+def test_hydrology_fields_parse(tmp_path):
+    """layer_overrides 含 5 水文字段 + hydrology_seed 解析"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text(
+        "simulation:\n  n_years: 2\n  n_layers: 4\n  hydrology_seed: 123\n"
+        "  layer_overrides:\n"
+        "    - clay_pct: 25\n      porosity: 0.55\n      ksat: 76.8\n"
+        "      infiltration_initial: 1.0\n      infiltration_steady: 0.4\n"
+        "    - {}\n    - {}\n    - {}\n", encoding="utf-8")
+    sim = ConfigManager(str(p)).config.simulation
+    assert sim.hydrology_seed == 123
+    lo = sim.layer_overrides[0]
+    assert lo.clay_pct == 25
+    assert lo.porosity == 0.55
+    assert lo.ksat == 76.8
+    assert lo.infiltration_initial == 1.0
+    assert lo.infiltration_steady == 0.4
+    # 未覆盖水文字段保持 None
+    assert sim.layer_overrides[1].ksat is None
+
+
+def test_hydrology_seed_default(cfg):
+    """默认 hydrology_seed = 42 (可复现随机降雨)"""
+    assert cfg.config.simulation.hydrology_seed == 42
+
+
+def test_hydrology_porosity_invalid_raises(tmp_path):
+    """孔隙度越界 (φ=1.5) → 报错"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text(
+        "simulation:\n  n_years: 2\n  n_layers: 2\n  layer_overrides:\n"
+        "    - porosity: 1.5\n    - {}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="porosity"):
+        ConfigManager(str(p))
+
+
+def test_hydrology_ksat_nonpositive_raises(tmp_path):
+    """Ksat ≤ 0 → 报错"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text(
+        "simulation:\n  n_years: 2\n  n_layers: 2\n  layer_overrides:\n"
+        "    - ksat: 0.0\n    - {}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="ksat"):
+        ConfigManager(str(p))
+
+
+def test_hydrology_f0_lt_fc_raises(tmp_path):
+    """初渗率 f0 < 稳渗率 fc → 报错 (物理不合理)"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text(
+        "simulation:\n  n_years: 2\n  n_layers: 2\n  layer_overrides:\n"
+        "    - infiltration_initial: 0.1\n      infiltration_steady: 0.4\n"
+        "    - {}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="infiltration"):
+        ConfigManager(str(p))
