@@ -1,6 +1,6 @@
 # Soil-SCM: 土壤物理化学数值模式
 
-> **版本：v0.6.0**（2026-08-14）
+> **版本：v0.6.1**（2026-08-14）
 
 基于 PHREEQC 地球化学引擎的土壤单点物理化学数值模式，用于模拟长期（数十年）施肥、酸化、淋溶与改良条件下的土壤化学演变（pH、盐基饱和度、交换性阳离子等）。
 
@@ -32,7 +32,7 @@ Soil-SCM/
 ├── data/                       # 输入数据
 │   ├── soil_survey.csv         # 土壤普查数据
 │   └── exchangeable_ions.csv   # 交换性阳离子初始值
-├── tests/                      # pytest 单元测试（113 用例）
+├── tests/                      # pytest 单元测试（115 用例）
 │   ├── conftest.py
 │   └── test_*.py
 ├── docs/                       # 项目文档
@@ -87,7 +87,7 @@ pip install -r requirements.txt
 ### 运行测试
 
 ```bash
-# v0.2.0 起建立 pytest 测试框架（tests/，当前 113 用例）
+# v0.2.0 起建立 pytest 测试框架（tests/，当前 115 用例）
 pytest tests/ -v
 ```
 
