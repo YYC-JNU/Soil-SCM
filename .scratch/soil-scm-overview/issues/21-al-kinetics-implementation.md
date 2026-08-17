@@ -4,13 +4,11 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ✅ 已完成 (2026-08-14, via /implement + /tdd)
+**Status:** ↩️ 已回退 (v0.6.1, 2026-08-14) — KINETICS 方案被证据否定
 
-## 完成说明
+## 回退说明
 
-RATES/KINETICS 实现（gibbsite/Al(OH)₃(a) 切动力学，TST 一阶），L2 双路径回填（-kinetics 输出 k_<db_name>，动力学相/平衡相分流）。相名映射（minerals 键小写 ↔ 数据库相名大写）、BASIC 调试（si↔sat、10^si↔EXP）、性能优化（rate 去 ×m）。KNOBS 迭代 KINETICS 时 1000。
-
-**验证**：117 passed（分块）；Al 动力学测试 4 全绿。
+KINETICS 实验证明有害（详见 `docs/V0_6_1_REPORT.md` 证据链）：速率太小冻结 gibbsite → 切断 L2 矿物回补 → AlX₃ 耗尽提前（y1 m7 vs 平衡相 y3）；v0.6.0 "2 年稳定"结论为误导。RATES/KINETICS 块、AL_KINETIC_* 常量、双路径回填已删除，恢复平衡相 + L2 单路径回填。
 
 ## Acceptance criteria
 

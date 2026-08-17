@@ -26,9 +26,7 @@ from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
                            N_MOL_PER_KG_N,
                            PRE_EQUIL_PH_TOL, PRE_EQUIL_ION_TOL,
                            PRE_EQUIL_PH_GAIN, PRE_EQUIL_ION_GAIN,
-                           ALX3_DEFAULT_LOGK, ALX3_SELECTIVITY_LOGK,
-                           AL_KINETIC_RATE, AL_KINETIC_PHASES,
-                           AL_KINETIC_DB_NAMES)
+                           ALX3_DEFAULT_LOGK, ALX3_SELECTIVITY_LOGK)
 from src.logging_config import get_logger
 
 logger = get_logger("phreeqc_engine")
@@ -108,6 +106,21 @@ class DiagnosticOutput:
     exchangeable_al: float = 0.0
     mineral_masses: dict = field(default_factory=dict)
     solution_ions: dict = field(default_factory=dict)
+
+
+def _monthly_step_worker(q, database, mode, enable_surface, precip_infiltration,
+                         precip_chem, state, forcing, action, soil_profile):
+    """子进程月度步 worker (数值稳定性, v0.6.1): 重建引擎执行, 结果入队列"""
+    try:
+        from src.phreeqc_engine import PhreeqcEngine
+        e = PhreeqcEngine(database=database, mode=mode,
+                          enable_surface=enable_surface,
+                          precip_infiltration=precip_infiltration,
+                          precip_chem=precip_chem)
+        ns, diag = e.run_monthly_step(state, forcing, action, soil_profile)
+        q.put((ns, diag))
+    except Exception as ex:
+        q.put(('error', str(ex)))
 
 
 class PhreeqcEngine:
@@ -235,6 +248,44 @@ class PhreeqcEngine:
         else:
             return self._run_simplified_step(state, monthly_forcing,
                                              action, soil_profile)
+
+    def run_monthly_step_with_timeout(self, state: SoilState,
+                                      forcing: dict, action,
+                                      soil_profile,
+                                      timeout: float = 10.0):
+        """子进程执行月度步 + 超时终止 (数值稳定性, v0.6.1)
+
+        KINETICS 偶发 PHREEQC 卡顿 (RunString 不返回, 非确定)——主进程无法
+        中断同步调用。此方法用 multiprocessing 子进程执行, 超时强制终止,
+        返回 None 表示超时 (调用方应降级)。默认路径 (run_monthly_step) 不变,
+        本方法用于定位脚本与超时降级兜底。
+
+        返回:
+            (new_state, diag) 或 None (超时/失败)
+        """
+        import multiprocessing
+        ctx = multiprocessing.get_context('spawn')
+        q = ctx.Queue()
+        p = ctx.Process(
+            target=_monthly_step_worker,
+            args=(q, self.database, self.mode, self.enable_surface,
+                  self.precip_infiltration, self.precip_chem,
+                  state, forcing, action, soil_profile))
+        p.start()
+        p.join(timeout)
+        if p.is_alive():
+            p.terminate()
+            p.join()
+            logger.error("月度步超时 (%.1fs) — PHREEQC 未返回, 建议降级", timeout)
+            return None
+        try:
+            result = q.get(timeout=2)
+        except Exception:
+            return None
+        if isinstance(result, tuple) and result and result[0] == 'error':
+            logger.error("月度步子进程失败: %s", result[1])
+            return None
+        return result
 
     def pre_equilibrate(self, state: SoilState, soil_profile,
                         max_steps: int = 100) -> SoilState:
@@ -507,18 +558,9 @@ class PhreeqcEngine:
         # 矿物相: L2 修复 — 从 SELECTED_OUTPUT 读取矿物摩尔量演化
         # (原 Q1 占位实现冻结为旧值, 导致矿物单向吸收 Al 不回补 → Al 耗尽)
         # -equilibrium_phases 输出两列: <name> (当前摩尔量), d_<name> (变化量)
-        # v0.6.0 双路径: 动力学相 (gibbsite/Al(OH)3(a)) 读 k_<db_name>
-        # (-kinetics 输出当前摩尔量, scale 后), 平衡相读 <name> 列
+        # (v0.6.1: KINETICS 双路径已回退, 恢复单路径)
         minerals = {}
         for mname, moles in old_state.minerals.items():
-            if mname in AL_KINETIC_PHASES:
-                db_name = AL_KINETIC_DB_NAMES.get(mname, mname)
-                col = f"k_{db_name}"
-                if col in idx:
-                    minerals[mname] = max(0.0, get(col))
-                else:
-                    minerals[mname] = moles  # 未输出时保持旧值 (兜底)
-                continue
             col = mname
             if col in idx:
                 minerals[mname] = max(0.0, get(col))
@@ -555,9 +597,10 @@ class PhreeqcEngine:
         # 迭代数取 100 平衡速度与收敛 (500 会使长模拟显著变慢)
         # WF4/WF5: SURFACE 增加非线性, 需更高迭代数收敛 (1000, 实测验证)
         # v0.6.0: KINETICS 动力学积分增加数值难度, 同样提至 1000
-        has_kinetics = any(state.minerals.get(p, 0) > 0
-                           for p in AL_KINETIC_PHASES)
-        iterations = 1000 if (self.enable_surface or has_kinetics) else 100
+        # KNOBS: 提高收敛鲁棒性 (物理矿物量较大时数值更难收敛)
+        # 迭代数取 100 平衡速度与收敛 (500 会使长模拟显著变慢)
+        # WF4/WF5: SURFACE 增加非线性, 需更高迭代数收敛 (1000, 实测验证)
+        iterations = 1000 if self.enable_surface else 100
         lines.append("KNOBS")
         lines.append(f"  -iterations {iterations}")
         lines.append("  -tolerance 1e-12")
@@ -590,49 +633,15 @@ class PhreeqcEngine:
             lines.append(f"  {species:<8} {amount:.6e}")
         lines.append("")
 
-        # EQUILIBRIUM_PHASES 块 (v0.6.0: 排除 Al 动力学相, 由 KINETICS 控制)
+        # EQUILIBRIUM_PHASES 块 (v0.6.1: 恢复全矿物平衡相, KINETICS 已回退)
         # 矿物量 = 物理摩尔量 × 缩放系数 (折中方案, 见 docs/Q1_plus_ANALYSIS.md):
         # 物理值会导致碱性突变(pH~9.9), 10% 提供真实缓冲且 pH 合理(4.4-4.5)
         lines.append("EQUILIBRIUM_PHASES 1")
         for mineral, moles in state.minerals.items():
-            if moles <= 0 or mineral in AL_KINETIC_PHASES:
-                continue
-            scaled = moles * self.mineral_scale
-            lines.append(f"  {mineral:<15} 0.0  {scaled:.6e}")
+            if moles > 0:
+                scaled = moles * self.mineral_scale
+                lines.append(f"  {mineral:<15} 0.0  {scaled:.6e}")
         lines.append("")
-
-        # v0.6.0: Al 动力学 (KINETICS) — 阻断"矿物化单向 Al 汇" (L9 证伪链)
-        # Gibbsite/Al(OH)3(a) 从瞬时平衡切到速率控制: 沉淀速率受限, 溶液 Al3+
-        # 有时间被排水带走 (而非固化到矿物)。TST 一阶: rate = k × (10^SI - 1)
-        # 注: RATES/KINETICS 相名须用 phreeqc.dat 数据库名 (Gibbsite 大写)
-        kin_phases = [p for p in AL_KINETIC_PHASES
-                      if state.minerals.get(p, 0) > 0]
-        if kin_phases:
-            lines.append("RATES")
-            for ph_key in kin_phases:
-                db_name = AL_KINETIC_DB_NAMES.get(ph_key, ph_key)
-                lines.append(f"  {db_name}")
-                lines.append("    -start")
-                lines.append(f'      10  sat = SI("{db_name}")')
-                # 性能 (v0.6.0): rate 不含 ×m — m 大 (~2300 mol) 时速率巨大,
-                # PHREEQC 自适应步长爆炸 (大量子步, 单步超时)。单位摩尔速率
-                # 使子步可控 (反应量与 m 成正比, 归一化后语义等价)
-                lines.append("      20  rate = {:.3e} * (EXP(sat*2.302585) - 1)".format(AL_KINETIC_RATE))
-                lines.append("      30  moles = rate * TIME")
-                lines.append("      40  SAVE moles")
-                lines.append("    -end")
-            lines.append("")
-            lines.append("KINETICS 1")
-            for ph_key in kin_phases:
-                db_name = AL_KINETIC_DB_NAMES.get(ph_key, ph_key)
-                moles = state.minerals.get(ph_key, 0) * self.mineral_scale
-                lines.append(f"  {db_name}")
-                lines.append(f"    -m {moles:.6e}")
-                lines.append(f"    -m0 {moles:.6e}")
-                lines.append("    -tol 1e-8")
-            lines.append("  -steps 2592000")   # 30 天 (月度步长)
-            lines.append("  -step_divide 1")
-            lines.append("")
 
         # GAS_PHASE 块 (CO2 分压来自气候强迫, F1 修复: 不再硬编码 0.015)
         # 写法: 总压=CO2分压 + 纯CO2 (验证有效)
@@ -756,15 +765,11 @@ class PhreeqcEngine:
         lines.append("  -molalities CaX2 MgX2 KX NaX AlX3 X-")
         # L2: 输出矿物相摩尔量 (供矿物演化回填, 修复 Al 耗尽根因)
         # 只列出非零矿物; 矿物名须与 phreeqc.dat PHASES 段一致
-        # v0.6.0: 排除 Al 动力学相 (由 -kinetics 输出, 双路径回填)
-        balance_minerals = [m for m, v in state.minerals.items()
-                            if v > 0 and m not in AL_KINETIC_PHASES]
-        if balance_minerals:
-            lines.append("  -equilibrium_phases " + " ".join(balance_minerals))
-        kin_names = [p for p in AL_KINETIC_PHASES
-                     if state.minerals.get(p, 0) > 0]
-        if kin_names:
-            lines.append("  -kinetics " + " ".join(kin_names))
+        # L2: 输出矿物相摩尔量 (供矿物演化回填, 修复 Al 耗尽根因)
+        # 只列出非零矿物; 矿物名须与 phreeqc.dat PHASES 段一致
+        mineral_names = [m for m, v in state.minerals.items() if v > 0]
+        if mineral_names:
+            lines.append("  -equilibrium_phases " + " ".join(mineral_names))
         lines.append("END")
 
         return "\n".join(lines)

@@ -4,11 +4,11 @@
 
 **Blocked by:** 21 — RATES/KINETICS 实现 + L2 矿物回填双路径
 
-**Status:** 🟡 部分完成 (2026-08-14) — 2 年验证 AlX₃ 稳定 (k 不敏感)，30 年验收受 PHREEQC 数值卡顿限制
+**Status:** ↩️ 已回退 (v0.6.1, 2026-08-14) — k 扫描结论撤回
 
-## 完成说明
+## 回退说明
 
-k 扫描（1e-10~1e-7）：fertilizer 单层 2 年 AlX₃ 稳定 ~34,000 mol（无耗尽，pH 5.5）——KINETICS 阻断 Al 汇效果初步确认。5 年+ 偶发 PHREEQC 收敛卡顿（RunString 不返回），30 年验收改为 2 年验证 + 数值限制文档化（V0_6_0_REPORT 第四节）。
+k 扫描（v0.6.0）的"2 年 AlX₃ 稳定"结论为误导（3 次重跑全卡顿/耗尽，非确定）。KINETICS 回退后扫描失效。证据链见 `docs/V0_6_1_REPORT.md`。
 
 ## Acceptance criteria
 
