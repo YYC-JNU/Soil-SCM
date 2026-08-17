@@ -400,7 +400,7 @@ class InitialConditionBuilder:
         # AlX3 耗尽→pH 突升 (Q12* 残留 + Q1+ 矿物压缩)。phreeqc.dat 定义
         # Al(OH)3(a) (非晶质, 更可溶), 交换 Al 被淋失时溶解补充 Al3+,
         # 配合 L2 矿物回填维持 Al 循环。v0.4.0 扫描证实单纯增大
-        # MINERAL_SCALE 无效 (矿物化加速 Al 耗尽, 见 docs/V0_4_0_L9_SCAN.md)。
+        # MINERAL_SCALE 无效 (矿物化加速 Al 耗尽, 见 docs/reports/V0_3_0_FINAL_REPORT.md)。
         minerals['Al(OH)3(a)'] = (self.soil_mass_kg
                                   * AMORPHOUS_ALOH3_MASS_FRACTION
                                   * 1000.0 / AMORPHOUS_ALOH3_MOLAR_MASS)
@@ -498,7 +498,7 @@ class InitialConditionBuilder:
         lines.append("")
 
         # ---- EQUILIBRIUM_PHASES 块 ----
-        # 矿物量 = 物理摩尔量 × 缩放系数 (折中方案, 见 docs/Q1_plus_ANALYSIS.md)
+        # 矿物量 = 物理摩尔量 × 缩放系数 (折中方案, 见 docs/analysis/Q1_plus_ANALYSIS.md)
         minerals = self.build_minerals()
         lines.append("EQUILIBRIUM_PHASES 1")
         for mineral, moles in minerals.items():

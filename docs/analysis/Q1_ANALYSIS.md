@@ -178,7 +178,7 @@ phreeqpython 提供的查询 API 均未使用：
 
 **方法**：利用双后端能力对照——修改前 = `backend='phreeqpython'`（REACTION 无效、状态不传递），修改后 = `backend='official'`（官方引擎、状态传递）。相同情景 `fertilizer_lime`，50 年。
 
-**对比图**：`output/Q1_before_after_comparison.png`（复现脚本 `_compare_before_after.py`）
+**对比图**：`output/Q1_before_after_comparison.png`（复现脚本 `tools/compare_before_after.py`）
 
 | 指标 | 修改前（首年→末年） | 修改后（首年→末年） | 说明 |
 |------|---------------------|---------------------|------|

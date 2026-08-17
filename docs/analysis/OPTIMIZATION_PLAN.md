@@ -116,7 +116,7 @@
 > 记录日期：2026-08-11。以下问题已完成诊断确认，**仅登记备查，暂不修改代码**。
 > 优先级：高 = 影响科研可用性；中 = 影响架构完整性；低 = 完善项。
 >
-> **2026-08-11 Q1 实施已解决以下问题**（详见 `docs/Q1_ANALYSIS.md`）：
+> **2026-08-11 Q1 实施已解决以下问题**（详见 `docs/analysis/Q1_ANALYSIS.md`）：
 > - **Q1** PHREEQC 状态传递与化学演化（换用官方 phreeqc 引擎，SELECTED_OUTPUT 回填）
 > - **Q2** REACTION 无效 / pH 锁定（官方引擎 REACTION 有效，pH 演化验证 3.53→3.65）
 > - **Q6** 简化模式状态丢失（`_run_simplified_step` 保留化学状态）
@@ -138,7 +138,7 @@
 
 | 编号 | 问题 | 位置 | 影响 | 优先级 |
 |------|------|------|------|--------|
-| Q7 | 降水化学从未生效：`precip_chemistry_default.json`（酸雨 SO₄/NO₃/NH₄ 离子）与 `PrecipChemConfig` 仅被解析，无代码加载使用 | 全局（`src/config_manager.py`） | 酸雨驱动土壤酸化的核心机制缺失 | ✅ 已完成 (v0.1.4, 见 docs/Q7_PRECIP_CHEMISTRY.md) |
+| Q7 | 降水化学从未生效：`precip_chemistry_default.json`（酸雨 SO₄/NO₃/NH₄ 离子）与 `PrecipChemConfig` 仅被解析，无代码加载使用 | 全局（`src/config_manager.py`） | 酸雨驱动土壤酸化的核心机制缺失 | ✅ 已完成 (v0.1.4, 见 docs/analysis/Q7_PRECIP_CHEMISTRY.md) |
 | Q8 | `phreeqc_initial_input` 生成后只打印不用：阶段 4 生成的 PHREEQC 输入与阶段 7 引擎是两条独立路径 | `main.py` | 功能割裂 | ✅ 已完成 (v0.2.2) |
 | Q9 | SURFACE 表面络合未启用：有机质（Som）/铁氧化物（Hfo_s/Hfo_w）吸附缓冲未模拟，`include_surface=False` 硬编码 | `main.py` / `src/initial_condition.py` | 养分离子吸附缓冲缺失 | 中 |
 | Q10 | 子时间步长未验证：`sub_time_step_days` 配置与循环存在但从未实测（`n_sub=int(30/sub_steps)` 假设每月 30 天） | `main.py` / `config.yaml` | 功能可信度未知 | ✅ 已完成 (v0.2.2, 与月步长一致) |
@@ -326,10 +326,10 @@
 - 非晶质 Al(OH)₃(a) 相（2%~20%、SI=0 与欠饱和）：**均无法回补**——矿物化沉淀为"单向 Al 汇"
 - **保留非晶质相**（红壤真实组分，natural 基线不变 pH 6.46，103 测试全绿）
 - **未根治**：fertilizer 单层 AlX₃ 耗尽；深层修复方向（Al 交换选择性校准 / 矿物化动力学 / 多层+逐层参数）列入后续 backlog
-- 完整扫描表见 `docs/V0_3_0_FINAL_REPORT.md` 第六节（L9 证伪链）
+- 完整扫描表见 `docs/reports/V0_3_0_FINAL_REPORT.md` 第六节（L9 证伪链）
 
 **L1 Al 表面络合简化方法（报告）**：
-- `docs/L1_AL_SURFACE_METHOD.md`：Kd_eff(pH)=Kd×f(pH) 简化质量作用式框架、参数表（Kd 文献骨架 + Sverjensky/Karamalidis 交叉验证）、**已知缺点专节**（6 项）、**优化方向专节**（6 项）
+- `docs/analysis/L1_AL_SURFACE_METHOD.md`：Kd_eff(pH)=Kd×f(pH) 简化质量作用式框架、参数表（Kd 文献骨架 + Sverjensky/Karamalidis 交叉验证）、**已知缺点专节**（6 项）、**优化方向专节**（6 项）
 - 纯文档交付（实现待独立工单）
 
 **验证**：pytest **103 passed**（新增非晶质相回归测试）；natural 30 年 pH 6.46 不变。

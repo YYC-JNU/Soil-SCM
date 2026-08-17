@@ -68,7 +68,7 @@
 | AlX₃ 交换 log_k 校准（0.41→10） | ❌ 无效 |
 | Al KINETICS（v0.6.0） | ❌ 证据否定（冻结矿物，提前耗尽） |
 
-**L1 Al 表面络合简化方法**：`docs/L1_AL_SURFACE_METHOD.md`——Kd_eff(pH)=Kd×f(pH) 简化质量作用式框架、参数表（Kd 文献骨架 + Sverjensky/Karamalidis 交叉验证）、已知缺点专节（6 项）、优化方向专节（6 项）。纯方法设计（实现待独立工单）。
+**L1 Al 表面络合简化方法**：`docs/analysis/L1_AL_SURFACE_METHOD.md`——Kd_eff(pH)=Kd×f(pH) 简化质量作用式框架、参数表（Kd 文献骨架 + Sverjensky/Karamalidis 交叉验证）、已知缺点专节（6 项）、优化方向专节（6 项）。纯方法设计（实现待独立工单）。
 
 ### 6. 三支柱自洽化（原 v0.5.0）
 

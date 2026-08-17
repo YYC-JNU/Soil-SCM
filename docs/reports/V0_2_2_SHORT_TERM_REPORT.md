@@ -10,7 +10,7 @@
 | 版本 | v0.2.2 |
 | 任务 | 短期收尾（ROADMAP Step 2 剩余项 T3-T6 + 文档一致性 D1-D7） |
 | 状态 | ✅ 全部完成（pytest 38 全绿） |
-| 涉及文件 | `src/constants.py`（新增）、`src/phreeqc_engine.py`、`src/initial_condition.py`、`src/config_manager.py`、`src/output_writer.py`、`main.py`、`config/config.yaml`、`README.md`、`docs/ROADMAP.md`、`docs/OPTIMIZATION_PLAN.md` |
+| 涉及文件 | `src/constants.py`（新增）、`src/phreeqc_engine.py`、`src/initial_condition.py`、`src/config_manager.py`、`src/output_writer.py`、`main.py`、`config/config.yaml`、`README.md`、`docs/analysis/ROADMAP.md`、`docs/analysis/OPTIMIZATION_PLAN.md` |
 
 ---
 

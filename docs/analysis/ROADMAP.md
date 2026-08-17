@@ -122,7 +122,7 @@ Q10 子时间步、Q11 输出变量、Q14 anatase、Q17 包结构、Q19 魔法�
         Na 11.5% / Mg 5.1% / K 1.9% / H 1.0%（`config/precip_chemistry_default.json`, unit=percent）
   - [x] `src/precip_chemistry.py`：占比→mol/L 换算（pH 自洽总当量 1.78e-4 eq/L），`reaction_amounts()` 供 REACTION
   - [x] F1 修复：GAS_PHASE `-pressure` 用 `forcing['pCO2']`；F2 修复：`MINERAL_SCALE=0.001` 双路径统一
-  - [x] 验证：30 年 natural 模拟 `output/pH_ions_30yr_Q7.png`（详见 docs/Q7_PRECIP_CHEMISTRY.md）
+  - [x] 验证：30 年 natural 模拟 `output/pH_ions_30yr_Q7.png`（详见 docs/analysis/Q7_PRECIP_CHEMISTRY.md）
 - [x] **多分层模型（WF1/WF2，v0.2.4）**：`List[SoilState]` + 一维平流 + 级联下渗；`n_layers` 配置（默认 1）
   - [x] 设计决策（2026-08-12 确认）：**各层默认参数相同**（当前无土壤剖面观测约束）；
         后续通过外部输入文件（CSV/JSON）逐层覆盖容重、CEC、交换性阳离子、
@@ -158,8 +158,8 @@ Q10 子时间步、Q11 输出变量、Q14 anatase、Q17 包结构、Q19 魔法�
 | v0.1.1 | 2026-08-11 | Q1 官方引擎+状态传递、Q1+ 矿物量折中、ROADMAP 建立 |
 | v0.1.2 | 2026-08-11 | 多肥料方案（2021指导意见）、30年诊断（Al缓冲耗尽/Cl淋洗）、文档更新 |
 | v0.1.3 | 2026-08-12 | 废弃 phreeqpython（统一官方引擎）；降水化学默认值更新（广东2025公报 pH 5.75） |
-| v0.1.4 | 2026-08-12 | Q7 降水化学集成 + F1 pCO₂传递 + F2 矿物量统一；30 年模拟验证（docs/Q7_PRECIP_CHEMISTRY.md） |
+| v0.1.4 | 2026-08-12 | Q7 降水化学集成 + F1 pCO₂传递 + F2 矿物量统一；30 年模拟验证（docs/analysis/Q7_PRECIP_CHEMISTRY.md） |
 | v0.2.0 | 2026-08-12 | 工程化地基：Q16 pytest 框架（36用例）+ Q15 logging + Q18 异常分级 |
 | v0.2.1 | 2026-08-12 | Step 2 物理校准：默认引擎 auto、Q4 简化系数校准、Q5 pH 界限物理化、P4 bug 修复 |
 | v0.2.2 | 2026-08-12 | 短期收尾：T3 入渗参数化 + Q19 常量收敛 + Q8 输入清理 + Q10/Q11 验证 |
-| **v0.2.2→v0.3.0** | 2026-08-14 | **大版本合并**（v0.2.2 后全部优化）：工程化地基（T01/T02/T04）→ 中期架构（多分层+SURFACE）→ L2 矿物回填 → L4 硝化+L5 电荷 → L9 证伪链+L1 报告 → 三支柱自洽化 → Al KINETICS 回退（排水淋失主因）；**115 用例全绿**。内部里程碑 v0.2.3-v0.6.1 见 `docs/V0_3_0_FINAL_REPORT.md` 第二节 |
+| **v0.2.2→v0.3.0** | 2026-08-14 | **大版本合并**（v0.2.2 后全部优化）：工程化地基（T01/T02/T04）→ 中期架构（多分层+SURFACE）→ L2 矿物回填 → L4 硝化+L5 电荷 → L9 证伪链+L1 报告 → 三支柱自洽化 → Al KINETICS 回退（排水淋失主因）；**115 用例全绿**。内部里程碑 v0.2.3-v0.6.1 见 `docs/reports/V0_3_0_FINAL_REPORT.md` 第二节 |
