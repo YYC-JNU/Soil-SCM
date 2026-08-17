@@ -85,9 +85,11 @@ def test_error_write_failure_does_not_break_flow(profile, soil_info, monkeypatch
         raise RuntimeError("simulated phreeqc failure")
 
     monkeypatch.setattr(e.official, "RunString", boom)
-    # 模拟 error.inp 路径为非法目录 → 写入必然失败
+    # 模拟 error.inp 路径的父级被普通文件占据 → mkdir/写入必然失败
+    blocker = tmp_path / "blocked"
+    blocker.write_text("i am a file", encoding="utf-8")
     monkeypatch.setattr("src.phreeqc_engine.ERROR_INP_PATH",
-                        str(tmp_path / "no_such_dir" / "error.inp"))
+                        str(blocker / "error.inp"))
     monkeypatch.chdir(tmp_path)
     new_state, _ = e.run_monthly_step(state, FORCING, MonthlyAction(), profile)
 
@@ -126,8 +128,8 @@ def test_error_diagnostics_on_failure(profile, soil_info, monkeypatch, tmp_path)
     assert e.last_error_message == "simulated phreeqc failure"
     assert "SELECTED_OUTPUT" in e.last_error_input  # 内存属性保留
 
-    # T01: 磁盘复现文件自动生成且内容为完整输入
-    error_file = tmp_path / "error.inp"
+    # T01: 磁盘复现文件自动生成且内容为完整输入 (写入 output/ 运行产物目录)
+    error_file = tmp_path / "output" / "error.inp"
     assert error_file.exists()
     content = error_file.read_text(encoding="utf-8")
     assert "SELECTED_OUTPUT" in content

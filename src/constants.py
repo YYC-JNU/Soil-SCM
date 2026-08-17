@@ -27,7 +27,9 @@ MINERAL_SCALE = 0.001
 
 # ---- PHREEQC 失败输入复现文件路径 (Q18 落盘, T01 修复) ----
 # 官方引擎计算失败时, 完整输入字符串写入此文件供复现与调试 (README 承诺)
-ERROR_INP_PATH = "error.inp"
+# 落盘位置固定为 output/ 运行产物目录 (与 CSV/PNG/日志同处, gitignore 已忽略),
+# 引擎写入前自动创建父目录 (v0.3.0 整理: 原根目录 error.inp 移入 output/)
+ERROR_INP_PATH = "output/error.inp"
 
 # ---- Hfo 表面位点参数 (WF4: SURFACE 表面络合, Dzombak & Morel 1990) ----
 # 铁氧化物比表面积 (m2/g): HFO 典型值 (Dzombak & Morel), 仅用于质量推导
