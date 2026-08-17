@@ -4,7 +4,7 @@
 
 **Blocked by:** 37（配置结构）
 
-**Status:** ready-for-agent
+**Status:** ✅ 已完成 (2026-08-17, v0.5.0)
 
 - [ ] 随机降雨：同 seed 可复现、月降水总量守恒、场次数∈[4,12]
 - [ ] Horton 单场：手算验证（f0=1.0/fc=0.4/k=5/h/T=2h → A≈55.2mm；min(P_j×0.75, A)）

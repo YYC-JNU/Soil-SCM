@@ -4,7 +4,7 @@
 
 **Blocked by:** 38（水文模块）、39（状态扩展）
 
-**Status:** ready-for-agent
+**Status:** ✅ 已完成 (2026-08-17, v0.5.0)
 
 - [ ] 引擎接收各层来水量/排水量（水文模式）
 - [ ] 层间 inflow_ions 用水文排水量（替代 precip_infiltration 排水）

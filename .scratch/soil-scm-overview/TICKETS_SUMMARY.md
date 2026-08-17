@@ -46,6 +46,13 @@
 | 33 | L6 main.py 多层编排集成 | 2026-08-17 | ✅ 已完成 | v0.4.0：_build_initial_layer_states + 逐层预平衡 + 单层护栏 |
 | 34 | L6 诊断实验工具 + 文档同步 | 2026-08-17 | ✅ 已完成 | v0.4.0：tools/plot_L6_layer_overrides.py + good/bad 标注图 + README/USERGUIDE/config 同步 |
 | 35 | L6 收尾（全量测试 + code-review + commit + tag） | 2026-08-17 | ✅ 已完成 | v0.4.0：139 全绿 + 双轴审查 + 发布 |
+| 36 | v0.5.0 水文盒子模型 spec | 2026-08-17 | ✅ 已完成 | v0.5.0：spec 落地（/grill-me 12 项决策） |
+| 37 | v0.5.0 水文配置扩展与校验 | 2026-08-17 | ✅ 已完成 | v0.5.0：layer_overrides 5 水文字段 + hydrology_seed + 反推容重 |
+| 38 | v0.5.0 水文模块（随机降雨+Horton+级联） | 2026-08-17 | ✅ 已完成 | v0.5.0：src/hydrology.py + 测试 |
+| 39 | v0.5.0 SoilProfile/SoilState 扩展 + 4 层内置默认 | 2026-08-17 | ✅ 已完成 | v0.5.0：stored_water + 内置剖面（n_layers=4 自动启用） |
+| 40 | v0.5.0 引擎水文集成 | 2026-08-17 | ✅ 已完成 | v0.5.0：run_monthly_multi_layer(hydrology) + inflow_water_L |
+| 41 | v0.5.0 main 集成 + 输出水文列 | 2026-08-17 | ✅ 已完成 | v0.5.0：_apply_hydrology_month + 水文诊断列 |
+| 42 | v0.5.0 运行验证 + 文档 + 版本发布 | 2026-08-17 | ✅ 已完成 | v0.5.0：基线验证（入渗↑14×/pH 升/底层 Al 累积）+ 发布 |
 
 ---
 

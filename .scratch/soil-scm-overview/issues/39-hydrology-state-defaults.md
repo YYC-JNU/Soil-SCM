@@ -4,7 +4,7 @@
 
 **Blocked by:** 37（字段定义）
 
-**Status:** ready-for-agent
+**Status:** ✅ 已完成 (2026-08-17, v0.5.0)
 
 - [ ] SoilProfile 水文字段 + porosity 属性覆盖逻辑
 - [ ] SoilState.stored_water 字段

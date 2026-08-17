@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** ✅ 已完成 (2026-08-17, v0.5.0)
 
 - [ ] layer_overrides 解析 5 个水文字段（部分覆盖回退默认）
 - [ ] hydrology_seed 解析（默认 42）

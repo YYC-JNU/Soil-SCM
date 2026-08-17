@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** ✅ 已完成 (2026-08-17, v0.5.0)
 
 **来源：** /grill-me 敲定 12 项决策（2026-08-17）
 

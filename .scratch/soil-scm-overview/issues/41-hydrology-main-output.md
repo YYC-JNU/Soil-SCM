@@ -4,7 +4,7 @@
 
 **Blocked by:** 40（引擎集成）
 
-**Status:** ready-for-agent
+**Status:** ✅ 已完成 (2026-08-17, v0.5.0)
 
 - [ ] 4 层自动启用内置水文默认（n_layers=4 且未配置 layer_overrides）
 - [ ] 月度循环：水文计算结果驱动引擎（入渗/径流/排水/滞水）

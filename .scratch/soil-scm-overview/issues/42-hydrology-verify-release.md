@@ -4,7 +4,7 @@
 
 **Blocked by:** 41（集成完成）
 
-**Status:** ready-for-agent
+**Status:** ✅ 已完成 (2026-08-17, v0.5.0)
 
 - [ ] 运行验证：4 层 natural 基线对比（新水文 vs 旧），记录入渗量/耗尽年/pH 变化
 - [ ] 文档同步：README/USERGUIDE/config.yaml/config_example（水文参数 + 4 层默认剖面）
