@@ -326,7 +326,7 @@
 - 非晶质 Al(OH)₃(a) 相（2%~20%、SI=0 与欠饱和）：**均无法回补**——矿物化沉淀为"单向 Al 汇"
 - **保留非晶质相**（红壤真实组分，natural 基线不变 pH 6.46，103 测试全绿）
 - **未根治**：fertilizer 单层 AlX₃ 耗尽；深层修复方向（Al 交换选择性校准 / 矿物化动力学 / 多层+逐层参数）列入后续 backlog
-- 完整扫描表见 `docs/V0_4_0_L9_SCAN.md`
+- 完整扫描表见 `docs/V0_3_0_FINAL_REPORT.md` 第六节（L9 证伪链）
 
 **L1 Al 表面络合简化方法（报告）**：
 - `docs/L1_AL_SURFACE_METHOD.md`：Kd_eff(pH)=Kd×f(pH) 简化质量作用式框架、参数表（Kd 文献骨架 + Sverjensky/Karamalidis 交叉验证）、**已知缺点专节**（6 项）、**优化方向专节**（6 项）
