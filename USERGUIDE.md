@@ -114,6 +114,8 @@ python main.py --config /path/to/your_config.yaml   # 任意自定义配置文�
 | `engine_mode` | `auto` | `auto`=PHREEQC 可用则用，否则降级简化；`phreeqc`=强制官方；`simplified`=始终简化 |
 | `precip_infiltration` | `0.05` | 降水入渗系数（0~1）：实际进入土壤溶液的比例，其余为径流/排水 |
 | `n_layers` | `1` | 分层数（1=单层，4=多分层；各层默认参数相同） |
+| `layer_depths` | 无 | 每层厚度 cm（L6）：长度必须 = n_layers，派生每层 `effective_depth`；缺省等分 0~60cm 兜底 |
+| `layer_overrides` | `[]` | 逐层参数覆盖（L6）：密集列表长度必须 = n_layers，部分覆盖 ph/有机质/CEC/容重/交换性离子/pCO2/矿物；`n_layers=1` 时忽略（见 5.6 节） |
 | `enable_surface` | `false` | 是否启用 Hfo 铁氧化物表面络合（P/Zn 吸附；与多分层配合使用） |
 | `enable_pre_equilibration` | `true` | 初始状态观测锚定预平衡（热力学自洽，建议保持开启） |
 | `pre_equilibration_max_steps` | `60` | 预平衡最大迭代步数 |
@@ -255,6 +257,38 @@ simulation:
 
 > 📎 延伸阅读：多分层的物理机制（级联下渗、一维平流守恒）与 SURFACE 表面络合的用法见 `docs/analysis/OPTIMIZATION_PLAN.md`（WF1~WF5）。
 
+### 5.6 完整示例 3：真实剖面逐层参数覆盖（L6，研究应用）
+
+目标：用真实剖面观测约束各层参数（表层薄+低 pH+高 CEC+高有机质+富铁氧化物 / 底层厚+紧实+高 pCO₂），替代"各层默认相同"。修改 `config/config.yaml`：
+
+```yaml
+simulation:
+  n_years: 30
+  scenario: fertilizer        # 干预情景
+  n_layers: 4
+  layer_depths: [10, 10, 20, 20]   # 真实层厚 (cm) — 派生每层 effective_depth
+  layer_overrides:                 # 密集列表, 长度必须 = n_layers
+    - ph: 4.5                      # 表层 0-10cm: 酸性+高有机质+高CEC+富铁氧化物
+      organic_matter: 30.0
+      cec: 15.0
+      bulk_density: 1.1
+      exch_al: 3.0
+      pCO2: 0.020
+      minerals: {goethite: 0.10}   # 矿物质量分数增量替换 (只替换该矿物, 不归一化)
+    - {}                           # 10-20cm: 无覆盖 (回退默认)
+    - cec: 10.0                    # 20-40cm
+      bulk_density: 1.35
+    - bulk_density: 1.5            # 40-60cm: 紧实 + 高 pCO2
+      pCO2: 0.030
+```
+
+要点：
+- **部分覆盖**：未写字段（如 `exch_ca`）回退全局默认 profile；空 `{}` 表示该层完全默认。
+- **层厚物理含义**：`effective_depth` 是层缓冲库容量的线性乘子（交换位点/矿物/溶液体积 ∝ 厚度），而排水量不随厚度缩放——层越薄淋失应力越大，层厚本身是模拟结果的重要参数。
+- **逐层 pCO₂**：月度 GAS_PHASE 固定分压按层注入（表层低/底层高的剖面梯度全程保持）。
+- **单层回归**：`n_layers=1` 时 `layer_overrides`/`layer_depths` 被忽略（控制台警告），既有单层行为不变。
+- **诊断实验**：`python tools/plot_L6_layer_overrides.py` 运行"真实剖面 vs 等参基线"对比，图片标注 good/bad influence（绿=缓冲增强/耗尽推迟，红=更早耗尽/酸化加剧），详见 `docs/analysis/L6_LAYER_OVERRIDES.md`。
+
 ---
 
 ## 六、模拟情景与案例
@@ -382,6 +416,8 @@ python main.py --config config/config_example.yaml    # 基于模板配置
 ### 8.2 多分层输出
 
 `n_layers > 1` 时，诊断列名追加**层深后缀**（如 `pH_0_10`、`base_saturation_10_20`…），便于逐层分析垂直剖面演化。
+
+> **L6**：配置 `layer_depths` 后后缀与该层物理厚度一致（如 `[10, 10, 20, 20]` → `pH_0_10`、`pH_10_20`、`pH_20_40`、`pH_40_60`）；未配置时缺省等分 0~60cm 兜底。
 
 ### 8.3 NetCDF 输出
 

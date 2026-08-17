@@ -413,7 +413,8 @@ class PhreeqcEngine:
     def run_monthly_multi_layer(self, states: list,
                                 monthly_forcing: dict,
                                 action,
-                                soil_profile) -> Tuple[list, list]:
+                                soil_profile,
+                                layer_pco2s=None) -> Tuple[list, list]:
         """执行多分层月度计算步 (WF2, 基于 WF1 架构决策)
 
         架构 (WF1 Q1-Q4, Q7):
@@ -424,11 +425,15 @@ class PhreeqcEngine:
                totals) = 移出摩尔量, 作为下层 REACTION 输入 (守恒)
           - Q4: run_monthly_step 单层接口不变 (深模块), 此处是高层编排层
 
+        L6 (v0.4.0): 可选逐层 pCO₂ — 各层月度 GAS_PHASE 固定分压按层注入
+          (真实剖面表层低/底层高的 pCO₂ 梯度全程保持), 缺省回退全局 forcing。
+
         参数:
             states: List[SoilState] — 各层当前状态 (长度 = n_layers)
             monthly_forcing: 当月气候强迫
             action: 当月操作指令
             soil_profile: 土壤剖面数据 (各层默认参数相同, ROADMAP 约束)
+            layer_pco2s: List[float] 或 None — 各层 pCO₂ 覆盖值 (长度=n_layers)
 
         返回:
             (List[SoilState], List[DiagnosticOutput]) — 更新后各层状态与诊断
@@ -446,6 +451,9 @@ class PhreeqcEngine:
         inflow_ions = {}  # 初始为 None: 最上层无层间输入
         for i in range(n):
             layer_forcing = dict(monthly_forcing)
+            # L6: 逐层 pCO₂ 注入 (缺省回退全局 forcing['pCO2'])
+            if layer_pco2s is not None:
+                layer_forcing['pCO2'] = layer_pco2s[i]
             if inflow_ions:
                 # 下层: 接收上层排水溶质 (Q2/Q7 平流守恒)
                 layer_forcing['inflow_ions'] = inflow_ions

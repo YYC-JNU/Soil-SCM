@@ -9,6 +9,7 @@
 import pandas as pd
 import numpy as np
 import json
+import copy
 from pathlib import Path
 from dataclasses import dataclass
 from src.logging_config import get_logger
@@ -223,6 +224,32 @@ class InputReader:
             exch_al=exch['exch_al'],
             exch_h=exch['exch_h'],
         )
+
+    def apply_layer_override(self, base_profile, override,
+                             depth: float) -> SoilProfile:
+        """按层覆盖构建新 SoilProfile (L6, v0.4.0)
+
+        部分覆盖语义: override 中为 None 的字段回退 base_profile (深拷贝)。
+        effective_depth 由 layer_depths[i] 派生 (层厚 = 缓冲库容量乘子)。
+
+        参数:
+            base_profile: 全局默认 SoilProfile
+            override: LayerOverrideConfig (src.config_manager) 或具有
+                相同字段名的对象/dict (ph/organic_matter/cec/bulk_density/
+                exch_ca/exch_mg/exch_k/exch_na/exch_al/exch_h)
+            depth: 该层厚度 (cm)
+        返回:
+            SoilProfile: 覆盖后的新对象 (不影响 base_profile)
+        """
+        prof = copy.deepcopy(base_profile)
+        prof.effective_depth = depth
+        for fld in ('ph', 'organic_matter', 'cec', 'bulk_density',
+                    'exch_ca', 'exch_mg', 'exch_k', 'exch_na',
+                    'exch_al', 'exch_h'):
+            v = getattr(override, fld, None)
+            if v is not None:
+                setattr(prof, fld, v)
+        return prof
 
     def _default_soil_survey(self) -> dict:
         """南方红壤默认普查数据"""

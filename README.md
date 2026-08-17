@@ -1,8 +1,14 @@
 # Soil-SCM: 土壤物理化学数值模式
 
-> **版本：v0.3.1**（2026-08-17，项目整理版本）
+> **版本：v0.4.0**（2026-08-17，L6 逐层参数覆盖）
 
-> **v0.3.1 更新说明**（2026-08-17）：
+> **v0.4.0 更新说明**（2026-08-17）：
+> - **L6 逐层参数覆盖（layer_overrides）**：新增 `simulation.layer_overrides`（config 内联密集列表，长度必须 = n_layers，逐层覆盖 ph/有机质/CEC/容重/交换性离子×6/pCO2/矿物质量分数）+ `simulation.layer_depths`（每层厚度 cm，派生每层 `effective_depth`，修正输出列后缀与物理厚度错位）；部分覆盖回退默认、`n_layers=1` 忽略+警告、矿物增量替换不归一化、每层独立预平衡、月度 pCO₂ 按层注入
+> - **诊断实验**：`tools/plot_L6_layer_overrides.py` 真实剖面 vs 等参基线（fertilizer 长期）对比图，逐层标注 good/bad influence（绿=缓冲增强/耗尽推迟，红=更早耗尽/酸化加剧）；实测记录见 `docs/analysis/L6_LAYER_OVERRIDES.md`
+> - **测试**：115 → **139 passed**（新增 24 项：配置解析/校验、逐层 profile 构建、引擎 pCO₂ 注入、main 多层编排、诊断判定逻辑）
+> - **版本纪律**：L6 为 L9 唯一未被证伪的结构性方向（多层 + 真实剖面约束），完整证伪链见 `docs/reports/V0_3_0_FINAL_REPORT.md` 第六节
+
+> **v0.3.1 更新说明**（2026-08-17，项目整理版本）：
 > - **error.inp 路径修正**：PHREEQC 失败复现文件从根目录移入 `output/error.inp`（写入前自动创建目录，相关测试同步适配）
 > - **文件归置**：8 个辅助绘图脚本移入 `tools/`（去掉 `_` 前缀）；删除根目录 30+ 运行日志；`output/` 3 个历史 PNG 取消跟踪（修复 .gitignore 语义）
 > - **文档同步**：`docs/` 按类型分类（`reports/` / `analysis/` / `guides/`）；新增工单汇总表 `.scratch/soil-scm-overview/TICKETS_SUMMARY.md`；新增用户指南 `USERGUIDE.md`；README/USERGUIDE 全量引用同步（死链清零）
@@ -124,6 +130,8 @@ pytest tests/ -v
 |------|------|--------|------|
 | `simulation` | `n_years` | `50` | 模拟年数 |
 | `simulation` | `n_layers` | `1` | 分层数（v0.2.5）：`1`=单层，`4`=多分层（各层默认参数相同） |
+| `simulation` | `layer_depths` | `None` | 每层厚度 cm（v0.4.0 L6）：长度必须 = n_layers，派生每层 `effective_depth`；缺省等分 0~60cm 兜底 |
+| `simulation` | `layer_overrides` | `[]` | 逐层参数覆盖（v0.4.0 L6）：密集列表长度必须 = n_layers，部分覆盖 ph/有机质/CEC/容重/交换性离子/pCO2/矿物；`n_layers=1` 时忽略 |
 | `simulation` | `enable_surface` | `false` | SURFACE 表面络合（v0.2.5）：`true`=启用 Hfo_s/Hfo_w 铁氧化物表面，P/Zn 吸附生效 |
 | `simulation` | `sub_time_step_days` | `0` | 子时间步长（天）：`0`=关闭，`1~7`=启用（与月步长结果一致，Q10） |
 | `climate` | `base_annual_precip` | `1893.0` | 基准年降水量（mm/yr） |
@@ -285,7 +293,7 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 3. **矿物量折中**：矿物量取物理值 0.001（`mineral_scale`），以避免矿物量大导致的碱性突变，但压缩了矿物缓冲容量（详见 `docs/analysis/Q1_plus_ANALYSIS.md`）。
 4. **SURFACE 与雨季交互**：启用 SURFACE（`enable_surface: true`）后，Hfo 表面质子化在雨季强入渗时加速交换 Al 耗尽，pH 上升更快——建议与多分层配合使用，独立启用会加剧。
 5. **PHREEQC 无法维持溶液无机氮形态（v0.3.0 确认）**：`phreeqc.dat` 的 N 氧化还原平衡将任何注入溶液的无机氮（NH₄⁺/NO₃⁻）热力学平衡为 N₂（实测 pe=0~12 下 N(-3)/N(5)≈0）。L4 采用**模型库存层**方案（氮形态为模型状态，硝化产酸 2H⁺ 注入 REACTION）；这是既有局限的显式化——旧实现施肥氮同样 100% 流失为 N₂。
-6. **fertilizer 单层长期 AlX₃ 耗尽→pH 突升（结构性局限确认，v0.5.0）**：k₂=0.4 弱产酸下 AlX₃ 被盐基置换 + 排水淋失耗尽（约第 2-3 年）→ pH 突升 ~10。**完整证伪链**（v0.4.0+v0.5.0+v0.6.0）：MINERAL_SCALE 扫描、非晶质 Al(OH)₃ 相、预平衡、缺口修正、**AlX₃ 交换 log_k（0.41→10）全部无效**，Al KINETICS 亦证据否定——确认为模型架构层局限（**排水淋失为耗尽主因**，单层排水无法模拟 Al 垂直缓冲）。**建议**：fertilizer 情景使用多层（n_layers≥4，推迟耗尽）+ 文档记录；架构级解决（多层 + L6 逐层参数）列入 backlog。详见 `docs/reports/V0_3_0_FINAL_REPORT.md` 第六节。
+6. **fertilizer 单层长期 AlX₃ 耗尽→pH 突升（结构性局限确认，v0.5.0）**：k₂=0.4 弱产酸下 AlX₃ 被盐基置换 + 排水淋失耗尽（约第 2-3 年）→ pH 突升 ~10。**完整证伪链**（v0.4.0+v0.5.0+v0.6.0）：MINERAL_SCALE 扫描、非晶质 Al(OH)₃ 相、预平衡、缺口修正、**AlX₃ 交换 log_k（0.41→10）全部无效**，Al KINETICS 亦证据否定——确认为模型架构层局限（**排水淋失为耗尽主因**，单层排水无法模拟 Al 垂直缓冲）。**建议**：fertilizer 情景使用多层（n_layers≥4，推迟耗尽）+ 文档记录；架构级解决（多层 + L6 逐层参数）列入 backlog。详见 `docs/reports/V0_3_0_FINAL_REPORT.md` 第六节。**v0.4.0 L6 落地**：`layer_overrides` 支持逐层参数覆盖（真实剖面约束），诊断实验见 `docs/analysis/L6_LAYER_OVERRIDES.md` 与 `tools/plot_L6_layer_overrides.py`。
 
 > ✅ **v0.1.4 已解决**：**降水化学集成（Q7）**——降水含 Cl⁻/SO₄²⁻/NO₃⁻/NH₄⁺ 等离子（据《2025年广东省生态环境状况公报》），原"保守离子 Cl⁻ 持续淋失"局限已解决（详见 `docs/analysis/Q7_PRECIP_CHEMISTRY.md`）。
 
