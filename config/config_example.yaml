@@ -14,6 +14,14 @@
 # scenario             | str   | natural          | -  | natural|fertilizer|fertilizer_lime|precip_increase|temp_increase
 # engine_mode          | str   | auto             | -  | auto|phreeqc|simplified
 # precip_infiltration  | float | 0.05             | -  | 0.0~1.0
+# n_layers             | int   | 1                | -  | 1|4 (干预类建议 ≥4)
+# enable_surface       | bool  | false            | -  | 与多分层配合使用
+# enable_pre_equilibration | bool | true          | -  | 初始状态预平衡 (建议开启)
+# pre_equilibration_max_steps | int | 60         | -  | >0
+# nitrification_k1     | float | 1.0              | /月 | 0~1 (尿素水解速率)
+# nitrification_k2     | float | 0.4              | /月 | 0~1 (硝化速率)
+# layer_depths         | list  | null             | cm | 长度 = n_layers; null=等分兜底 (L6)
+# layer_overrides      | list  | []               | -  | 密集列表长度 = n_layers; 部分覆盖 (L6)
 #
 # === soil_data ===
 # input_file               | str | data/soil_survey.csv       | - | CSV 文件路径
@@ -78,6 +86,14 @@ simulation:
   scenario: natural              # natural|fertilizer|fertilizer_lime|precip_increase|temp_increase
   engine_mode: auto              # auto=优先PHREEQC|phreeqc=强制官方|simplified=始终简化
   precip_infiltration: 0.05      # 降水入渗比例，0.01(排水好)~0.20(低洼积水)
+  n_layers: 1                    # 1=单层；4=多分层 (干预类情景建议 ≥4)
+  enable_surface: false          # SURFACE 表面络合 (Hfo_s/Hfo_w)，与多分层配合使用
+  enable_pre_equilibration: true # 初始状态预平衡 (热力学自洽，建议保持开启)
+  pre_equilibration_max_steps: 60 # 预平衡最大迭代步数
+  nitrification_k1: 1.0          # 尿素水解速率 /月 (0~1)，1.0=当月全水解
+  nitrification_k2: 0.4          # 硝化速率 /月 (0~1)，NH4+→NO3- 比例
+  layer_depths: null             # L6: 每层厚度 cm (长度=n_layers)；null=等分兜底
+  layer_overrides: []            # L6: 逐层参数覆盖密集列表 (长度=n_layers)；[]=无覆盖
 
 # ─────────────────────────────────────────────
 # soil_data: 土壤数据配置

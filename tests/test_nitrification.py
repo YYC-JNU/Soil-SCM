@@ -137,3 +137,30 @@ def test_simplified_preserves_n_state(profile, soil_info):
     new_state, _ = e.run_monthly_step(state, FORCING,
                                       MonthlyAction(), profile)
     assert new_state.n_nh4 == 42.0
+
+
+def test_engine_uses_configured_nitrification_rates(profile, soil_info,
+                                                    monkeypatch):
+    """v0.4.0+: 引擎构造硝化速率 → run_monthly_step 传给 advance_nitrification"""
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc",
+                      nitrification_k1=0.5, nitrification_k2=0.2)
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    captured = {}
+    orig = phreeqc_engine.advance_nitrification
+
+    def spy(state_, action_, k1=NITRIFICATION_K1, k2=NITRIFICATION_K2):
+        captured['k1'] = k1
+        captured['k2'] = k2
+        return orig(state_, action_, k1=k1, k2=k2)
+
+    monkeypatch.setattr(phreeqc_engine, 'advance_nitrification', spy)
+    act = MonthlyAction(apply_fertilizer=True, n_amount=12.0)
+    e.run_monthly_step(state, FORCING, act, profile)
+    assert captured == {'k1': 0.5, 'k2': 0.2}
+
+
+def test_engine_default_rates_from_constants(profile, soil_info, monkeypatch):
+    """v0.4.0+: 引擎默认硝化速率 = constants (向后兼容)"""
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    assert e.nitrification_k1 == NITRIFICATION_K1
+    assert e.nitrification_k2 == NITRIFICATION_K2

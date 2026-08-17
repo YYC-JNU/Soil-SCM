@@ -13,7 +13,8 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 from src.logging_config import get_logger
-from src.constants import PRECIP_INFILTRATION_DEFAULT
+from src.constants import (PRECIP_INFILTRATION_DEFAULT,
+                           NITRIFICATION_K1, NITRIFICATION_K2)
 
 logger = get_logger("config_manager")
 
@@ -54,6 +55,8 @@ class SimulationConfig:
     pre_equilibration_max_steps: int = 60  # v0.5.0: 预平衡最大步数 (收敛判据见引擎)
     layer_depths: Optional[List[float]] = None  # L6: 每层厚度 (cm), None=等分兜底; 每层 effective_depth 由此派生
     layer_overrides: List[LayerOverrideConfig] = field(default_factory=list)  # L6: 逐层参数覆盖 (密集列表, 长度=n_layers)
+    nitrification_k1: float = NITRIFICATION_K1  # L4: 尿素水解速率 (/月), 1.0=当月全水解
+    nitrification_k2: float = NITRIFICATION_K2  # L4: 硝化速率 (/月), NH4+→NO3- 比例
 
 
 @dataclass
@@ -256,7 +259,9 @@ class ConfigManager:
                 enable_pre_equilibration=s.get('enable_pre_equilibration', True),
                 pre_equilibration_max_steps=s.get('pre_equilibration_max_steps', 60),
                 layer_depths=(list(layer_depths) if layer_depths is not None else None),
-                layer_overrides=overrides
+                layer_overrides=overrides,
+                nitrification_k1=s.get('nitrification_k1', NITRIFICATION_K1),
+                nitrification_k2=s.get('nitrification_k2', NITRIFICATION_K2)
             )
 
         # 解析 soil_data (v0.2.3: 支持 config 内联字段, -1=回退 CSV)
@@ -440,6 +445,14 @@ class ConfigManager:
 
         # ---- L6: layer_overrides / layer_depths 校验 (v0.4.0) ----
         self._validate_layer_overrides()
+
+        # ---- L4: 硝化速率校验 (v0.4.0 config 显式化, 0~1 比例) ----
+        for name in ('nitrification_k1', 'nitrification_k2'):
+            k = getattr(self.config.simulation, name)
+            if not (0.0 <= k <= 1.0):
+                raise ValueError(
+                    f"['simulation.{name}' 参数存在问题: 速率 {k} 超出范围 (0~1), "
+                    f"请确认后再输入]")
 
         # 创建输出目录
         os.makedirs(self.config.output.directory, exist_ok=True)

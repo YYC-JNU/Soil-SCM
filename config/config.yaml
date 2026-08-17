@@ -16,28 +16,35 @@ simulation:
   precip_infiltration: 0.05          # 降水入渗系数 (0~1): 实际进入土壤溶液的比例 (T3)
   n_layers: 1                        # WF2: 分层数 (1=单层, 4=多分层; 各层默认参数相同)
   enable_surface: false              # WF4: SURFACE 表面络合 (Hfo_s/Hfo_w 铁氧化物), P/Zn 吸附生效
+  enable_pre_equilibration: true     # v0.5.0: 初始状态预平衡 (热力学自洽, 建议保持开启)
+  pre_equilibration_max_steps: 60    # v0.5.0: 预平衡最大迭代步数
+  # ---- L4 硝化两步动力学 (库存层, v0.3.0; v0.4.0 起 config 可配置) ----
+  # 简化一阶转化: 尿素 → NH4+ (水解 k1) → NO3- (硝化 k2), 比例/月 (0~1)
+  # 硝化产酸 2H+/mol N 注入 REACTION (酸化效应真实进入溶液); 氮形态为模型库存
+  nitrification_k1: 1.0              # 尿素水解速率 (/月): 1.0=当月全水解 (urease 催化, 田间数天完成)
+  nitrification_k2: 0.4              # 硝化速率 (/月): 每月 40% NH4+ → NO3- (酸性红壤硝化受抑, 保守量级)
 
   # ---- L6 (v0.4.0): 逐层参数覆盖 (真实剖面约束, 仅 n_layers>1 时生效) ----
-  # layer_depths: 每层厚度 (cm), 长度必须 = n_layers; 每层 effective_depth 由此派生
-  # layer_overrides: 密集列表, 长度必须 = n_layers; 每项为该层覆盖 dict (部分覆盖,
-  #   未写字段回退默认; 空 {} 表示该层无覆盖); 可覆盖字段:
-  #   ph / organic_matter / cec / bulk_density / exch_ca~exch_h / pCO2 / minerals
+  layer_depths: null                 # 每层厚度 (cm), 长度必须 = n_layers; null=等分兜底; 每层 effective_depth 由此派生
+  layer_overrides: []                # 逐层覆盖密集列表, 长度必须 = n_layers; [] = 无覆盖 (各层默认相同)
+  # 可覆盖字段: ph / organic_matter / cec / bulk_density / exch_ca~exch_h / pCO2 / minerals
   #   (minerals = 矿物质量分数增量替换, 只替换指定矿物, 不归一化)
-  # n_layers=1 时配置将被忽略 (单层回归护栏)
-  # layer_depths: [10, 10, 20, 20]
-  # layer_overrides:
-  #   - ph: 4.5
-  #     organic_matter: 30.0
-  #     cec: 15.0
-  #     bulk_density: 1.1
-  #     exch_al: 3.0
-  #     pCO2: 0.020
-  #     minerals: {goethite: 0.10}
-  #   - {}
-  #   - cec: 10.0
-  #     bulk_density: 1.35
-  #   - bulk_density: 1.5
-  #     pCO2: 0.030
+  # 部分覆盖: 未写字段回退默认; 空 {} 表示该层无覆盖; n_layers=1 时忽略 (单层护栏)
+  # 示例 (4 层 0-10/10-20/20-40/40-60cm):
+  #   layer_depths: [10, 10, 20, 20]
+  #   layer_overrides:
+  #     - ph: 4.5
+  #       organic_matter: 30.0
+  #       cec: 15.0
+  #       bulk_density: 1.1
+  #       exch_al: 3.0
+  #       pCO2: 0.020
+  #       minerals: {goethite: 0.10}
+  #     - {}
+  #     - cec: 10.0
+  #       bulk_density: 1.35
+  #     - bulk_density: 1.5
+  #       pCO2: 0.030
 
 soil_data:
   input_file: data/soil_survey.csv

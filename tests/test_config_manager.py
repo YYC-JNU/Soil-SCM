@@ -351,3 +351,54 @@ def test_layer_overrides_minerals_sum_warns(tmp_path, caplog):
         cfg = ConfigManager(str(p))
     assert cfg.config.simulation.layer_overrides[0].minerals == {"goethite": 0.08}
     assert any("总和" in r.message for r in caplog.records)
+
+
+# ==================== v0.4.0+: 显式化参数 + 硝化速率 ====================
+
+def test_simulation_explicit_extra_fields(tmp_path):
+    """config.yaml 显式列出预平衡/层参数/硝化速率 → 正确解析"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text(
+        "simulation:\n  n_years: 2\n  n_layers: 2\n"
+        "  enable_pre_equilibration: true\n  pre_equilibration_max_steps: 60\n"
+        "  layer_depths: null\n  layer_overrides: []\n"
+        "  nitrification_k1: 0.8\n  nitrification_k2: 0.3\n",
+        encoding="utf-8")
+    sim = ConfigManager(str(p)).config.simulation
+    assert sim.enable_pre_equilibration is True
+    assert sim.pre_equilibration_max_steps == 60
+    assert sim.layer_depths is None          # null → None (等分兜底)
+    assert sim.layer_overrides == []         # [] → 无覆盖
+    assert sim.nitrification_k1 == 0.8
+    assert sim.nitrification_k2 == 0.3
+
+
+def test_nitrification_rates_default(cfg):
+    """默认 config: 硝化速率 k1=1.0/k2=0.4 (constants 默认值)"""
+    assert cfg.config.simulation.nitrification_k1 == 1.0
+    assert cfg.config.simulation.nitrification_k2 == 0.4
+
+
+def test_nitrification_rates_parse(tmp_path):
+    """YAML 覆盖硝化速率 → 解析生效"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text(
+        "simulation:\n  n_years: 2\n  nitrification_k1: 0.8\n"
+        "  nitrification_k2: 0.2\n", encoding="utf-8")
+    sim = ConfigManager(str(p)).config.simulation
+    assert sim.nitrification_k1 == 0.8
+    assert sim.nitrification_k2 == 0.2
+
+
+def test_nitrification_rates_invalid(tmp_path):
+    """硝化速率值域校验: k>1 或 k<0 → 报错"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text("simulation:\n  n_years: 2\n  nitrification_k2: 1.5\n",
+                 encoding="utf-8")
+    with pytest.raises(ValueError, match="nitrification"):
+        ConfigManager(str(p))
+    p2 = tmp_path / "cfg.yaml"
+    p2.write_text("simulation:\n  n_years: 2\n  nitrification_k1: -0.1\n",
+                  encoding="utf-8")
+    with pytest.raises(ValueError, match="nitrification"):
+        ConfigManager(str(p2))
