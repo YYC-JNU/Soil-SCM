@@ -119,6 +119,8 @@ python main.py --config /path/to/your_config.yaml   # 任意自定义配置文�
 | `enable_surface` | `false` | 是否启用 Hfo 铁氧化物表面络合（P/Zn 吸附；与多分层配合使用） |
 | `enable_pre_equilibration` | `true` | 初始状态观测锚定预平衡（热力学自洽，建议保持开启） |
 | `pre_equilibration_max_steps` | `60` | 预平衡最大迭代步数 |
+| `nitrification_k1` | `1.0` | 尿素水解速率（/月，`0~1`；1.0=当月全水解） |
+| `nitrification_k2` | `0.4` | 硝化速率（/月，`0~1`；NH₄⁺→NO₃⁻ 每月比例，酸性红壤硝化受抑取保守量级） |
 
 ### 4.2 `soil_data`：土壤数据
 

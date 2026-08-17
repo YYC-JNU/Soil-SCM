@@ -109,14 +109,17 @@ class DiagnosticOutput:
 
 
 def _monthly_step_worker(q, database, mode, enable_surface, precip_infiltration,
-                         precip_chem, state, forcing, action, soil_profile):
+                         precip_chem, nitrification_k1, nitrification_k2,
+                         state, forcing, action, soil_profile):
     """子进程月度步 worker (数值稳定性, v0.6.1): 重建引擎执行, 结果入队列"""
     try:
         from src.phreeqc_engine import PhreeqcEngine
         e = PhreeqcEngine(database=database, mode=mode,
                           enable_surface=enable_surface,
                           precip_infiltration=precip_infiltration,
-                          precip_chem=precip_chem)
+                          precip_chem=precip_chem,
+                          nitrification_k1=nitrification_k1,
+                          nitrification_k2=nitrification_k2)
         ns, diag = e.run_monthly_step(state, forcing, action, soil_profile)
         q.put((ns, diag))
     except Exception as ex:
@@ -130,7 +133,9 @@ class PhreeqcEngine:
                  mode: str = 'auto', backend: str = 'official',
                  precip_chem=None,
                  precip_infiltration: float = PRECIP_INFILTRATION_DEFAULT,
-                 enable_surface: bool = False):
+                 enable_surface: bool = False,
+                 nitrification_k1: float = NITRIFICATION_K1,
+                 nitrification_k2: float = NITRIFICATION_K2):
         """
         参数:
             database: PHREEQC 热力学数据库
@@ -146,6 +151,8 @@ class PhreeqcEngine:
             enable_surface: 是否启用 SURFACE 表面络合 (WF4, 默认关闭)
                 - True : 生成 Hfo_s/Hfo_w 铁氧化物表面, P/Zn 吸附生效
                 - False: 不生成 SURFACE 块 (回归护栏)
+            nitrification_k1: 尿素水解速率 /月 (L4, 默认 1.0=当月全水解)
+            nitrification_k2: 硝化速率 /月 (L4, 默认 0.4; config 可配置)
         """
         self.database = database
         self.mode = mode
@@ -156,6 +163,9 @@ class PhreeqcEngine:
         self.official = None    # 官方 phreeqc 后端实例
         self.precip_chem = precip_chem  # 降水化学 (Q7)
         self.enable_surface = enable_surface  # WF4: SURFACE 表面络合开关
+        # L4 硝化速率 (v0.4.0: config 可配置, 默认=constants)
+        self.nitrification_k1 = nitrification_k1  # 尿素水解速率 /月
+        self.nitrification_k2 = nitrification_k2  # 硝化速率 /月
         self._fallback_warned = False
         self._permanent_fallback = False
         self.last_error_message = None    # Q18: 最近一次引擎失败信息
@@ -270,6 +280,7 @@ class PhreeqcEngine:
             target=_monthly_step_worker,
             args=(q, self.database, self.mode, self.enable_surface,
                   self.precip_infiltration, self.precip_chem,
+                  self.nitrification_k1, self.nitrification_k2,
                   state, forcing, action, soil_profile))
         p.start()
         p.join(timeout)
@@ -482,7 +493,10 @@ class PhreeqcEngine:
         """使用官方 phreeqc (IPhreeqc 3.8.6) 引擎执行单月计算"""
         # L4: 推进氮形态库存 (尿素→NH4+→NO3-, 简化两步), 返回本月氮反应量
         # 独立函数 + 返回契约 → 将来可替换为 KINETICS 实现 (升级空间)
-        n_reaction = advance_nitrification(state, action)
+        # v0.4.0: 硝化速率由引擎配置 (config.simulation.nitrification_k1/k2)
+        n_reaction = advance_nitrification(
+            state, action,
+            k1=self.nitrification_k1, k2=self.nitrification_k2)
         # 构建 PHREEQC 输入字符串 (含 SELECTED_OUTPUT 查询块)
         input_string = self._build_phreeqc_input(
             state, forcing, action, profile, n_reaction=n_reaction)
@@ -719,7 +733,10 @@ class PhreeqcEngine:
         # 全部转为 N2(g) (实测 pe=0~12 下 N(-3)/N(5)≈0)。只注入硝化产酸
         # H+ = 2×硝化量 (Q3=A: 酸化效应真实进入溶液, 与旧"一步产酸"守恒)
         if n_reaction is None:
-            n_reaction = advance_nitrification(state, action)
+            # v0.4.0: 兜底路径也使用引擎配置的硝化速率
+            n_reaction = advance_nitrification(
+                state, action,
+                k1=self.nitrification_k1, k2=self.nitrification_k2)
         h_mol = n_reaction.get('H+', 0.0)
         if h_mol > 0:
             reaction_lines.append(f"  H+     {h_mol:.6e}  # 硝化产酸")

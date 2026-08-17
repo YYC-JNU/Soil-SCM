@@ -227,7 +227,9 @@ def run_simulation(config_path: str = "config/config.yaml"):
                            mode=cfg.simulation.engine_mode,
                            precip_chem=precip_chem,
                            precip_infiltration=cfg.simulation.precip_infiltration,
-                           enable_surface=getattr(cfg.simulation, 'enable_surface', False))
+                           enable_surface=getattr(cfg.simulation, 'enable_surface', False),
+                           nitrification_k1=getattr(cfg.simulation, 'nitrification_k1', 1.0),
+                           nitrification_k2=getattr(cfg.simulation, 'nitrification_k2', 0.4))
 
     # 构建初始状态 (initial_pCO2 已在阶段 4 中计算)
     # WF2/Q1: 多分层时构建 List[SoilState]; L6 (v0.4.0): 支持逐层参数覆盖

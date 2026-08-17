@@ -133,6 +133,10 @@ pytest tests/ -v
 | `simulation` | `layer_depths` | `None` | 每层厚度 cm（v0.4.0 L6）：长度必须 = n_layers，派生每层 `effective_depth`；缺省等分 0~60cm 兜底 |
 | `simulation` | `layer_overrides` | `[]` | 逐层参数覆盖（v0.4.0 L6）：密集列表长度必须 = n_layers，部分覆盖 ph/有机质/CEC/容重/交换性离子/pCO2/矿物；`n_layers=1` 时忽略 |
 | `simulation` | `enable_surface` | `false` | SURFACE 表面络合（v0.2.5）：`true`=启用 Hfo_s/Hfo_w 铁氧化物表面，P/Zn 吸附生效 |
+| `simulation` | `enable_pre_equilibration` | `true` | 初始状态预平衡（v0.5.0，建议保持开启） |
+| `simulation` | `pre_equilibration_max_steps` | `60` | 预平衡最大迭代步数 |
+| `simulation` | `nitrification_k1` | `1.0` | 尿素水解速率（/月，L4；`0~1`，1.0=当月全水解） |
+| `simulation` | `nitrification_k2` | `0.4` | 硝化速率（/月，L4；`0~1`，NH₄⁺→NO₃⁻ 比例） |
 | `simulation` | `sub_time_step_days` | `0` | 子时间步长（天）：`0`=关闭，`1~7`=启用（与月步长结果一致，Q10） |
 | `climate` | `base_annual_precip` | `1893.0` | 基准年降水量（mm/yr） |
 | `climate` | `base_annual_temp` | `25.0` | 基准年平均温度（°C） |
