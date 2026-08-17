@@ -488,9 +488,12 @@ class PhreeqcEngine:
             self.last_error_message = str(e)
             self.last_error_input = input_string
             # T01 修复: 失败输入写入磁盘复现文件 (README 承诺的 error.inp)
+            # 路径固定为 output/ 运行产物目录 (gitignore 已忽略), 写入前确保目录存在;
             # 写入失败不影响主流程 (降级继续), 仅记录日志
             try:
-                Path(ERROR_INP_PATH).write_text(input_string, encoding='utf-8')
+                err_path = Path(ERROR_INP_PATH)
+                err_path.parent.mkdir(parents=True, exist_ok=True)
+                err_path.write_text(input_string, encoding='utf-8')
             except Exception as write_err:
                 logger.warning("无法写入 PHREEQC 失败输入复现文件 %s: %s",
                                ERROR_INP_PATH, write_err)
