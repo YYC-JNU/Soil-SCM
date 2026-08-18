@@ -1,113 +1,15 @@
 # Soil-SCM: 土壤物理化学数值模式
 
-> **版本：v0.5.2**（2026-08-18，Green-Ampt 物理入渗 + Ksat 字段拆分 + 大孔隙优先流 + 硝化限 L1）
-
-> **v0.5.2 更新说明**（2026-08-18）：
-> - **Green-Ampt 物理入渗**：废弃 Horton + `surface_coeff` 人为系数；累积入渗能力由隐式方程
->   F − ψ_f·Δθ·ln(1+F/(ψ_f·Δθ)) = K_s·t（牛顿迭代）解出；降雨强度 > 入渗能力 → 超渗产流**自然产生**
-> - **Ksat 字段拆分**：`ksat`（层间排水上限，默认 [12,1.9,0.48,0.05] cm/day，仅 LayerCascade 用）
->   + `ksat_surface`（Green-Ampt 基质导水率，默认 7.2 cm/day）；华南暴雨 >15mm/h 自然触发超渗产流
-> - **大孔隙优先流**：`simulation.bypass_fraction=0.2`（config 开放）——超基质 Ks 积水 20% 绕过表层
->   直通 **L2**，**携带原始降水化学**（红壤旱地"暴雨直通深层"物理观测）
-> - **硝化产酸限 L1**：`run_monthly_multi_layer` 仅 L1 执行 `advance_nitrification`（表层酸化源强化）
-> - **breaking change**：`simulation.surface_infiltration_coeff` 已废弃（config 中出现报错）；
->   `tools/sensitivity_infiltration.py` 扫描参数改为 `ksat_surface`
-> - **运行验证**（2 年 4 层 natural, seed=42）：入渗 66%（vs v0.5.1 的 75%）、径流 34%（自然超渗产流）、
->   优先流占径流 20%、质量守恒；**初始表层 pH 4.63（回落至红壤区间方向）**，深层保持酸性（3.2~5.3）
-> - **测试**：168 → **178 passed**（Green-Ampt/Ksat 拆分/优先流/硝化限 L1/废弃字段报错）
-
-> **v0.5.1 更新说明**（2026-08-17）：
-> - **表层入渗系数 config 化**：新增 `simulation.surface_infiltration_coeff`（默认 0.75，0~1）替代 `hydrology.py` 硬编码；Horton 入渗 = min(场降水×系数, 能力)
-> - **敏感性实验**：`tools/sensitivity_infiltration.py` 表层入渗率 5%~95%（5% 间隔）对 4 层 15 年 natural 最终 pH 的扫描（seed=42，CSV 断点续跑，散点图 RdYlBu_r）；**发现层间"级联穿透阈值"**（L2~0.25 / L3~0.45 / L4~0.65 入渗系数突跃中和强酸）——详见 `docs/analysis/SENSITIVITY_INFILTRATION.md`
-> - **测试**：164 → **168 passed**（+4：config 解析/校验 + surface_coeff 生效）
-
-> **v0.5.0 更新说明**（2026-08-17）：
-> - **逐层水文盒子模型**：Horton 入渗（随机日降雨 seed 可配、初渗/稳渗率、表层入渗系数 0.75）+ Ksat 层间渗漏 + 孔隙度持水 + 跨月滞水（`stored_water`）；`n_layers=4` **自动启用内置物理剖面默认**（厚度[20,20,20,40]cm/粘粒/孔隙度/Ksat/初渗/稳渗）；孔隙度反推容重 ρ=2.65(1−φ)
-> - **配置**：`layer_overrides` 扩展 5 水文字段 + `hydrology_seed`（默认 42，可复现）；`n_layers=1` 完全回退现状（回归护栏）
-> - **输出**：新增逐层水文列（infiltration/drainage/stored_water/runoff）
-> - **基线漂移（如实记录）**：水文模式入渗量 ~14 倍于旧（年 ~1349mm vs 95mm）→ 表层 pH 升高、AlX₃ 垂直重分配（底层累积）——详见 `docs/analysis/HYDROLOGY_BOX.md`，参数（0.75 系数/入渗率/降雨假设）需结合研究区标定
-> - **测试**：145 → **164 passed**（新增 19 项：水文配置/随机降雨/Horton/级联/引擎集成/main 编排）
-
-> **v0.4.0 更新说明**（2026-08-17）：
-> - **L6 逐层参数覆盖（layer_overrides）**：新增 `simulation.layer_overrides`（config 内联密集列表，长度必须 = n_layers，逐层覆盖 ph/有机质/CEC/容重/交换性离子×6/pCO2/矿物质量分数）+ `simulation.layer_depths`（每层厚度 cm，派生每层 `effective_depth`，修正输出列后缀与物理厚度错位）；部分覆盖回退默认、`n_layers=1` 忽略+警告、矿物增量替换不归一化、每层独立预平衡、月度 pCO₂ 按层注入
-> - **诊断实验**：`tools/plot_L6_layer_overrides.py` 真实剖面 vs 等参基线（fertilizer 长期）对比图，逐层标注 good/bad influence（绿=缓冲增强/耗尽推迟，红=更早耗尽/酸化加剧）；实测记录见 `docs/analysis/L6_LAYER_OVERRIDES.md`
-> - **版本纪律**：L6 为 L9 唯一未被证伪的结构性方向（多层 + 真实剖面约束），完整证伪链见 `docs/reports/V0_3_0_FINAL_REPORT.md` 第六节
-
-> **v0.3.1 更新说明**（2026-08-17，项目整理版本）：
-> - **error.inp 路径修正**：PHREEQC 失败复现文件从根目录移入 `output/error.inp`（写入前自动创建目录，相关测试同步适配）
-> - **文件归置**：8 个辅助绘图脚本移入 `tools/`（去掉 `_` 前缀）；删除根目录 30+ 运行日志；`output/` 3 个历史 PNG 取消跟踪（修复 .gitignore 语义）
-> - **文档同步**：`docs/` 按类型分类（`reports/` / `analysis/` / `guides/`）；新增工单汇总表 `.scratch/soil-scm-overview/TICKETS_SUMMARY.md`；新增用户指南 `USERGUIDE.md`；README/USERGUIDE 全量引用同步（死链清零）
-
 基于 PHREEQC 地球化学引擎的土壤单点物理化学数值模式，用于模拟长期（数十年）施肥、酸化、淋溶与改良条件下的土壤化学演变（pH、盐基饱和度、交换性阳离子等）。
 
-## 一、项目目录结构
+> **当前版本**：v0.5.2（2026-08-18，Green-Ampt 物理入渗 + Ksat 字段拆分 + 大孔隙优先流 + 硝化限 L1）
+> **快速上手**：见 [USERGUIDE.md](USERGUIDE.md) ｜ **版本历史**：见 [§十一 版本更新记录](#十一版本更新记录)
 
-```
-Soil-SCM/
-├── config/                     # 配置文件
-│   ├── config.yaml             # 主配置文件（类似 WRF namelist.input）
-│   ├── config_example.yaml     # 配置模板（参数速查表 + 完整可填配置）
-│   ├── soil_mineral_db.json    # 土壤矿物数据库
-│   ├── soil_mineral.tbl        # 矿物热力学表
-│   ├── precip_chemistry_default.json  # 降水化学默认值（广东 2025 公报）
-│   └── texture_code.json       # 土壤质地编码表（卡钦斯基制，v0.2.3）
-├── src/                        # 源码
-│   ├── __init__.py
-│   ├── config_manager.py       # 配置加载与校验
-│   ├── soil_database.py        # 土壤/矿物数据库查询
-│   ├── input_reader.py         # 土壤普查/交换性离子数据读取
-│   ├── climate_forcing.py      # 气候强迫（降水/温度/pCO₂）
-│   ├── scenario_controller.py  # 情景控制（施肥/石灰/气候变化）
-│   ├── phreeqc_engine.py       # PHREEQC 化学引擎（官方 + 简化降级）
-│   ├── output_writer.py        # 结果输出（CSV/NetCDF/绘图）
-│   ├── initial_condition.py    # 初始条件构建（溶液/交换/矿物/气相）
-│   ├── precip_chemistry.py     # 降水化学（Q7）
-│   ├── logging_config.py       # 日志（Q15）
-│   ├── constants.py            # 全局常量（Q19）
-│   └── utils.py                # 工具函数
-├── data/                       # 输入数据
-│   ├── soil_survey.csv         # 土壤普查数据
-│   └── exchangeable_ions.csv   # 交换性阳离子初始值
-├── tests/                      # pytest 单元测试（115 用例）
-│   ├── conftest.py
-│   └── test_*.py
-├── docs/                       # 项目文档
-│   ├── reports/                # 版本总结报告
-│   │   ├── V0_3_0_FINAL_REPORT.md  # v0.3.0 最终总结报告（v0.2.2 后全部优化合并）
-│   │   ├── V0_2_0_ENGINEERING_REPORT.md
-│   │   └── V0_2_2_SHORT_TERM_REPORT.md
-│   ├── analysis/               # 专项分析与规划
-│   │   ├── OPTIMIZATION_PLAN.md    # 问题清单与优化计划（Q1-Q26）
-│   │   ├── ROADMAP.md              # 优化路线图
-│   │   ├── L1_AL_SURFACE_METHOD.md # L1 Al³⁺ 表面络合简化方法报告（含缺点/优化方向）
-│   │   ├── Q1_ANALYSIS.md          # Q1 引擎分析
-│   │   ├── Q1_plus_ANALYSIS.md     # Q1+ 矿物量诊断
-│   │   └── Q7_PRECIP_CHEMISTRY.md  # Q7 降水化学集成
-│   ├── guides/                 # 指南
-│   │   └── GIT_GUIDE.md            # Git 协作指南
-│   └── images/                 # 文档示例图（USERGUIDE 案例图）
-├── tools/                      # 分析/绘图辅助脚本（从项目根运行）
-│   ├── plot_pH_scenarios.py        # 4 情景 pH 对比图
-│   ├── plot_ion_concentrations.py  # 离子浓度曲线图
-│   ├── plot_Q7_30yr.py             # Q7 降水化学 30 年模拟图
-│   ├── compare_before_after.py     # 50 年化学演化监控
-│   ├── plot_exp1_4layer.py         # 实验1: 4 层 30 年演化
-│   ├── plot_exp2_single_vs_multi.py# 实验2: 单层 vs 多层
-│   ├── plot_exp3_plot.py           # 实验3: 表层对比
-│   └── plot_exp3_surface_onoff.py  # 实验3: SURFACE 开关对比
-├── .scratch/                   # 本地工单追踪（spec + 工单）
-│   └── soil-scm-overview/
-│       ├── TICKETS_SUMMARY.md  # 工单汇总表（成立时间/状态，2026-08-17 整理）
-│       ├── issues/             # 开发工单 01~28
-│       └── wayfinder/          # 架构决策工单 WF1~5
-├── output/                     # 运行产物（gitignore，自动生成；含 output/error.inp 失败复现文件）
-├── main.py                     # 主程序入口
-├── requirements.txt            # Python 依赖
-├── USERGUIDE.md                # 用户指南（安装/配置/情景/输出解读/FAQ）
-└── README.md
-```
+---
 
-## 二、依赖与安装
+## 一、快速开始
+
+### 1.1 安装依赖
 
 ```bash
 # 安装依赖
@@ -128,14 +30,98 @@ pip install -r requirements.txt
 > - 化学计算依赖官方 `phreeqc` 包（IPhreeqc 3.8.6，USGS 官方引擎）；`phreeqpython` 兼容后端已于 v0.1.3 废弃移除。
 > - 若 `phreeqc` 未安装或 PHREEQC 计算块与数据库不兼容导致计算失败，引擎会自动**降级到内置简化模式**，保证模拟流程稳定运行。
 
-### 运行测试
+### 1.2 运行模拟
 
 ```bash
-# v0.2.0 起建立 pytest 测试框架（tests/，当前 115 用例）
+python main.py --config config/config.yaml
+```
+
+### 1.3 运行测试
+
+```bash
+# v0.2.0 起建立 pytest 测试框架（tests/，当前 179 用例）
 pytest tests/ -v
 ```
 
-## 三、运行模拟
+---
+
+## 二、项目目录结构
+
+```
+Soil-SCM/
+├── config/                     # 配置文件
+│   ├── config.yaml             # 主配置文件（类似 WRF namelist.input）
+│   ├── config_example.yaml     # 配置模板（参数速查表 + 完整可填配置）
+│   ├── soil_mineral_db.json    # 土壤矿物数据库
+│   ├── soil_mineral.tbl        # 矿物热力学表
+│   ├── precip_chemistry_default.json  # 降水化学默认值（广东 2025 公报）
+│   └── texture_code.json       # 土壤质地编码表（卡钦斯基制，v0.2.3）
+├── src/                        # 源码
+│   ├── __init__.py
+│   ├── config_manager.py       # 配置加载与校验
+│   ├── soil_database.py        # 土壤/矿物数据库查询
+│   ├── input_reader.py         # 土壤普查/交换性离子数据读取
+│   ├── climate_forcing.py      # 气候强迫（降水/温度/pCO₂）
+│   ├── hydrology.py            # 水文物理（v0.5.x：Green-Ampt 入渗 + 层间级联）
+│   ├── scenario_controller.py  # 情景控制（施肥/石灰/气候变化）
+│   ├── phreeqc_engine.py       # PHREEQC 化学引擎（官方 + 简化降级）
+│   ├── output_writer.py        # 结果输出（CSV/NetCDF/绘图）
+│   ├── initial_condition.py    # 初始条件构建（溶液/交换/矿物/气相）
+│   ├── precip_chemistry.py     # 降水化学（Q7）
+│   ├── logging_config.py       # 日志（Q15）
+│   ├── constants.py            # 全局常量（Q19）
+│   └── utils.py                # 工具函数
+├── data/                       # 输入数据
+│   ├── soil_survey.csv         # 土壤普查数据
+│   └── exchangeable_ions.csv   # 交换性阳离子初始值
+├── tests/                      # pytest 单元测试（179 用例）
+│   ├── conftest.py
+│   └── test_*.py
+├── docs/                       # 项目文档
+│   ├── reports/                # 版本总结报告
+│   │   ├── V0_3_0_FINAL_REPORT.md  # v0.3.0 最终总结报告（v0.2.2 后全部优化合并）
+│   │   ├── V0_2_0_ENGINEERING_REPORT.md
+│   │   └── V0_2_2_SHORT_TERM_REPORT.md
+│   ├── analysis/               # 专项分析与规划
+│   │   ├── OPTIMIZATION_PLAN.md    # 问题清单与优化计划（Q1-Q26）
+│   │   ├── ROADMAP.md              # 优化路线图
+│   │   ├── L1_AL_SURFACE_METHOD.md # L1 Al³⁺ 表面络合简化方法报告（含缺点/优化方向）
+│   │   ├── Q1_ANALYSIS.md          # Q1 引擎分析
+│   │   ├── Q1_plus_ANALYSIS.md     # Q1+ 矿物量诊断
+│   │   ├── Q7_PRECIP_CHEMISTRY.md  # Q7 降水化学集成
+│   │   ├── HYDROLOGY_BOX.md         # v0.5.0 水文盒子模型设计
+│   │   ├── L6_LAYER_OVERRIDES.md    # L6 逐层参数覆盖诊断
+│   │   └── SENSITIVITY_INFILTRATION.md  # v0.5.1 入渗率敏感性
+│   ├── guides/                 # 指南
+│   │   └── GIT_GUIDE.md            # Git 协作指南
+│   └── images/                 # 文档示例图（USERGUIDE 案例图）
+├── tools/                      # 分析/绘图辅助脚本（从项目根运行）
+│   ├── plot_pH_scenarios.py        # 4 情景 pH 对比图
+│   ├── plot_ion_concentrations.py  # 离子浓度曲线图
+│   ├── plot_Q7_30yr.py             # Q7 降水化学 30 年模拟图
+│   ├── compare_before_after.py     # 50 年化学演化监控
+│   ├── plot_exp1_4layer.py         # 实验1: 4 层 30 年演化
+│   ├── plot_exp2_single_vs_multi.py# 实验2: 单层 vs 多层
+│   ├── plot_exp3_plot.py           # 实验3: 表层对比
+│   ├── plot_exp3_surface_onoff.py  # 实验3: SURFACE 开关对比
+│   ├── plot_L6_layer_overrides.py  # L6 逐层参数覆盖诊断图
+│   ├── plot_v0_5_hydrology_baseline.py  # v0.5.0 水文基线验证
+│   └── sensitivity_infiltration.py  # v0.5.1 入渗率敏感性实验
+├── .scratch/                   # 本地工单追踪（spec + 工单）
+│   └── soil-scm-overview/
+│       ├── TICKETS_SUMMARY.md  # 工单汇总表（成立时间/状态，2026-08-17 整理）
+│       ├── issues/             # 开发工单 01~48
+│       └── wayfinder/          # 架构决策工单 WF1~5
+├── output/                     # 运行产物（gitignore，自动生成；含 output/error.inp 失败复现文件）
+├── main.py                     # 主程序入口
+├── requirements.txt            # Python 依赖
+├── USERGUIDE.md                # 用户指南（安装/配置/情景/输出解读/FAQ）
+└── README.md
+```
+
+---
+
+## 三、配置说明
 
 > **完整操作指南**（配置字段详解、输入数据格式、模拟情景案例、输出解读、常见问题排查）见 **[`USERGUIDE.md`](USERGUIDE.md)**。
 
@@ -199,11 +185,7 @@ pytest tests/ -v
 > - `ALX3_SELECTIVITY_LOGK = 0.41`：AlX₃ 交换 log_k（引擎 EXCHANGE_SPECIES 覆盖；**L9 扫描 0.41→10 全部无效**，结构性局限确认）
 > - 完整报告见 `docs/reports/V0_3_0_FINAL_REPORT.md` 第三、六节
 
-### 运行模拟
-
-```bash
-python main.py --config config/config.yaml
-```
+---
 
 ## 四、情景说明
 
@@ -216,6 +198,8 @@ python main.py --config config/config.yaml
 | `fertilizer_lime` | 施肥 + 生石灰改良 |
 | `precip_increase` | 降水逐年增加（默认 2%/yr） |
 | `temp_increase` | 温度逐年升高（默认 0.05°C/yr） |
+
+---
 
 ## 五、施肥方案（默认）
 
@@ -235,6 +219,8 @@ python main.py --config config/config.yaml
 - 氮：`NO₃⁻` + `H⁺`（硝化产酸）；磷：`H₂PO₄⁻`；钾：`K⁺`；镁：`Mg⁺²`；锌：`Zn⁺²`+`SO₄⁻²`
 - 生石灰：`Ca` + `OH⁻`（CaO 水化）
 
+---
+
 ## 六、数据文件
 
 ### `data/soil_survey.csv`
@@ -251,7 +237,9 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 3.0,1.5,0.5,0.2,2.0,1.0
 ```
 
-## 七、输出
+---
+
+## 七、输出与辅助工具
 
 ### 输出文件
 
@@ -295,29 +283,9 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 
 `output/error.inp` 为 PHREEQC 计算失败时**自动生成**的完整输入复现文件（Q18 异常分级，T01 修复）：当官方引擎 `RunString` 抛出异常并降级时，完整输入字符串写入 `output/error.inp`，每次失败刷新；写入失败不影响主流程（记录日志后继续降级模拟）。可据此复现与调试。
 
-## 八、后续扩展建议
+---
 
-| 扩展方向 | 说明 |
-|----------|------|
-| 多土层模式 | 将单层扩展为 3-5 层，模拟垂直淋溶 |
-| 根系吸水 | 添加植物根系对水分和养分的吸收 |
-| 有机质分解 | 添加有机质矿化动力学模块 |
-| 更多肥料类型 | 支持复合肥、缓释肥等 |
-| WRF 耦合 | 通过 IPhreeqc 接口与 WRF 气候输出耦合 |
-| 参数敏感性分析 | 自动化扫描参数空间 |
-
-## 九、主要参考文献
-
-- 熊毅, 李庆逵. 中国土壤. 科学出版社, 1987.
-- 龚子同. 中国土壤地理. 江苏科学技术出版社, 2004.
-- Brook G.A., Folkoff M.E., Box E.O. A world model of soil carbon dioxide. Earth Surface Processes and Landforms, 1983, 8(1): 79-88.
-- Davidson E.A., Trumbore S.E. Gas diffusivity and production of CO2 in deep soils of the eastern Amazon. Tellus B, 1995, 47(5): 550-565.
-- Plummer L.N., Wigley T.M.L., Parkhurst D.L. The kinetics of calcite dissolution in CO2-water systems. American Journal of Science, 1978, 278(2): 179-216.
-- Lindsay W.L. Chemical Equilibria in Soils. John Wiley & Sons, 1979.
-- Parton W.J. et al. Analysis of factors controlling soil organic matter levels in Great Plains grasslands. SSSAJ, 1987, 51(5): 1173-1179.
-- Tang D., Larssen T., Lange R.D. et al. Soil acidification and soil quality in China. European Journal of Soil Science, 2006, 57(1): 1-11.
-
-## 十、已知模型局限（v0.3.1）
+## 八、已知模型局限
 
 1. ~~**交换性 Al 缓冲库耗尽 → pH 突变**~~ ✅ **已解决（L2，v0.2.6）**：原单层模型 + 排水使交换性 Al 淋洗耗尽（第 8 年），pH 突升至 ~10。**根因是矿物相被冻结**（`_parse_official_output` 占位实现丢弃矿物演化）——现已实现**矿物演化回填**（`-equilibrium_phases` 读取矿物摩尔量），gibbsite 溶解回补交换 Al。验证：单层 12 年 AlX3 稳定、pH 平缓至 6.46（无突升）；4 层 8 年各层 Al 保留、pH 梯度稳定。
 2. **Al(OH)₄⁻ 两性溶解**：pH 升高后总 Al 浓度反而上升——Al 以铝酸根（Al(OH)₄⁻）形态碱性溶解，Al³⁺ 实际剧降（pH 10 时 ~10⁻²³）。
@@ -340,3 +308,76 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 > - **SURFACE 表面络合**：`enable_surface` 配置（默认 false），Hfo_s/Hfo_w 铁氧化物表面，P/Zn 吸附显著增强（红壤磷固定）；**Al 表面络合未实现**（研究空白，独立工单）。
 >
 > 详见 `docs/analysis/OPTIMIZATION_PLAN.md` 的 WF1-WF5 记录。
+
+---
+
+## 九、后续扩展建议
+
+| 扩展方向 | 说明 |
+|----------|------|
+| 多土层模式 | ✅ 已实现（v0.2.5 多分层，n_layers≥4） |
+| 根系吸水 / 蒸散发 | 🔜 规划（v0.5.3 Feddes ET + Oudin PET） |
+| 有机质分解 | 🔜 规划（v0.5.3 OM 矿化产 CO₂ 模块） |
+| 更多肥料类型 | 支持复合肥、缓释肥等 |
+| WRF 耦合 | 通过 IPhreeqc 接口与 WRF 气候输出耦合 |
+| 参数敏感性分析 | 自动化扫描参数空间 |
+
+---
+
+## 十、主要参考文献
+
+- 熊毅, 李庆逵. 中国土壤. 科学出版社, 1987.
+- 龚子同. 中国土壤地理. 江苏科学技术出版社, 2004.
+- Brook G.A., Folkoff M.E., Box E.O. A world model of soil carbon dioxide. Earth Surface Processes and Landforms, 1983, 8(1): 79-88.
+- Davidson E.A., Trumbore S.E. Gas diffusivity and production of CO2 in deep soils of the eastern Amazon. Tellus B, 1995, 47(5): 550-565.
+- Plummer L.N., Wigley T.M.L., Parkhurst D.L. The kinetics of calcite dissolution in CO2-water systems. American Journal of Science, 1978, 278(2): 179-216.
+- Lindsay W.L. Chemical Equilibria in Soils. John Wiley & Sons, 1979.
+- Parton W.J. et al. Analysis of factors controlling soil organic matter levels in Great Plains grasslands. SSSAJ, 1987, 51(5): 1173-1179.
+- Tang D., Larssen T., Lange R.D. et al. Soil acidification and soil quality in China. European Journal of Soil Science, 2006, 57(1): 1-11.
+
+---
+
+## 十一、版本更新记录
+
+### v0.5.2（2026-08-18）
+
+> - **Green-Ampt 物理入渗**：废弃 Horton + `surface_coeff` 人为系数；累积入渗能力由隐式方程
+>   F − ψ_f·Δθ·ln(1+F/(ψ_f·Δθ)) = K_s·t（牛顿迭代）解出；降雨强度 > 入渗能力 → 超渗产流**自然产生**
+> - **Ksat 字段拆分**：`ksat`（层间排水上限，默认 [12,1.9,0.48,0.05] cm/day，仅 LayerCascade 用）
+>   + `ksat_surface`（Green-Ampt 基质导水率，默认 7.2 cm/day）；华南暴雨 >15mm/h 自然触发超渗产流
+> - **大孔隙优先流**：`simulation.bypass_fraction=0.2`（config 开放）——超基质 Ks 积水 20% 绕过表层
+>   直通 **L2**，**携带原始降水化学**（红壤旱地"暴雨直通深层"物理观测）
+> - **硝化产酸限 L1**：`run_monthly_multi_layer` 仅 L1 执行 `advance_nitrification`（表层酸化源强化）
+> - **breaking change**：`simulation.surface_infiltration_coeff` 已废弃（config 中出现报错）；
+>   `tools/sensitivity_infiltration.py` 扫描参数改为 `ksat_surface`
+> - **运行验证**（2 年 4 层 natural, seed=42）：入渗 66%（vs v0.5.1 的 75%）、径流 34%（自然超渗产流）、
+>   优先流占径流 20%、质量守恒；**初始表层 pH 4.63（回落至红壤区间方向）**，深层保持酸性（3.2~5.3）
+> - **测试**：168 → **178 passed**（Green-Ampt/Ksat 拆分/优先流/硝化限 L1/废弃字段报错）
+
+### v0.5.1（2026-08-17）
+
+> - **表层入渗系数 config 化**：新增 `simulation.surface_infiltration_coeff`（默认 0.75，0~1）替代 `hydrology.py` 硬编码；Horton 入渗 = min(场降水×系数, 能力)
+> - **敏感性实验**：`tools/sensitivity_infiltration.py` 表层入渗率 5%~95%（5% 间隔）对 4 层 15 年 natural 最终 pH 的扫描（seed=42，CSV 断点续跑，散点图 RdYlBu_r）；**发现层间"级联穿透阈值"**（L2~0.25 / L3~0.45 / L4~0.65 入渗系数突跃中和强酸）——详见 `docs/analysis/SENSITIVITY_INFILTRATION.md`
+> - **测试**：164 → **168 passed**（+4：config 解析/校验 + surface_coeff 生效）
+
+### v0.5.0（2026-08-17）
+
+> - **逐层水文盒子模型**：Horton 入渗（随机日降雨 seed 可配、初渗/稳渗率、表层入渗系数 0.75）+ Ksat 层间渗漏 + 孔隙度持水 + 跨月滞水（`stored_water`）；`n_layers=4` **自动启用内置物理剖面默认**（厚度[20,20,20,40]cm/粘粒/孔隙度/Ksat/初渗/稳渗）；孔隙度反推容重 ρ=2.65(1−φ)
+> - **配置**：`layer_overrides` 扩展 5 水文字段 + `hydrology_seed`（默认 42，可复现）；`n_layers=1` 完全回退现状（回归护栏）
+> - **输出**：新增逐层水文列（infiltration/drainage/stored_water/runoff）
+> - **基线漂移（如实记录）**：水文模式入渗量 ~14 倍于旧（年 ~1349mm vs 95mm）→ 表层 pH 升高、AlX₃ 垂直重分配（底层累积）——详见 `docs/analysis/HYDROLOGY_BOX.md`，参数（0.75 系数/入渗率/降雨假设）需结合研究区标定
+> - **测试**：145 → **164 passed**（新增 19 项：水文配置/随机降雨/Horton/级联/引擎集成/main 编排）
+
+### v0.4.0（2026-08-17）
+
+> - **L6 逐层参数覆盖（layer_overrides）**：新增 `simulation.layer_overrides`（config 内联密集列表，长度必须 = n_layers，逐层覆盖 ph/有机质/CEC/容重/交换性离子×6/pCO2/矿物质量分数）+ `simulation.layer_depths`（每层厚度 cm，派生每层 `effective_depth`，修正输出列后缀与物理厚度错位）；部分覆盖回退默认、`n_layers=1` 忽略+警告、矿物增量替换不归一化、每层独立预平衡、月度 pCO₂ 按层注入
+> - **诊断实验**：`tools/plot_L6_layer_overrides.py` 真实剖面 vs 等参基线（fertilizer 长期）对比图，逐层标注 good/bad influence（绿=缓冲增强/耗尽推迟，红=更早耗尽/酸化加剧）；实测记录见 `docs/analysis/L6_LAYER_OVERRIDES.md`
+> - **版本纪律**：L6 为 L9 唯一未被证伪的结构性方向（多层 + 真实剖面约束），完整证伪链见 `docs/reports/V0_3_0_FINAL_REPORT.md` 第六节
+
+### v0.3.1（2026-08-17）
+
+> - **error.inp 路径修正**：PHREEQC 失败复现文件从根目录移入 `output/error.inp`（写入前自动创建目录，相关测试同步适配）
+> - **文件归置**：8 个辅助绘图脚本移入 `tools/`（去掉 `_` 前缀）；删除根目录 30+ 运行日志；`output/` 3 个历史 PNG 取消跟踪（修复 .gitignore 语义）
+> - **文档同步**：`docs/` 按类型分类（`reports/` / `analysis/` / `guides/`）；新增工单汇总表 `.scratch/soil-scm-overview/TICKETS_SUMMARY.md`；新增用户指南 `USERGUIDE.md`；README/USERGUIDE 全量引用同步（死链清零）
+
+基于 PHREEQC 地球化学引擎的土壤单点物理化学数值模式，用于模拟长期（数十年）施肥、酸化、淋溶与改良条件下的土壤化学演变（pH、盐基饱和度、交换性阳离子等）。
