@@ -8,7 +8,9 @@ build/
 dist/
 
 # 运行产物
-output/
+output/*
+!output/sensitivity_pH_30yr.csv
+!output/sensitivity_pH_30yr.png
 *.log
 error.inp
 error.log
