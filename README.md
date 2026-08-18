@@ -357,6 +357,7 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 ### v0.5.1（2026-08-17）
 
 > - **表层入渗系数 config 化**：新增 `simulation.surface_infiltration_coeff`（默认 0.75，0~1）替代 `hydrology.py` 硬编码；Horton 入渗 = min(场降水×系数, 能力)
+> - ⚠️ **v0.5.2 已废弃**：`simulation.surface_infiltration_coeff` 字段于 v0.5.2 移除（Green-Ampt 物理入渗替代 Horton + surface_coeff），残留配置将显式报错——见下方 v0.5.2 记录
 > - **敏感性实验**：`tools/sensitivity_infiltration.py` 表层入渗率 5%~95%（5% 间隔）对 4 层 15 年 natural 最终 pH 的扫描（seed=42，CSV 断点续跑，散点图 RdYlBu_r）；**发现层间"级联穿透阈值"**（L2~0.25 / L3~0.45 / L4~0.65 入渗系数突跃中和强酸）——详见 `docs/analysis/SENSITIVITY_INFILTRATION.md`
 > - **测试**：164 → **168 passed**（+4：config 解析/校验 + surface_coeff 生效）
 
