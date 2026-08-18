@@ -24,7 +24,7 @@ simulation:
   nitrification_k1: 1.0              # 尿素水解速率 (/月): 1.0=当月全水解 (urease 催化, 田间数天完成)
   nitrification_k2: 0.4              # 硝化速率 (/月): 每月 40% NH4+ → NO3- (酸性红壤硝化受抑, 保守量级)
   hydrology_seed: 42                 # v0.5.0: 随机降雨种子 (同 seed 可复现)
-  surface_infiltration_coeff: 0.75   # v0.5.1: 表层入渗上限系数 (0~1, Horton: 入渗=min(场降水×coeff, 能力))
+  bypass_fraction: 0.2               # v0.5.2: 大孔隙优先流比例 (0~1, 超基质 Ks 积水直通 L2, 携带原始降水化学)
 
   # ---- L6 (v0.4.0): 逐层参数覆盖 (真实剖面约束, 仅 n_layers>1 时生效) ----
   layer_depths: null                 # 每层厚度 (cm), 长度必须 = n_layers; null=等分兜底; 每层 effective_depth 由此派生
@@ -130,4 +130,4 @@ output:
   format: csv                    # 输出格式: csv / netcdf
   variables: [pH, base_saturation, CEC_occupied, exchangeable_Ca,
               exchangeable_Al, mineral_mass, solution_ions,
-              infiltration, drainage, stored_water, runoff]
+              infiltration, drainage, stored_water, runoff, bypass_drainage]

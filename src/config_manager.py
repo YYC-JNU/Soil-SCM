@@ -41,9 +41,10 @@ class LayerOverrideConfig:
     # v0.5.0 水文: 逐层土壤水文参数 (孔隙度覆盖时反推容重 ρ=2.65(1−φ))
     clay_pct: Optional[float] = None             # 粘粒含量 (%)
     porosity: Optional[float] = None             # 孔隙度 (0~1), 覆盖容重派生
-    ksat: Optional[float] = None                 # 饱和导水率 (cm/day)
-    infiltration_initial: Optional[float] = None  # 初渗率 f0 (mm/min)
-    infiltration_steady: Optional[float] = None   # 稳渗率 fc (mm/min)
+    ksat: Optional[float] = None                 # 层间排水上限 (cm/day, v0.5.2 起仅 LayerCascade 用)
+    ksat_surface: Optional[float] = None         # v0.5.2: 基质导水率 (cm/day, 仅 Green-Ampt 地表入渗)
+    infiltration_initial: Optional[float] = None  # 初渗率 f0 (mm/min, deprecated)
+    infiltration_steady: Optional[float] = None   # 稳渗率 fc (mm/min, deprecated)
 
 
 @dataclass
@@ -64,7 +65,7 @@ class SimulationConfig:
     nitrification_k1: float = NITRIFICATION_K1  # L4: 尿素水解速率 (/月), 1.0=当月全水解
     nitrification_k2: float = NITRIFICATION_K2  # L4: 硝化速率 (/月), NH4+→NO3- 比例
     hydrology_seed: int = 42                    # v0.5.0: 随机降雨生成种子 (可复现)
-    surface_infiltration_coeff: float = 0.75    # v0.5.1: 表层入渗上限系数 (0~1, Horton: 入渗=min(场降水×coeff, 能力))
+    bypass_fraction: float = 0.2                # v0.5.2: 大孔隙优先流比例 (0~1, 超基质 Ks 积水直通 L2)
 
 
 @dataclass
@@ -256,6 +257,7 @@ class ConfigManager:
                     clay_pct=item.get('clay_pct'),
                     porosity=item.get('porosity'),
                     ksat=item.get('ksat'),
+                    ksat_surface=item.get('ksat_surface'),
                     infiltration_initial=item.get('infiltration_initial'),
                     infiltration_steady=item.get('infiltration_steady')
                 ))
@@ -276,8 +278,15 @@ class ConfigManager:
                 nitrification_k1=s.get('nitrification_k1', NITRIFICATION_K1),
                 nitrification_k2=s.get('nitrification_k2', NITRIFICATION_K2),
                 hydrology_seed=s.get('hydrology_seed', 42),
-                surface_infiltration_coeff=s.get('surface_infiltration_coeff', 0.75)
+                bypass_fraction=s.get('bypass_fraction', 0.2)
             )
+            # v0.5.2: surface_infiltration_coeff 已废弃 (Green-Ampt 入渗替代
+            # Horton), 残留配置显式报错 (breaking change 明示, 不静默忽略)
+            if 'surface_infiltration_coeff' in s:
+                raise ValueError(
+                    "[simulation.surface_infiltration_coeff 参数存在问题: "
+                    "v0.5.2 已废弃该字段 (Green-Ampt 入渗替代 Horton), "
+                    "请移除并用 ksat_surface/bypass_fraction, 请确认后再输入]")
 
         # 解析 soil_data (v0.2.3: 支持 config 内联字段, -1=回退 CSV)
         if 'soil_data' in raw:
@@ -469,12 +478,12 @@ class ConfigManager:
                     f"['simulation.{name}' 参数存在问题: 速率 {k} 超出范围 (0~1), "
                     f"请确认后再输入]")
 
-        # ---- v0.5.1: 表层入渗系数校验 (0~1) ----
-        coeff = self.config.simulation.surface_infiltration_coeff
-        if not (0.0 < coeff <= 1.0):
+        # ---- v0.5.2: 大孔隙优先流比例校验 (0~1) ----
+        bypass = self.config.simulation.bypass_fraction
+        if not (0.0 <= bypass <= 1.0):
             raise ValueError(
-                f"['simulation.surface_infiltration_coeff' 参数存在问题: "
-                f"系数 {coeff} 超出范围 (0~1], 请确认后再输入]")
+                f"['simulation.bypass_fraction' 参数存在问题: "
+                f"比例 {bypass} 超出范围 (0~1), 请确认后再输入]")
 
         # 创建输出目录
         os.makedirs(self.config.output.directory, exist_ok=True)
@@ -551,7 +560,11 @@ class ConfigManager:
                     f"超出范围 (0,1), 请确认后再输入]")
             if lo.ksat is not None and lo.ksat <= 0:
                 raise ValueError(
-                    f"[layer_overrides[{i}]/ksat 参数存在问题: 饱和导水率必须大于 0, "
+                    f"[layer_overrides[{i}]/ksat 参数存在问题: 层间排水上限必须大于 0, "
+                    f"请确认后再输入]")
+            if lo.ksat_surface is not None and lo.ksat_surface <= 0:
+                raise ValueError(
+                    f"[layer_overrides[{i}]/ksat_surface 参数存在问题: 基质导水率必须大于 0, "
                     f"请确认后再输入]")
             if lo.clay_pct is not None and not (0.0 <= lo.clay_pct <= 100.0):
                 raise ValueError(

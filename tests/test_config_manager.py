@@ -451,6 +451,42 @@ def test_hydrology_ksat_nonpositive_raises(tmp_path):
     with pytest.raises(ValueError, match="ksat"):
         ConfigManager(str(p))
 
+def test_hydrology_ksat_surface_parse_and_validate(tmp_path):
+    """v0.5.2/T2: layer_overrides 解析 ksat_surface; ≤0 报错"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text(
+        "simulation: {n_years: 2, n_layers: 4, "
+        "layer_overrides: [{ksat: 12.0, ksat_surface: 7.2}, {}, {}, {}]}",
+        encoding="utf-8")
+    sim = ConfigManager(str(p)).config.simulation
+    assert sim.layer_overrides[0].ksat == 12.0
+    assert sim.layer_overrides[0].ksat_surface == 7.2
+    assert sim.layer_overrides[1].ksat_surface is None
+    p2 = tmp_path / "cfg2.yaml"
+    p2.write_text(
+        "simulation: {n_years: 2, n_layers: 2, "
+        "layer_overrides: [{ksat_surface: 0.0}, {}]}",
+        encoding="utf-8")
+    with pytest.raises(ValueError, match="ksat_surface"):
+        ConfigManager(str(p2))
+
+
+def test_bypass_fraction_default_and_parse(tmp_path):
+    """v0.5.2/T3: bypass_fraction 默认 0.2, 解析覆盖, 越界报错"""
+    cfg = ConfigManager("config/config.yaml")
+    assert cfg.config.simulation.bypass_fraction == 0.2
+    p = tmp_path / "cfg.yaml"
+    p.write_text("simulation: {n_years: 2, bypass_fraction: 0.35}",
+                 encoding="utf-8")
+    sim = ConfigManager(str(p)).config.simulation
+    assert sim.bypass_fraction == 0.35
+    p2 = tmp_path / "cfg2.yaml"
+    p2.write_text("simulation: {n_years: 2, bypass_fraction: 1.5}",
+                  encoding="utf-8")
+    with pytest.raises(ValueError, match="bypass"):
+        ConfigManager(str(p2))
+
+
 
 def test_hydrology_f0_lt_fc_raises(tmp_path):
     """初渗率 f0 < 稳渗率 fc → 报错 (物理不合理)"""
@@ -463,31 +499,12 @@ def test_hydrology_f0_lt_fc_raises(tmp_path):
         ConfigManager(str(p))
 
 
-# ==================== v0.5.1: 表层入渗系数 config 化 ====================
+# ==================== v0.5.1 → v0.5.2: 表层入渗系数废弃 ====================
 
-def test_surface_infiltration_coeff_default(cfg):
-    """默认表层入渗系数 = 0.75 (constants 单一来源)"""
-    assert cfg.config.simulation.surface_infiltration_coeff == 0.75
-
-
-def test_surface_infiltration_coeff_parse(tmp_path):
-    """YAML 覆盖表层入渗系数 → 解析生效"""
+def test_surface_infiltration_coeff_removed_raises(tmp_path):
+    """v0.5.2/T5: surface_infiltration_coeff 残留配置 → 显式报错 (breaking change)"""
     p = tmp_path / "cfg.yaml"
-    p.write_text("simulation:\n  n_years: 2\n  surface_infiltration_coeff: 0.5\n",
+    p.write_text("simulation: {n_years: 2, surface_infiltration_coeff: 0.75}",
                  encoding="utf-8")
-    sim = ConfigManager(str(p)).config.simulation
-    assert sim.surface_infiltration_coeff == 0.5
-
-
-def test_surface_infiltration_coeff_invalid(tmp_path):
-    """表层入渗系数 ≤ 0 或 > 1 → 报错"""
-    p = tmp_path / "cfg.yaml"
-    p.write_text("simulation:\n  n_years: 2\n  surface_infiltration_coeff: 0.0\n",
-                 encoding="utf-8")
-    with pytest.raises(ValueError, match="surface_infiltration"):
+    with pytest.raises(ValueError, match="surface_infiltration_coeff"):
         ConfigManager(str(p))
-    p2 = tmp_path / "cfg.yaml"
-    p2.write_text("simulation:\n  n_years: 2\n  surface_infiltration_coeff: 1.5\n",
-                  encoding="utf-8")
-    with pytest.raises(ValueError, match="surface_infiltration"):
-        ConfigManager(str(p2))

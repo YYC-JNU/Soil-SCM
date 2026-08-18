@@ -112,15 +112,25 @@ ALX3_SELECTIVITY_LOGK = 0.41   # 校准值 (默认=数据库值, 仅覆盖非默
 # (y1 m7 vs 平衡相 y3); AlX3 耗尽主因是单层排水淋失 (结构性), 非矿物化。
 # 完整证据链见 docs/reports/V0_3_0_FINAL_REPORT.md。AL_KINETIC_* 常量已删除。
 
+# ---- v0.5.2 Green-Ampt 表层入渗 (物理边界, 替代 Horton + surface_coeff) ----
+# 湿润锋吸力水头 ψ_f (mm): Rawls et al. (1983) 红壤 (粘土/粘壤土) 典型值
+# -10 ~ -20 cm (绝对值 100~200 mm), 取中值 150
+GREEN_AMPT_PSI_F_MM = 150.0
+# 基质导水率 (cm/day): 仅用于 Green-Ampt 地表入渗 (K_s), 专家方案 D3 定案
+# 华南红壤 L1 基质导水率 (暴雨 >15mm/h 自然触发超渗产流)
+DEFAULT_KSAT_SURFACE = 7.2
+# Green-Ampt 牛顿迭代收敛容差与最大迭代数
+GREEN_AMPT_NEWTON_TOL = 1e-9
+GREEN_AMPT_NEWTON_MAX_ITER = 50
+
+
 # ---- v0.5.0 水文: 4 层内置物理剖面默认 (n_layers=4 且未配置 layer_overrides 时自动启用) ----
 # 真实红壤剖面: 表层薄/粘粒少/孔隙度大/导水强, 底层厚/粘粒多/致密/导水弱
 # 孔隙度覆盖时反推容重 ρ=2.65(1−φ) (input_reader.apply_layer_override)
 DEFAULT_4LAYER_DEPTHS = [20.0, 20.0, 20.0, 40.0]    # 每层厚度 (cm)
 DEFAULT_4LAYER_CLAY_PCT = [25.0, 35.0, 45.0, 50.0]  # 粘粒含量 (%)
 DEFAULT_4LAYER_POROSITY = [0.55, 0.47, 0.45, 0.43]  # 孔隙度
-DEFAULT_4LAYER_KSAT = [76.8, 24.5, 7.2, 2.9]        # 饱和导水率 (cm/day)
+DEFAULT_4LAYER_KSAT = [12.0, 1.9, 0.48, 0.05]  # 层间排水上限 (cm/day, v0.5.2 起仅 LayerCascade 用)
 DEFAULT_4LAYER_F0 = [1.0, 0.4, 0.15, 0.04]          # 初渗率 f0 (mm/min)
 DEFAULT_4LAYER_FC = [0.4, 0.2, 0.08, 0.02]          # 稳渗率 fc (mm/min)
-# 表层入渗上限系数 (Horton: 入渗 = min(场降水×0.75, 能力); 降水耗尽则全入渗)
-DEFAULT_SURFACE_INFILTRATION_COEFF = 0.75
 

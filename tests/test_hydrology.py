@@ -1,16 +1,15 @@
-"""测试 v0.5.0 逐层土壤水文盒子模型 (src/hydrology.py):
+"""测试 v0.5.2 逐层土壤水文物理模型 (src/hydrology.py):
 
   - 随机日降雨生成 (seed 可复现, 场次 U(4,12), 指数分配, 月总量守恒)
-  - Horton 单场入渗 (k=5/h, 表层入渗系数 0.75, 降水耗尽全入渗)
-  - 层间级联 (50% 饱和度持水, Ksat 限制渗漏, stored_water 跨月累积, 超饱和溢出)
+  - Green-Ampt 单场入渗 (隐式方程牛顿迭代, 超渗产流自然产生, 饱和退化 Ks·t)
+  - 月度分配 (逐场 Green-Ampt, ksat_surface 基质导水率, theta_i 含水量)
+  - 层间级联 (50% 饱和度持水, ksat 排水上限, stored_water 跨月累积, 超饱和溢出)
 """
 
 import pytest
-import numpy as np
-from src.hydrology import (generate_rainfall, horton_event_infiltration,
+from src.hydrology import (generate_rainfall,
                            monthly_hydrology, LayerCascade,
-                           HORTON_DECAY_K_PER_H)
-from src.constants import DEFAULT_SURFACE_INFILTRATION_COEFF
+                           green_ampt_infiltration, solve_green_ampt_F)
 from src.input_reader import InputReader
 from src.config_manager import LayerOverrideConfig
 from src.phreeqc_engine import SoilState
@@ -18,11 +17,11 @@ from src.phreeqc_engine import SoilState
 _reader = InputReader("data/soil_survey.csv", "data/exchangeable_ions.csv")
 
 
-def _surface_profile(porosity=0.55, depth=20.0, ksat=76.8, f0=1.0, fc=0.4):
+def _surface_profile(porosity=0.55, depth=20.0, ksat=76.8, f0=1.0, fc=0.4,
+                     ksat_surface=7.2):
     base = _reader.build_soil_profile()
-    lo = LayerOverrideConfig(porosity=porosity, ksat=ksat,
-                             infiltration_initial=f0,
-                             infiltration_steady=fc)
+    lo = LayerOverrideConfig(porosity=porosity, ksat=ksat, ksat_surface=ksat_surface,
+                             infiltration_initial=f0, infiltration_steady=fc)
     return _reader.apply_layer_override(base, lo, depth)
 
 
@@ -45,43 +44,8 @@ def test_rainfall_total_conserved_and_range():
         assert all(e > 0 for e in events)
 
 
-def test_horton_event_capacity_handcalc():
-    """Horton 单场入渗能力手算: f0=1.0/fc=0.4/k=5/h/T=2h → A≈55.2mm"""
-    # A = fc×T + (f0−fc)/k×(1−e^(−kT)), k/min=5/60, T=120min
-    k_min = HORTON_DECAY_K_PER_H / 60.0
-    A = (0.4 * 120 + (1.0 - 0.4) / k_min * (1 - np.exp(-k_min * 120)))
-    assert A == pytest.approx(55.2, abs=0.1)
-
-
-def test_horton_event_infiltration_cap_and_depletion():
-    """入渗 = min(场降水×0.75, Horton 能力); 降水耗尽则全入渗"""
-    surf = _surface_profile()
-    # 大降水 (200mm): 受 Horton 能力限制 (≈55.2mm)
-    inf = horton_event_infiltration(200.0, surf.infiltration_initial,
-                                    surf.infiltration_steady)
-    assert inf == pytest.approx(55.2, abs=0.5)
-    # 小降水 (10mm): 10×0.75=7.5 < 55.2 → 全入渗 (降水耗尽)
-    inf2 = horton_event_infiltration(10.0, surf.infiltration_initial,
-                                     surf.infiltration_steady)
-    assert inf2 == pytest.approx(10.0 * DEFAULT_SURFACE_INFILTRATION_COEFF)
-
-
-def test_horton_surface_coeff_parameter():
-    """v0.5.1: surface_coeff 参数控制入渗上限 (config 驱动)"""
-    surf = _surface_profile()
-    # 50×0.9=45 < 能力55.2 → 45; 50×0.2=10 < 55.2 → 10
-    inf_high = horton_event_infiltration(50.0, surf.infiltration_initial,
-                                         surf.infiltration_steady,
-                                         surface_coeff=0.9)
-    inf_low = horton_event_infiltration(50.0, surf.infiltration_initial,
-                                        surf.infiltration_steady,
-                                        surface_coeff=0.2)
-    assert inf_high == pytest.approx(45.0)
-    assert inf_low == pytest.approx(10.0)
-
-
 def test_monthly_hydrology_conserves_water():
-    """月度入渗+径流 = 月降水"""
+    """月度入渗+径流 = 月降水 (Green-Ampt 守恒)"""
     surf = _surface_profile()
     inf, runoff, events = monthly_hydrology(158.0, 0, 0, surf, seed=42)
     assert inf + runoff == pytest.approx(158.0)
@@ -130,3 +94,60 @@ def test_cascade_stored_water_carries_to_next_month():
     drains, _, _ = cascade.run(2.0e5, [state])
     assert drains[0] == pytest.approx(2.0e5)
     assert state.stored_water == pytest.approx(2.5e5)
+
+
+# ==================== v0.5.2 Green-Ampt 入渗 (S1 seam) ====================
+
+def test_green_ampt_solve_F_handcalc():
+    """牛顿迭代解隐式方程手算: Ks=3mm/h, ψ_f·Δθ=41.25mm, t=2h → F≈26.4mm
+
+    F - 41.25·ln(1+F/41.25) = 6 → F ≈ 26.41 (独立手算, 非代码自证)
+    """
+    F = solve_green_ampt_F(Ks_mm_h=3.0, psi_f_dtheta_mm=41.25, t_h=2.0)
+    assert F == pytest.approx(26.41, abs=0.1)
+
+
+def test_green_ampt_infiltration_full_and_runoff():
+    """小雨 (2.5mm/h < Ks=3mm/h) 全入渗; 暴雨 (20mm/h > Ks) 超渗产流, 守恒"""
+    # 小雨 5mm/2h: F(2h)≈26.4 > 5 → 全入渗
+    inf_low, runoff_low = green_ampt_infiltration(
+        5.0, Ks_cm_day=7.2, psi_f_mm=150.0, theta_s=0.55, theta_i=0.275)
+    assert inf_low == pytest.approx(5.0)
+    assert runoff_low == pytest.approx(0.0)
+    # 暴雨 40mm/2h: 入渗≈26.4, 径流=13.6 (自然超渗产流)
+    inf_high, runoff_high = green_ampt_infiltration(
+        40.0, Ks_cm_day=7.2, psi_f_mm=150.0, theta_s=0.55, theta_i=0.275)
+    assert inf_high == pytest.approx(26.41, abs=0.2)
+    assert inf_high + runoff_high == pytest.approx(40.0)
+    assert runoff_high > 0.0
+
+
+def test_green_ampt_saturated_degenerates_to_ks_t():
+    """饱和土壤 (Δθ→0) 入渗能力退化为 Ks·t = 6mm"""
+    inf, _ = green_ampt_infiltration(
+        40.0, Ks_cm_day=7.2, psi_f_mm=150.0, theta_s=0.55, theta_i=0.55)
+    assert inf == pytest.approx(6.0, abs=0.05)
+
+
+def test_monthly_hydrology_green_ampt_uses_ksat_surface():
+    """v0.5.2: monthly_hydrology 用 Green-Ampt (ksat_surface 基质导水率), 月守恒
+
+    基质导水率 3mm/h → 单场能力约 26.4mm, 大场次自然超渗产流 → 月径流 > 0
+    (对比 Horton 0.75×月降水几乎全入渗)。
+    """
+    surf = _surface_profile(ksat=12.0, ksat_surface=7.2)
+    inf, runoff, events = monthly_hydrology(158.0, 0, 0, surf, seed=42)
+    assert inf + runoff == pytest.approx(158.0)
+    assert inf <= 158.0
+    assert inf > 0
+    assert runoff > 0
+
+
+def test_monthly_hydrology_theta_i_from_stored_water():
+    """v0.5.2: theta_i 参数改变入渗能力 (湿土 Δθ 小 → 能力低, 径流多)"""
+    surf = _surface_profile(ksat=12.0, ksat_surface=7.2)
+    # 干土 θ_i=0.2 (Δθ=0.35) vs 湿土 θ_i=0.5 (Δθ=0.05)
+    inf_dry, r_dry, _ = monthly_hydrology(158.0, 0, 0, surf, seed=42, theta_i=0.20)
+    inf_wet, r_wet, _ = monthly_hydrology(158.0, 0, 0, surf, seed=42, theta_i=0.50)
+    assert inf_dry > inf_wet
+    assert r_dry < r_wet

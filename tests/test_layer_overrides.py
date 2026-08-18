@@ -185,6 +185,145 @@ def test_build_initial_layer_states_n4_auto_hydrology_defaults(profile, soil_inf
     assert profiles[3].clay_pct == DEFAULT_4LAYER_CLAY_PCT[3]
 
 
+# ==================== v0.5.2: Ksat 字段拆分 (S2/S3 seam) ====================
+
+def test_ksat_drainage_defaults_and_surface():
+    """v0.5.2/T2: 排水 Ksat 默认更新 + ksat_surface 默认 (Green-Ampt 基质导水率)"""
+    from src.constants import DEFAULT_4LAYER_KSAT, DEFAULT_KSAT_SURFACE
+    assert DEFAULT_4LAYER_KSAT == pytest.approx([12.0, 1.9, 0.48, 0.05])
+    assert DEFAULT_KSAT_SURFACE == 7.2
+
+
+def test_apply_layer_override_ksat_surface():
+    """v0.5.2/T2: apply_layer_override 应用 ksat (排水) + ksat_surface (入渗)"""
+    base = _reader().build_soil_profile()
+    lo = LayerOverrideConfig(ksat=12.0, ksat_surface=7.2)
+    prof = _reader().apply_layer_override(base, lo, depth=20.0)
+    assert prof.ksat == 12.0
+    assert prof.ksat_surface == 7.2
+
+
+def test_build_initial_layer_states_n4_injects_ksat_surface(profile, soil_info):
+    """v0.5.2/T2: 4 层内置默认注入 ksat_surface (Green-Ampt 地表入渗用)"""
+    from src.constants import DEFAULT_KSAT_SURFACE
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    cfg = SimulationConfig(n_layers=4)
+    s0, states, pco2s, profiles = main._build_initial_layer_states(
+        e, _reader(), profile, soil_info, 0.015, cfg)
+    for i in range(4):
+        assert profiles[i].ksat_surface == DEFAULT_KSAT_SURFACE
+
+
+# ==================== v0.5.2: 大孔隙优先流 bypass (S4/S5 seam) ====================
+
+def test_apply_hydrology_month_bypass_water(profile, soil_info):
+    """v0.5.2/T3: _apply_hydrology_month 返回 bypass_water_L (径流×bypass_fraction)"""
+    from src.config_manager import SimulationConfig as _SC
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    cfg = _SC(n_layers=4, bypass_fraction=0.2)
+    s0, states, _, profiles = main._build_initial_layer_states(
+        e, _reader(), profile, soil_info, 0.015, cfg)
+    hydrology, runoff_mm, runoff_extra = main._apply_hydrology_month(
+        states, profiles, FORCING, 0, 0, seed=42)
+    assert 'bypass_water_L' in hydrology
+    # 优先流 = 径流水量 × β
+    assert hydrology['bypass_water_L'] == pytest.approx(
+        runoff_mm * 10000.0 * 0.2)
+
+
+def test_multi_layer_bypass_injected_to_L2(profile, soil_info, monkeypatch):
+    """v0.5.2/T3: run_monthly_multi_layer 对 L2 注入 bypass_water_L, L1 无"""
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    states = [e.build_initial_state(profile, soil_info, 0.015) for _ in range(2)]
+    captured = []
+
+    def spy(state, forcing, action, soil_profile):
+        captured.append(forcing.get('bypass_water_L', None))
+        return orig(state, forcing, action, soil_profile)
+
+    orig = e.run_monthly_step
+    monkeypatch.setattr(e, "run_monthly_step", spy)
+    inflows = [1.0e5, 3.0e4]
+    drains = [3.0e4, 2.0e4]
+    e.run_monthly_multi_layer(
+        states, FORCING, ACTION, profile,
+        hydrology={'inflows': inflows, 'drains': drains,
+                   'bypass_water_L': 1.0e4})
+    assert captured == [None, 1.0e4]  # L1 无优先流, L2 注入
+
+
+def test_build_input_bypass_precip_chemistry(profile, soil_info):
+    """v0.5.2/T3: _build_phreeqc_input 对 bypass 水量追加 H2O + 降水化学"""
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    forcing = dict(FORCING)
+    forcing['inflow_water_L'] = 1000.0
+    forcing['bypass_water_L'] = 2000.0
+    inp = e._build_phreeqc_input(state, forcing, ACTION, profile)
+    assert "# 优先流" in inp  # bypass H2O 注释行
+    # bypass 2000L → 2000×55.5 mol H2O 追加
+    assert "1.110000e+05" in inp or "1.11000e+05" in inp
+
+
+# ==================== v0.5.2: 硝化产酸限 L1 (S4 seam) ====================
+
+def test_multi_layer_nitrification_L1_only(profile, soil_info, monkeypatch):
+    """v0.5.2/T4: 硝化产酸仅 L1 (表层酸化源强化); L2~L4 跳过氮过程"""
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    states = [e.build_initial_state(profile, soil_info, 0.015) for _ in range(2)]
+    captured = []
+
+    def spy(state, forcing, action, soil_profile):
+        captured.append(forcing.get('skip_nitrification', False))
+        return orig(state, forcing, action, soil_profile)
+
+    orig = e.run_monthly_step
+    monkeypatch.setattr(e, "run_monthly_step", spy)
+    e.run_monthly_multi_layer(states, FORCING, ACTION, profile)
+    assert captured == [False, True]  # L1 正常产酸, L2 跳过
+
+
+def test_run_official_step_skips_nitrification(profile, soil_info, monkeypatch):
+    """v0.5.2/T4: _run_official_step 在 skip_nitrification 时不推进氮库存/产酸"""
+    from src.phreeqc_engine import advance_nitrification
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    calls = []
+
+    def fake_advance(state, action, k1, k2):
+        calls.append(1)
+        return {'H+': 1.0}
+
+    monkeypatch.setattr("src.phreeqc_engine.advance_nitrification", fake_advance)
+    # 正常: 调用 advance_nitrification
+    e._run_official_step(state, dict(FORCING), ACTION, profile)
+    assert len(calls) == 1
+    # skip: 不调用
+    forcing_skip = dict(FORCING)
+    forcing_skip['skip_nitrification'] = True
+    e._run_official_step(state, forcing_skip, ACTION, profile)
+    assert len(calls) == 1  # 未再调用
+
+
+def test_hydrology_diagnostics_bypass_column(profile, soil_info):
+    """v0.5.2/T5: _extract_diagnostics_with_hydrology 对 L2 注入 bypass_drainage"""
+    from src.config_manager import SimulationConfig as _SC
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    cfg = _SC(n_layers=4, bypass_fraction=0.2)
+    s0, states, _, profiles = main._build_initial_layer_states(
+        e, _reader(), profile, soil_info, 0.015, cfg)
+    hydrology, runoff_mm, runoff_extra = main._apply_hydrology_month(
+        states, profiles, FORCING, 0, 0, seed=42, theta_i=0.275,
+        bypass_fraction=0.2)
+    # 构造与层数匹配的诊断对象 (用 None 占位, 函数仅访问 hydrology 字段)
+    diag_objs = [None] * 4
+    layer_diags = main._extract_diagnostics_with_hydrology(
+        states, hydrology, runoff_mm, runoff_extra, diag_objs,
+        ["bypass_drainage"])
+    assert layer_diags[1]["bypass_drainage"] == pytest.approx(
+        hydrology["bypass_water_L"])
+
+
 # ==================== v0.5.0/T4: 引擎水文集成 ====================
 
 def test_multi_layer_hydrology_inflow_and_drain(profile, soil_info, monkeypatch):

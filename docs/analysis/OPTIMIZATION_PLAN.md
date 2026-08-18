@@ -1,8 +1,10 @@
 # Soil-SCM 优化处理计划与执行日志
 
 > **创建时间**：2026-08-11
+> **更新日期**：2026-08-18
 > **状态**：进行中
 > **目标**：让 InitialConditionBuilder 生成的 PHREEQC 输入在 `phreeqc.dat` 下可收敛运行，使主程序走真实 PHREEQC 化学计算路径（而非降级简化模式）
+> **v0.6.0 目标（2026-08-18 更新）**：修复 v0.5.1 水文盒子的 4 个物理缺陷（surface_coeff 非物理补丁 / 水桶模型 / 缺 ET / 月度平滑抹杀），按 **v0.5.2 → v0.5.3 → v0.6.0** 三阶段推进水文物理化重构——Green-Ampt / VGM / Feddes ET / 化学子步长（已定案决策见 §7）
 
 ---
 
@@ -353,3 +355,82 @@
 - 与 ROADMAP 历史（0.41→5.0 无效）一致 → **结构性局限确认**（单层排水 + 盐基置换），建议多层 + 文档记录
 
 **验证**：pytest **113 passed**；支柱①首平衡 pH 4.92；支柱②交换离子锚定 <10%；支柱③证伪链完整记录。
+
+---
+
+## 七、v0.5.1 结构性缺陷审查与 v0.6.0 物理化重构规划（2026-08-18）
+
+> **依据**：《v0.5.1的结构性缺点与物理漏洞.txt》《v0.6.0 优化开发方案.txt》《v0.6.0优化开发具体步骤.txt》《v0.5.3水分平衡闭合.txt》《VGM参数化方案.txt》
+> **方法**：源码逐行比对 + `/grill-me` 9 轮决策拷问（2026-08-18）
+> **结论**：4 项物理缺陷全部确认存在（证据 §7.1）；重构方案按三阶段定案（§7.2）；9 项技术决策已锁定（§7.3）
+
+### 7.1 物理缺陷比对结论（源码证据）
+
+| # | 缺陷 | 代码证据 | 物理影响 | 状态 |
+|---|------|----------|----------|------|
+| 1 | Horton 非物理补丁 `surface_coeff` | `src/hydrology.py:73` `available = precip_mm * surface_coeff`（默认 0.75） | 即使入渗能力未触顶也人为强制 25% 降水成径流，破坏质量守恒；表层 pH ~6.9 漂移的直接推手 | ✅ 确认，v0.5.2 解决 |
+| 2 | 水桶模型替代达西定律 | `src/hydrology.py:139-143` `space=0.5×sat` + `drain=min(drainable, ksat_cap)` | 初始含水量卡死 50% 饱和度；无基质势/水势梯度，水分只能向下漏、无毛细上升；无法对接 WRF 水势 | ✅ 确认，v0.5.3 解决 |
+| 3 | 缺失 ET 与水分平衡闭合 | `LayerCascade.run()`（`hydrology.py:121-151`）仅入渗输入 + 排水/溢出输出，无任何 Sink 项 | 华南 40%~60% 降水未返回大气；土壤长期偏湿 → 高估矿物风化/离子交换速率；陆气耦合能量平衡崩溃 | ✅ 确认，v0.5.3 解决 |
+| 4 | 月度平滑抹杀脉冲淋溶 | `main.py:158-163` 场次入渗 `sum()` 后 `run_monthly_multi_layer` 每层每月仅 1 次 PHREEQC 平衡；`generate_rainfall` 的 `events` 只用于 Horton 入渗量 | 一场 50mm 暴雨 vs 10 场 5mm 小雨被等价处理；低估重金属/盐基瞬态淋失峰值（First-Flush 抹平） | ✅ 确认，v0.6.0 解决 |
+
+> 附注：缺陷 4 的精确机制为"`monthly_hydrology` 将场次入渗累加后单次化学平衡"；v0.5.0 已实现**层间**逐层化学平衡，但时间维度仍为月度一次。
+
+### 7.2 三阶段重构计划（已定案）
+
+| 阶段 | 版本 | 内容 | 主要改动文件 | 验收标准 |
+|------|------|------|-------------|---------|
+| ① | **v0.5.2** | Green-Ampt 表层入渗（废弃 `surface_coeff`）+ `Ksat_surface`/`ksat_drainage` 字段拆分 + `bypass_fraction=0.2` 优先流注入 L2 + 硝化产酸限 L1 | `src/hydrology.py` / `src/config_manager.py` / `src/constants.py` / `src/soil_database.py` / `main.py` / `src/phreeqc_engine.py` | 质量守恒（入渗+径流=降水）；超渗产流自然出现；表层 pH 回落方向正确 |
+| ② | **v0.5.3** | VGM 水分特征（三级参数化 + `initial_psi_cm=-100` 田间持水量初始化）+ Feddes ET（Oudin PET）+ LayerCascade 下游接收能力重构 + OM 矿化产 CO₂ + `stored_water→θ/ψ` 状态迁移 | `src/hydrology.py` / `src/climate_forcing.py` / `src/constants.py` / `src/output_writer.py` / `src/initial_condition.py` | 干湿交替出现；水量平衡闭合（AET_mm 输出）；pH 回落 4.5~5.5（需实测标定） |
+| ③ | **v0.6.0** | 化学子步长拆分（逐场全量 PHREEQC + `run_event` 接口 + 月末聚合）+ First-Flush 捕获 + Hargreaves PET 升级 | `src/phreeqc_engine.py` / `src/scenario_controller.py` / `src/climate_forcing.py` / `main.py` / `src/output_writer.py` | 脉冲淋失峰值如实输出；长模拟分块断点续跑可行 |
+
+### 7.3 已敲定的技术决策（grill-me 2026-08-18）
+
+| # | 决策点 | 定案 |
+|---|--------|------|
+| D1 | 版本顺序 | 按改动量/风险从小到大：**v0.5.2 → v0.5.3 → v0.6.0**（与方案文档原顺序相反，工程上更稳妥） |
+| D2 | 表层 pH 回落机制 | **三管齐下**：K_s 基质导水率（L1=7.2 cm/day，暴雨 >15mm/h 自然触发超渗产流）+ β 优先流 + 产酸源强化；**不承诺"去系数即回落"**（量级核算：L1 原 Ksat=32mm/h 下单场入渗能力远超典型场次降水，换 Green-Ampt 仍近全入渗） |
+| D3 | Ksat 语义 | 拆分双字段：`Ksat_surface=7.2 cm/day`（仅 Green-Ampt 地表入渗）+ `ksat_drainage=[12.0, 1.9, 0.48, 0.05] cm/day`（仅层间排水）；级联改"下游接收能力 min(上下层 ksat_drainage)"（木桶短板）；**ET 前置**于 `LayerCascade.run()` 最前端 |
+| D4 | 子步长计算成本 | **逐场全量 PHREEQC**（最精确，无解析近似）；接受 4~12 倍计算量；长模拟用 `run_monthly_step_with_timeout` 分块断点续跑 |
+| D5 | PET 数据源 | **Oudin (2005)** 为主（仅需月均温+纬度 φ）+ 固定气候态兜底；`pet_correction_factor` 月度修正（华南夏低冬高偏差）；v0.6.0 升 Hargreaves（补 T_max/T_min）；WRF 耦合后 Penman-Monteith 纯读取 |
+| D6 | 优先流 | **注入 L2（犁底层）**，**携带原始降水化学**（非 L1 平衡溶液、非纯水）；`bypass_fraction=0.2` config 开放；旱季 0.30~0.40 / 雨季 0.10~0.15 动态调整列后续小版本 |
+| D7 | 产酸源强化归属 | 硝化产酸限 L1 → **v0.5.2**（行为修正，改动小）；温度驱动 OM 矿化产 CO₂ 新模块 → **v0.5.3**（与 ψ/θ 联动） |
+| D8 | VGM 参数化 | **三级优先级**：①`layer_overrides` 显式配置（`vgm_theta_r`/`vgm_alpha`/`vgm_n`）②`clay_pct` 连续回归（θ_r=0.01+0.002×clay；α=0.04−0.0006×clay；n=1.5−0.008×clay，Saxton & Rawls 2006 + 红壤修正）③红壤兜底（0.08/0.015/1.25）；`l=0.5` 固定；**初始 θ 废弃 50% 饱和**，改 `initial_psi_cm=-100` 田间持水量正算（L1≈0.81θ_s / L4≈0.88θ_s），θ_s≡porosity |
+| D9 | 交付边界 | 本会话仅更新 `ROADMAP.md` + `OPTIMIZATION_PLAN.md`（spec/工单待后续 `/to-spec`+`/to-tickets` 拆分，续 43 起） |
+
+### 7.4 风险与注意事项
+
+- **Ksat 缩小 10 倍连锁**：`ksat_drainage` 缩小时层间排水变慢 → 中层滞水（物理真实：华南红壤雨季上层滞水），由 ET 前置 + 界面通量 min(上/下) 吸收；不能只压表层入渗不顾级联排水
+- **Oudin 偏差**：华南夏季低估 10~20%、冬季高估 5~10% → `pet_correction_factor` 月度修正 + 发布前 PET 敏感性扫描（600~1400 mm/yr）
+- **既有测试影响**：硝化限 L1 与 4 层 pH 剖面相关断言（168 项中约 4 层分层测试）需同步更新；`surface_coeff` 相关 4 项 config/测试删除或改 Green-Ampt 等价断言
+- **`n_layers=1` 护栏**：全程保持单层回退现状（回归护栏不破坏）；`sub_time_step_days` 在水文模式不适用
+- **优先流溶质守恒**：β 优先流注入 L2 时必须携带原始降水化学并计入质量平衡核算（Q7 平流守恒口径扩展）
+- **科学诚实**：pH 回落 4.5~5.5 为**目标方向**，需结合研究区实测（Ksat/降雨强度/PET）标定验证，不夸大；`error.inp` 落盘/`run_monthly_step_with_timeout` 等既有工程保障全程保留
+
+### 7.5 v0.5.2 落地执行日志（2026-08-18，工单 44~48）
+
+**实施**：`/implement` + `/tdd`（红→绿循环）+ 运行验证 + 文档同步，对照 spec 43。
+
+| 工单 | 内容 | 落地 |
+|------|------|------|
+| 44 | Green-Ampt 入渗模块 | `src/hydrology.py`：`solve_green_ampt_F`（牛顿迭代）+ `green_ampt_infiltration`（隐式方程，K_s=ksat_surface，ψ_f=150mm，θ_i 可配）；`monthly_hydrology` 逐场 Green-Ampt；删除 `horton_event_infiltration`/`HORTON_DECAY_K_PER_H`；`main._apply_hydrology_month` 去 surface_coeff |
+| 45 | Ksat 字段拆分 | `constants.DEFAULT_4LAYER_KSAT=[12,1.9,0.48,0.05]`（排水）+ `DEFAULT_KSAT_SURFACE=7.2`；`SoilProfile`/`LayerOverrideConfig` 新增 `ksat_surface`；config 解析/校验（>0）；`apply_layer_override`/main 内置注入同步 |
+| 46 | 优先流 bypass | `SimulationConfig.bypass_fraction=0.2`（0~1 校验）；`_apply_hydrology_month` 返回 `bypass_water_L`（径流×β）；`run_monthly_multi_layer` 对 L2 注入；`_build_phreeqc_input` 按 bypass 水量追加 H2O+降水化学 |
+| 47 | 硝化限 L1 | `run_monthly_multi_layer` 对 i>0 设 `skip_nitrification`；`_run_official_step` 跳过 `advance_nitrification`（L2~L4 不推进氮库存/产酸） |
+| 48 | 集成+发布 | `SimulationConfig.surface_infiltration_coeff` 移除 + 残留报错（breaking change）；config.yaml/config_example.yaml 同步；`tools/sensitivity_infiltration.py` 扫描变量改 `ksat_surface`；运行验证 + 文档 + 发布 |
+
+**运行验证（2 年 4 层 natural, seed=42）**：
+
+| 指标 | v0.5.1 (Horton+0.75) | v0.5.2 (Green-Ampt) |
+|------|----------------------|---------------------|
+| 入渗占比 | 75% | **66.2%**（单场能力约 26.4mm，大场次自然产流） |
+| 径流占比 | 25%（人为） | **33.8%**（自然超渗产流） |
+| 优先流 | — | 径流的 **20%**（256mm/2yr，注入 L2） |
+| 质量守恒 | ✓ | ✓（入渗+径流=降水 3786mm） |
+| 初始表层 pH | ~6.9 高位 | **4.63**（回落至红壤区间方向） |
+| 深层 pH（末月） | — | L2 5.28 / L3 4.43 / L4 3.23（保持酸性） |
+
+**测试**：168 → **178 passed**（Green-Ampt 4 + Ksat 拆分 4 + 优先流 4 + 硝化限 L1 2 + 废弃字段报错 1 − Horton 旧 5 调整）。
+
+**科学诚实记录**：
+- 表层 pH 末月仍升至 6.9（碳酸缓冲主导）——**符合 spec 43 声明**：v0.5.2 仅验收"入渗/径流物理方向正确 + 质量守恒"；pH 完全回落依赖 v0.5.3 的 Ks 重标定 + Feddes ET + OM 矿化产 CO₂ 联合作用。
+- `surface_infiltration_coeff` 为 breaking change：config 残留显式报错，`tools/sensitivity_infiltration.py` 已改扫 `ksat_surface`（1~15 cm/day）。

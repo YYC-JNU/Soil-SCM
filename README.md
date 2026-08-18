@@ -1,6 +1,20 @@
 # Soil-SCM: 土壤物理化学数值模式
 
-> **版本：v0.5.1**（2026-08-17，表层入渗系数 config 化 + 敏感性实验）
+> **版本：v0.5.2**（2026-08-18，Green-Ampt 物理入渗 + Ksat 字段拆分 + 大孔隙优先流 + 硝化限 L1）
+
+> **v0.5.2 更新说明**（2026-08-18）：
+> - **Green-Ampt 物理入渗**：废弃 Horton + `surface_coeff` 人为系数；累积入渗能力由隐式方程
+>   F − ψ_f·Δθ·ln(1+F/(ψ_f·Δθ)) = K_s·t（牛顿迭代）解出；降雨强度 > 入渗能力 → 超渗产流**自然产生**
+> - **Ksat 字段拆分**：`ksat`（层间排水上限，默认 [12,1.9,0.48,0.05] cm/day，仅 LayerCascade 用）
+>   + `ksat_surface`（Green-Ampt 基质导水率，默认 7.2 cm/day）；华南暴雨 >15mm/h 自然触发超渗产流
+> - **大孔隙优先流**：`simulation.bypass_fraction=0.2`（config 开放）——超基质 Ks 积水 20% 绕过表层
+>   直通 **L2**，**携带原始降水化学**（红壤旱地"暴雨直通深层"物理观测）
+> - **硝化产酸限 L1**：`run_monthly_multi_layer` 仅 L1 执行 `advance_nitrification`（表层酸化源强化）
+> - **breaking change**：`simulation.surface_infiltration_coeff` 已废弃（config 中出现报错）；
+>   `tools/sensitivity_infiltration.py` 扫描参数改为 `ksat_surface`
+> - **运行验证**（2 年 4 层 natural, seed=42）：入渗 66%（vs v0.5.1 的 75%）、径流 34%（自然超渗产流）、
+>   优先流占径流 20%、质量守恒；**初始表层 pH 4.63（回落至红壤区间方向）**，深层保持酸性（3.2~5.3）
+> - **测试**：168 → **178 passed**（Green-Ampt/Ksat 拆分/优先流/硝化限 L1/废弃字段报错）
 
 > **v0.5.1 更新说明**（2026-08-17）：
 > - **表层入渗系数 config 化**：新增 `simulation.surface_infiltration_coeff`（默认 0.75，0~1）替代 `hydrology.py` 硬编码；Horton 入渗 = min(场降水×系数, 能力)

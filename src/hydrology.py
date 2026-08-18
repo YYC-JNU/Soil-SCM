@@ -1,32 +1,32 @@
 """
 模块: hydrology.py
-功能: 逐层土壤水文盒子模型 (v0.5.0)
+功能: 逐层土壤水文物理模型 (v0.5.2)
 
 将模型从"全局入渗系数"升级为物理水文过程:
   1. 随机日降雨生成: 每月场次 U(4,12), 每场降水指数分布拆分 (月总量守恒),
      单场历时 2h, 种子可复现 (默认 42, config 可配)
-  2. Horton 入渗: 单场入渗能力 A = fc×T + (f0−fc)/k·(1−e^(−kT)) (k=5/h),
-     入渗 = min(场降水×表层入渗系数 0.75, A); 降水耗尽则全入渗
-  3. 层间级联: 每层持水 (50%→100% 饱和增量), Ksat 限制渗漏,
+  2. Green-Ampt 入渗 (v0.5.2, 替代 Horton + surface_coeff):
+     累积入渗能力 F 由隐式方程 F − ψ_f·Δθ·ln(1+F/(ψ_f·Δθ)) = K_s·t 解出,
+     降雨强度 > 入渗能力 → 超渗产流自然产生; K_s 用基质导水率 ksat_surface
+  3. 层间级联: 每层持水 (50%→100% 饱和增量), ksat 层间排水上限,
      stored_water 跨月累积, 超饱和溢出计入径流
 
-参考: Horton (1940) 入渗曲线; 经典土壤水文盒子近似。
+参考: Green & Ampt (1911); Rawls et al. (1983); Horton (1940, 已废弃)。
 """
 
 import numpy as np
 from src.logging_config import get_logger
-from src.constants import DEFAULT_SURFACE_INFILTRATION_COEFF
+from src.constants import (GREEN_AMPT_PSI_F_MM, GREEN_AMPT_NEWTON_TOL,
+                           GREEN_AMPT_NEWTON_MAX_ITER)
 
 logger = get_logger("hydrology")
 
 # ---- 水文默认常量 (Q19 收敛) ----
-HORTON_DECAY_K_PER_H = 5.0          # Horton 衰减系数 (/h)
 EVENT_HOURS = 2.0                   # 单场降雨历时 (h)
 N_EVENTS_MIN = 4                    # 每月最少场次
 N_EVENTS_MAX = 12                   # 每月最多场次
 PARTICLE_DENSITY = 2.65             # 土壤颗粒密度 (g/cm³), 孔隙度反推容重
 DEFAULT_SEED = 42                   # 随机降雨默认种子
-# 表层入渗上限系数默认来自 constants (v0.5.1 起 config 驱动: simulation.surface_infiltration_coeff)
 
 
 def generate_rainfall(monthly_precip_mm: float, year: int, month: int,
@@ -47,50 +47,83 @@ def generate_rainfall(monthly_precip_mm: float, year: int, month: int,
     return [float(e) for e in events]
 
 
-def horton_event_infiltration(precip_mm: float, f0_mm_min: float,
-                              fc_mm_min: float,
-                              k_per_h: float = HORTON_DECAY_K_PER_H,
-                              hours: float = EVENT_HOURS,
-                              surface_coeff: float = DEFAULT_SURFACE_INFILTRATION_COEFF) -> float:
-    """Horton 单场入渗量 (mm)
+def solve_green_ampt_F(Ks_mm_h: float, psi_f_dtheta_mm: float,
+                       t_h: float) -> float:
+    """牛顿迭代解 Green-Ampt 累积入渗隐式方程
 
-    A = fc×T + (f0−fc)/k·(1−e^(−kT))  (k: /h, T: h)
-    入渗 = min(场降水×surface_coeff, A); 场降水×coeff ≤ A → 全入渗 (降水耗尽)。
+    F - ψ_f·Δθ·ln(1 + F/(ψ_f·Δθ)) = K_s·t
+
+    参数:
+        Ks_mm_h: 饱和导水率 K_s (mm/h)
+        psi_f_dtheta_mm: ψ_f·Δθ (mm), 湿润锋吸力 × 含水量差
+        t_h: 历时 (h)
+    返回:
+        float: 累积入渗能力 F (mm)。饱和时 (Δθ→0) 退化为 F = K_s·t。
+    """
+    A = max(psi_f_dtheta_mm, 1e-6)      # 防除零; 饱和退化由 limit 保证
+    rhs = Ks_mm_h * t_h
+    F = rhs + 0.5 * A                    # 初始猜测: 无吸力项 + 吸力修正
+    for _ in range(GREEN_AMPT_NEWTON_MAX_ITER):
+        g = F - A * np.log1p(F / A) - rhs
+        gp = F / (A + F)                 # dg/dF = 1 - A/(A+F) = F/(A+F)
+        dF = g / gp
+        F -= dF
+        if abs(dF) < GREEN_AMPT_NEWTON_TOL:
+            break
+    return max(F, rhs)                   # 物理下界: 至少 K_s·t
+
+
+def green_ampt_infiltration(precip_mm: float, Ks_cm_day: float,
+                            psi_f_mm: float = GREEN_AMPT_PSI_F_MM,
+                            theta_s: float = 0.5, theta_i: float = 0.25,
+                            hours: float = EVENT_HOURS) -> tuple:
+    """Green-Ampt 单场入渗 (mm) → (infiltration_mm, runoff_mm)
+
+    物理: 降雨强度 i = precip/hours; 累积入渗能力 F(t) 由隐式方程解出;
+    入渗 = min(场降水, F); 超出部分自然成为地表径流 (Hortonian runoff)。
+    彻底移除 Horton 的 surface_coeff 人为系数 (v0.5.2, spec 43)。
 
     参数:
         precip_mm: 单场降水量 (mm)
-        f0_mm_min: 初渗率 (mm/min)
-        fc_mm_min: 稳渗率 (mm/min)
-        surface_coeff: 表层入渗上限系数 (v0.5.1 config 驱动, 默认 0.75)
+        Ks_cm_day: 基质导水率 K_s (cm/day, = ksat_surface)
+        psi_f_mm: 湿润锋吸力水头 (mm, Rawls 红壤默认 150)
+        theta_s: 饱和含水量 (≈ 孔隙度)
+        theta_i: 初始含水量
+        hours: 场次历时 (h)
     返回:
-        float: 单场入渗量 (mm)
+        (infiltration_mm, runoff_mm): 单场入渗/超渗径流
     """
-    k_min = k_per_h / 60.0
-    t_min = hours * 60.0
-    capacity = (fc_mm_min * t_min
-                + (f0_mm_min - fc_mm_min) / k_min
-                * (1.0 - np.exp(-k_min * t_min)))
-    available = precip_mm * surface_coeff
-    return min(available, capacity)
+    Ks_mm_h = Ks_cm_day * 10.0 / 24.0   # cm/day → mm/h
+    dtheta = max(0.0, theta_s - theta_i)
+    F = solve_green_ampt_F(Ks_mm_h, psi_f_mm * dtheta, hours)
+    infiltration = min(precip_mm, F)
+    return infiltration, precip_mm - infiltration
 
 
 def monthly_hydrology(monthly_precip_mm: float, year: int, month: int,
                       surface_profile, seed: int = DEFAULT_SEED,
-                      surface_coeff: float = DEFAULT_SURFACE_INFILTRATION_COEFF):
-    """月度入渗-径流分配 (表层 Horton)
+                      theta_i: float | None = None):
+    """月度入渗-径流分配 (表层 Green-Ampt, v0.5.2)
+
+    逐场 Green-Ampt 入渗: 降雨强度 > 入渗能力 → 超渗产流自然产生
+    (彻底移除 Horton 的 surface_coeff 人为系数)。
 
     参数:
-        surface_profile: 表层 SoilProfile (含 infiltration_initial/steady)
+        monthly_precip_mm: 月降水量 (mm)
+        year/month: 年/月 (0-indexed, 随机降雨种子派生)
+        surface_profile: 表层 SoilProfile (含 ksat_surface/porosity)
         seed: 随机降雨种子
-        surface_coeff: 表层入渗上限系数 (v0.5.1 config 驱动)
+        theta_i: 表层初始体积含水量 (None → 0.5×θ_s, 初始 50% 饱和)
     返回:
         (infiltration_mm, runoff_mm, events): 月入渗/月径流/场次列表
     """
     events = generate_rainfall(monthly_precip_mm, year, month, seed)
-    f0 = surface_profile.infiltration_initial
-    fc = surface_profile.infiltration_steady
-    infiltration = sum(horton_event_infiltration(
-        p, f0, fc, surface_coeff=surface_coeff) for p in events)
+    theta_s = surface_profile.porosity
+    if theta_i is None:
+        theta_i = 0.5 * theta_s
+    infiltration = sum(green_ampt_infiltration(
+        p, surface_profile.ksat_surface, theta_s=theta_s, theta_i=theta_i)[0]
+        for p in events)
     infiltration = min(infiltration, monthly_precip_mm)
     runoff = monthly_precip_mm - infiltration
     return infiltration, runoff, events
