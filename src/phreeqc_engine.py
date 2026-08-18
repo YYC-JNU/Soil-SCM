@@ -473,9 +473,16 @@ class PhreeqcEngine:
             # L6: 逐层 pCO₂ 注入 (缺省回退全局 forcing['pCO2'])
             if layer_pco2s is not None:
                 layer_forcing['pCO2'] = layer_pco2s[i]
+            # v0.5.2: 硝化产酸仅 L1 (表层酸化源强化); 深层跳过氮过程
+            if i > 0:
+                layer_forcing['skip_nitrification'] = True
             # v0.5.0: 水文模式各层注入水量 (替代 precip×infiltration)
             if hydrology:
                 layer_forcing['inflow_water_L'] = hydrology['inflows'][i]
+                # v0.5.2: 大孔隙优先流 — 绕过表层积水直通 L2 (犁底层),
+                # 携带原始降水化学 (在 _build_phreeqc_input 中按水量注入)
+                if i == 1 and hydrology.get('bypass_water_L', 0.0) > 0:
+                    layer_forcing['bypass_water_L'] = hydrology['bypass_water_L']
             if inflow_ions:
                 # 下层: 接收上层排水溶质 (Q2/Q7 平流守恒)
                 layer_forcing['inflow_ions'] = inflow_ions
@@ -509,9 +516,14 @@ class PhreeqcEngine:
         # L4: 推进氮形态库存 (尿素→NH4+→NO3-, 简化两步), 返回本月氮反应量
         # 独立函数 + 返回契约 → 将来可替换为 KINETICS 实现 (升级空间)
         # v0.4.0: 硝化速率由引擎配置 (config.simulation.nitrification_k1/k2)
-        n_reaction = advance_nitrification(
-            state, action,
-            k1=self.nitrification_k1, k2=self.nitrification_k2)
+        # v0.5.2: 硝化产酸仅 L1 (表层酸化源强化); 深层 (skip_nitrification)
+        # 跳过全部氮过程 (氮不随层间传递, 完整氮运移留待 v0.6.0 子步长)
+        if forcing.get('skip_nitrification'):
+            n_reaction = {}
+        else:
+            n_reaction = advance_nitrification(
+                state, action,
+                k1=self.nitrification_k1, k2=self.nitrification_k2)
         # 构建 PHREEQC 输入字符串 (含 SELECTED_OUTPUT 查询块)
         input_string = self._build_phreeqc_input(
             state, forcing, action, profile, n_reaction=n_reaction)
@@ -738,6 +750,20 @@ class PhreeqcEngine:
                     if mol > 0:
                         reaction_lines.append(
                             f"  {sp:<8} {mol:.6e}  # 降水{sp}")
+
+            # v0.5.2: 大孔隙优先流 — 绕过表层积水 (未与表层平衡) 携带原始
+            # 降水化学注入深层; H2O 独立追加, 降水化学按 precip_chem 有无
+            bypass_water_L = forcing.get('bypass_water_L', 0.0)
+            if bypass_water_L > 0:
+                bypass_mol = bypass_water_L * 55.5
+                reaction_lines.append(
+                    f"  H2O    {bypass_mol:.6e}  # 优先流")
+                if self.precip_chem is not None:
+                    b_amounts = self.precip_chem.reaction_amounts(bypass_water_L)
+                    for sp, mol in b_amounts.items():
+                        if mol > 0:
+                            reaction_lines.append(
+                                f"  {sp:<8} {mol:.6e}  # 优先流{sp}")
 
         # WF2/Q2+Q7: 层间平流输入 — 上层排水溶质 (mol) 注入本层
         # 由 run_monthly_multi_layer 计算上层 SELECTED_OUTPUT totals × 排水量

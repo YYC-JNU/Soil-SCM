@@ -35,7 +35,7 @@ from src.logging_config import setup_logging
 from src.constants import (DEFAULT_4LAYER_DEPTHS, DEFAULT_4LAYER_CLAY_PCT,
                            DEFAULT_4LAYER_POROSITY, DEFAULT_4LAYER_KSAT,
                            DEFAULT_4LAYER_F0, DEFAULT_4LAYER_FC,
-                           DEFAULT_SURFACE_INFILTRATION_COEFF)
+                           DEFAULT_KSAT_SURFACE)
 
 
 def _extract_diagnostics(soil_state, diag, variables):
@@ -122,6 +122,7 @@ def _build_initial_layer_states(engine, reader, soil_profile, soil_info,
                 clay_pct=DEFAULT_4LAYER_CLAY_PCT[i],
                 porosity=DEFAULT_4LAYER_POROSITY[i],
                 ksat=DEFAULT_4LAYER_KSAT[i],
+                ksat_surface=DEFAULT_KSAT_SURFACE,
                 infiltration_initial=DEFAULT_4LAYER_F0[i],
                 infiltration_steady=DEFAULT_4LAYER_FC[i])
             depth = DEFAULT_4LAYER_DEPTHS[i]
@@ -141,28 +142,38 @@ def _build_initial_layer_states(engine, reader, soil_profile, soil_info,
 
 
 def _apply_hydrology_month(soil_states, layer_profiles, forcing,
-                           year, month, seed=42,
-                           surface_coeff=DEFAULT_SURFACE_INFILTRATION_COEFF):
-    """v0.5.0: 月度水文 (随机降雨 + Horton 入渗 + 层间级联)
+                           year, month, seed=42, theta_i=None,
+                           bypass_fraction=0.2):
+    """v0.5.2: 月度水文 (随机降雨 + Green-Ampt 入渗 + 层间级联)
 
     就地更新各层 stored_water (跨月滞水); 返回引擎需要的各层入渗/排水量。
-    v0.5.1: surface_coeff 表层入渗上限系数 (config 驱动)。
+    v0.5.2: 入渗用 Green-Ampt (ksat_surface 基质导水率), 移除 surface_coeff;
+    大孔隙优先流 bypass_fraction (径流水 β 绕过表层直通 L2)。
+
+    参数:
+        theta_i: 表层初始体积含水量 (None → 0.5×θ_s; v0.5.2 由调用方传入,
+                 来自 L1 stored_water 换算的简化近似)
+        bypass_fraction: 大孔隙优先流比例 (0~1, 超基质 Ks 积水直通 L2)
 
     返回:
         (hydrology_dict, runoff_mm, runoff_extra_L)
-        - hydrology_dict: {'inflows': [L/ha 各层注入水量], 'drains': [L/ha 各层排水]}
+        - hydrology_dict: {'inflows': [L/ha 各层注入水量], 'drains': [L/ha 各层排水],
+                           'bypass_water_L': 优先流水量 (L/ha, 注入 L2)}
         - runoff_mm: 超渗径流 (mm, = 月降水 − 月入渗)
         - runoff_extra_L: 超饱和溢出 (L/ha, 积水/侧排)
     """
     from src.hydrology import monthly_hydrology, LayerCascade
     inf_mm, runoff_mm, _ = monthly_hydrology(
         forcing.get('precip', 0.0), year, month, layer_profiles[0], seed,
-        surface_coeff)
+        theta_i=theta_i)
     inf_L = inf_mm * 10000.0
     cascade = LayerCascade(layer_profiles)
     drains, runoff_extra, _ = cascade.run(inf_L, soil_states)
     inflows = [inf_L] + drains[:-1]  # 层1=入渗, 下层=上层排水
-    return {'inflows': inflows, 'drains': drains}, runoff_mm, runoff_extra
+    # v0.5.2: 大孔隙优先流 — 径流水中 β 绕过表层直通 L2 (携带原始降水化学)
+    bypass_water_L = runoff_mm * 10000.0 * bypass_fraction
+    return {'inflows': inflows, 'drains': drains,
+            'bypass_water_L': bypass_water_L}, runoff_mm, runoff_extra
 
 
 def _extract_diagnostics_with_hydrology(soil_states, hydrology, runoff_mm,
@@ -174,6 +185,7 @@ def _extract_diagnostics_with_hydrology(soil_states, hydrology, runoff_mm,
       - drainage:     该层排水量 (L/ha, Ksat 限制后)
       - stored_water: 该层跨月滞水 (L/ha)
       - runoff:       表层径流合计 (mm×10000 + 超饱和溢出, L/ha)
+      - bypass_drainage: v0.5.2 大孔隙优先流水量 (L/ha, 注入 L2, 可选诊断列)
     """
     layer_diags = [_extract_diagnostics(s, d, variables)
                    for s, d in zip(soil_states, diag_objs)]
@@ -185,6 +197,9 @@ def _extract_diagnostics_with_hydrology(soil_states, hydrology, runoff_mm,
         layer_diags[i]['drainage'] = hydrology['drains'][i]
         layer_diags[i]['stored_water'] = soil_states[i].stored_water
     layer_diags[0]['runoff'] = runoff_mm * 10000.0 + runoff_extra
+    # v0.5.2: 大孔隙优先流 (绕过表层直通 L2) 诊断列, 可选输出
+    if n > 1 and hydrology.get('bypass_water_L', 0.0) > 0:
+        layer_diags[1]['bypass_drainage'] = hydrology['bypass_water_L']
     return layer_diags
 
 
@@ -380,12 +395,16 @@ def run_simulation(config_path: str = "config/config.yaml"):
                     layer_profiles is not None
                     and getattr(layer_profiles[0], 'infiltration_initial', 0.0) > 0.0)
                 if hydrology_enabled:
-                    # 水文盒子模型: 月度一次 (随机降雨+Horton+级联), 替代
+                    # v0.5.2: 水文模型 (Green-Ampt 入渗 + 级联), 替代
                     # precip_infiltration; 子时间步不适用 (水文为月度盒子)
+                    # theta_i: L1 初始含水量近似 (v0.5.2 保留 50% 饱和简化;
+                    # v0.5.3 迁移 θ 状态后由 stored_water 精确换算)
+                    theta_s = layer_profiles[0].porosity
+                    theta_i = 0.5 * theta_s
                     hydrology, runoff_mm, runoff_extra = _apply_hydrology_month(
                         soil_states, layer_profiles, forcing, year, month,
-                        cfg.simulation.hydrology_seed,
-                        cfg.simulation.surface_infiltration_coeff)
+                        cfg.simulation.hydrology_seed, theta_i=theta_i,
+                        bypass_fraction=cfg.simulation.bypass_fraction)
                     soil_states, diags = engine.run_monthly_multi_layer(
                         soil_states, forcing, action, soil_profile,
                         layer_pco2s=layer_pco2s, hydrology=hydrology)
