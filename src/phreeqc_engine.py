@@ -28,7 +28,9 @@ from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
                            PRE_EQUIL_PH_GAIN, PRE_EQUIL_ION_GAIN,
                            ALX3_DEFAULT_LOGK, ALX3_SELECTIVITY_LOGK,
                            INITIAL_PSI_CM)
+from src.vgm import theta_to_water_L
 from src.logging_config import get_logger
+from src.scenario_controller import MonthlyAction
 
 logger = get_logger("phreeqc_engine")
 
@@ -270,6 +272,116 @@ class PhreeqcEngine:
         else:
             return self._run_simplified_step(state, monthly_forcing,
                                              action, soil_profile)
+
+    def run_event_step(self, state: SoilState, event, action,
+                       soil_profile, forcing: dict = None
+                       ) -> Tuple[SoilState, DiagnosticOutput]:
+        """执行单场降雨事件的化学步 (v0.6.0, Q1/Q3/Q5/Q6)
+
+        事件驱动化学核心: 每场事件一次全量 PHREEQC 平衡。
+
+        - 事件级 forcing: precip = event.precip_mm; inflow_water_L /
+          bypass_water_L / inflow_ions 由事件级水文编排注入
+          (层间溶质逐场传递, Q4)
+        - 体积-θ 耦合 (Q5): SOLUTION -water = θ_事件后×depth×1e5
+          (theta_to_water_L), 替换恒定 state.volume; 浓度按质量守恒换算
+          (C_new = C_old×V_old/V_new), 干燥→体积小→浓缩酸化自然产生
+        - 交换相/矿物相绝对摩尔量不变 (Q6): EXCHANGE/EQUILIBRIUM_PHASES mol
+          为绝对量, 仅溶液体积随 θ 重建, PHREEQC 自动重平衡浓度
+        - 水量效应全部由 -water 体现, REACTION 只注入化学物质
+          (inject_water=False)
+
+        参数:
+            state: 当前土壤状态 (事件级水文步已就地更新 state.theta)
+            event: RainEvent (precip_mm/duration_h/precip_chem)
+            action: 当月操作指令 (施肥/石灰)
+            soil_profile: 土壤剖面数据
+            forcing: 事件级补充 forcing dict (可选, 覆盖事件默认)
+
+        返回:
+            (新状态, 诊断输出)
+        """
+        eff = dict(forcing or {})
+        eff.setdefault('precip', event.precip_mm)
+        eff.setdefault('temp', 25.0)
+        eff.setdefault('pCO2', 0.015)
+
+        # 体积-θ 耦合 (Q5): 事件后溶液体积由 θ 决定, 浓度按绝对量守恒换算
+        water_target_L = theta_to_water_L(state.theta,
+                                          soil_profile.effective_depth)
+        self._rescale_solution_for_volume(state, water_target_L)
+
+        # 模式分派 (与 run_monthly_step 一致)
+        phreeqc_ready = (self.backend == 'official' and self.official is not None
+                         and not getattr(self, '_permanent_fallback', False))
+        use_phreeqc = phreeqc_ready
+        if self.mode == 'simplified':
+            use_phreeqc = False
+        elif self.mode == 'phreeqc' and not phreeqc_ready:
+            use_phreeqc = False
+
+        if use_phreeqc:
+            return self._run_official_step(state, eff, action, soil_profile,
+                                           solution_water_L=water_target_L,
+                                           inject_water=False)
+        return self._run_simplified_step(state, eff, action, soil_profile)
+
+    def apply_concentration_equilibrium(self, state: SoilState, theta: float,
+                                        soil_profile, forcing: dict,
+                                        action=None):
+        """月末浓缩平衡 (v0.6.0, Q7/Q12)
+
+        旱季无降水事件后: θ 下降 → 仅重设 SOLUTION -water = θ×depth×1e5
+        (无 REACTION/降水化学) 做一次浓缩平衡, 浓度按绝对量守恒换算
+        → 干燥浓缩酸化进入状态 (对治"月尾 θ 回充掩盖旱季干化"根因)。
+        θ 未下降 (月尾回充至 θ_FC) → 跳过, 返回原状态 (零额外计算)。
+
+        返回:
+            (new_state, diag) 或 (state, None) (跳过)
+        """
+        depth = soil_profile.effective_depth
+        water_target_L = theta_to_water_L(theta, depth)
+        if water_target_L >= state.volume - 1e-9:
+            return state, None
+
+        phreeqc_ready = (self.backend == 'official' and self.official is not None
+                         and not getattr(self, '_permanent_fallback', False))
+        if self.mode == 'simplified' or not phreeqc_ready:
+            return state, None   # 简化模式不建模浓缩效应
+
+        # 浓度按绝对量守恒换算 (浓缩), 然后仅重设 -water 平衡
+        self._rescale_solution_for_volume(state, water_target_L)
+        eff = dict(forcing)
+        eff['precip'] = 0.0
+        eff['inflow_water_L'] = None
+        eff['bypass_water_L'] = 0.0
+        eff['inflow_ions'] = None
+        eff['skip_nitrification'] = True
+        return self._run_official_step(state, eff, action or MonthlyAction(),
+                                       soil_profile,
+                                       solution_water_L=water_target_L,
+                                       inject_water=False)
+
+    def _rescale_solution_for_volume(self, state: SoilState,
+                                     new_water_L: float):
+        """体积-θ 耦合的浓度换算 (Q5/Q7 内部): 保持溶质绝对量守恒
+
+        溶液浓度 C (mol/L) × 体积 V (L) = 溶质绝对量 (mol)。-water 从 V_old
+        变到 V_new 时, 浓度调整为 C_new = C_old × V_old/V_new, 使总溶质不变
+        (干燥浓缩 / 湿润稀释的数学表达)。就地更新 state.solution/volume。
+        """
+        old_water_L = state.volume
+        if old_water_L <= 0 or new_water_L <= 0:
+            return
+        ratio = old_water_L / new_water_L
+        new_solution = {}
+        for k, v in state.solution.items():
+            if k in ('temp', 'pH', 'pe', 'units'):
+                new_solution[k] = v
+            else:
+                new_solution[k] = float(v) * ratio
+        state.solution = new_solution
+        state.volume = new_water_L
 
     def run_monthly_step_with_timeout(self, state: SoilState,
                                       forcing: dict, action,
@@ -522,8 +634,16 @@ class PhreeqcEngine:
 
         return new_states, diags
 
-    def _run_official_step(self, state, forcing, action, profile):
-        """使用官方 phreeqc (IPhreeqc 3.8.6) 引擎执行单月计算"""
+    def _run_official_step(self, state, forcing, action, profile,
+                           solution_water_L=None, inject_water=True):
+        """使用官方 phreeqc (IPhreeqc 3.8.6) 引擎执行计算步
+
+        参数:
+            solution_water_L (v0.6.0): 目标溶液体积 (L), 体积-θ 耦合用
+                (run_event_step 传 θ×depth×1e5); None=用 state.volume (月级现状)
+            inject_water (v0.6.0): 是否注入入渗水 H2O (体积耦合时 False,
+                水量已由 -water 体现, REACTION 只注入化学物质)
+        """
         # L4: 推进氮形态库存 (尿素→NH4+→NO3-, 简化两步), 返回本月氮反应量
         # 独立函数 + 返回契约 → 将来可替换为 KINETICS 实现 (升级空间)
         # v0.4.0: 硝化速率由引擎配置 (config.simulation.nitrification_k1/k2)
@@ -537,11 +657,13 @@ class PhreeqcEngine:
                 k1=self.nitrification_k1, k2=self.nitrification_k2)
         # 构建 PHREEQC 输入字符串 (含 SELECTED_OUTPUT 查询块)
         input_string = self._build_phreeqc_input(
-            state, forcing, action, profile, n_reaction=n_reaction)
+            state, forcing, action, profile, n_reaction=n_reaction,
+            solution_water_L=solution_water_L, inject_water=inject_water)
 
         try:
             self.official.RunString(input_string)
-            new_state, diag = self._parse_official_output(state)
+            new_state, diag = self._parse_official_output(
+                state, solution_water_L=solution_water_L)
             return new_state, diag
         except Exception as e:
             # Q18 修复: 记录完整诊断 (错误详情 + 输入字符串落盘可复现)
@@ -565,7 +687,7 @@ class PhreeqcEngine:
             self._permanent_fallback = True
             return self._run_simplified_step(state, forcing, action, profile)
 
-    def _parse_official_output(self, old_state):
+    def _parse_official_output(self, old_state, solution_water_L=None):
         """从官方 PHREEQC SELECTED_OUTPUT 提取平衡状态并回填 (Q1 核心)
 
         SELECTED_OUTPUT 列: 0=sim 1=state 2=soln 3=dist_x 4=time 5=step
@@ -589,7 +711,9 @@ class PhreeqcEngine:
         new_state = SoilState()
         # 排水模型: 降水入渗+平衡后, 多余水分排水, 溶液体积恢复初始值
         # (淋溶损失由浓度稀释体现: 下月用恢复体积×稀释后浓度)
-        new_state.volume = old_state.volume
+        # v0.6.0 (Q5): 体积-θ 耦合时 volume = 目标溶液体积 (θ×depth×1e5)
+        new_state.volume = (solution_water_L if solution_water_L is not None
+                            else old_state.volume)
         # v0.5.3 (Q1/Q7): θ 为跨月规范状态, 化学步必须保留 (水文状态连续)
         new_state.theta = old_state.theta
         new_state.ph = get('pH')
@@ -648,13 +772,18 @@ class PhreeqcEngine:
         return new_state, diag
 
     def _build_phreeqc_input(self, state, forcing, action, profile,
-                             n_reaction=None) -> str:
+                             n_reaction=None, solution_water_L=None,
+                             inject_water=True) -> str:
         """构建 PHREEQC 输入字符串
 
         参数:
             n_reaction (L4, v0.3.0): 本月氮反应量 {'NH4+','NO3-','H+'} (mol),
                 由 advance_nitrification 计算。None 时内部计算 (直接调用场景,
                 如测试), 此时会就地推进 state 的氮库存。
+            solution_water_L (v0.6.0): 目标溶液体积 (L), 体积-θ 耦合用;
+                None=用 state.volume (月级现状)。
+            inject_water (v0.6.0): 是否注入入渗水 H2O (体积耦合时 False,
+                水量由 -water 体现; 降水化学/优先流化学仍注入)。
         """
         lines = []
 
@@ -681,15 +810,20 @@ class PhreeqcEngine:
 
         # SOLUTION 块
         # -water 指定土柱溶液体积 (L), 使溶液与交换/矿物摩尔量量级匹配
+        # v0.6.0 (Q5): 体积-θ 耦合时用目标溶液体积 (θ×depth×1e5)
         lines.append("SOLUTION 1")
-        lines.append(f"  -water      {state.volume:.6e}")
+        water_volume = solution_water_L if solution_water_L is not None \
+            else state.volume
+        lines.append(f"  -water      {water_volume:.6e}")
         lines.append(f"  temp      {forcing['temp']}")
         lines.append(f"  pH        {state.ph}")
         lines.append(f"  pe        4.0")
         lines.append(f"  units     mol/L")
         for ion, conc in state.solution.items():
             if ion not in ['temp', 'pH', 'pe', 'units']:
-                lines.append(f"  {ion:<8} {conc:.6e}")
+                # v0.6.0: 离子浓度下限 1e-10 mol/L (事件级小水量数值稳定性,
+                # 防止浓度趋零触发 PHREEQC negative activity)
+                lines.append(f"  {ion:<8} {max(float(conc), 1e-10):.6e}")
         lines.append("")
 
         # EXCHANGE 块
@@ -754,7 +888,9 @@ class PhreeqcEngine:
             else:
                 water_L = precip_mm * 10000.0 * self.precip_infiltration
             water_mol = water_L * 55.5  # 1 L H2O ≈ 55.5 mol
-            if water_mol > 0:
+            # v0.6.0 (Q5): 体积-θ 耦合 (inject_water=False) 时不注入 H2O,
+            # 水量由 SOLUTION -water 体现
+            if inject_water and water_mol > 0:
                 reaction_lines.append(f"  H2O    {water_mol:.6e}  # 降水入渗")
             # Q7: 降水化学离子 (酸雨组分) 随入渗水进入溶液
             if self.precip_chem is not None and water_L > 0:
@@ -768,9 +904,10 @@ class PhreeqcEngine:
             # 降水化学注入深层; H2O 独立追加, 降水化学按 precip_chem 有无
             bypass_water_L = forcing.get('bypass_water_L', 0.0)
             if bypass_water_L > 0:
-                bypass_mol = bypass_water_L * 55.5
-                reaction_lines.append(
-                    f"  H2O    {bypass_mol:.6e}  # 优先流")
+                if inject_water:
+                    bypass_mol = bypass_water_L * 55.5
+                    reaction_lines.append(
+                        f"  H2O    {bypass_mol:.6e}  # 优先流")
                 if self.precip_chem is not None:
                     b_amounts = self.precip_chem.reaction_amounts(bypass_water_L)
                     for sp, mol in b_amounts.items():
