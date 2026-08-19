@@ -28,7 +28,7 @@ from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
                            PRE_EQUIL_PH_GAIN, PRE_EQUIL_ION_GAIN,
                            ALX3_DEFAULT_LOGK, ALX3_SELECTIVITY_LOGK,
                            INITIAL_PSI_CM, GREEN_AMPT_PSI_F_MM,
-                           DEFAULT_KSAT_SURFACE)
+                           DEFAULT_KSAT_SURFACE, MAX_CONCENTRATION_RATIO)
 from src.vgm import theta_to_water_L
 from src.logging_config import get_logger
 from src.scenario_controller import MonthlyAction
@@ -332,7 +332,8 @@ class PhreeqcEngine:
         return cur_state, last_diag
 
     def run_event_step(self, state: SoilState, event, action,
-                       soil_profile, forcing: dict = None
+                       soil_profile, forcing: dict = None,
+                       theta_after: float = None
                        ) -> Tuple[SoilState, DiagnosticOutput]:
         """执行单场降雨事件的化学步 (v0.6.0, Q1/Q3/Q5/Q6)
 
@@ -344,17 +345,20 @@ class PhreeqcEngine:
         - 体积-θ 耦合 (Q5): SOLUTION -water = θ_事件后×depth×1e5
           (theta_to_water_L), 替换恒定 state.volume; 浓度按质量守恒换算
           (C_new = C_old×V_old/V_new), 干燥→体积小→浓缩酸化自然产生
+        - theta_after (v0.6.0): 该场事件后的 θ (事件化水文在 main 预跑时
+          传 ev['theta'], 否则用 state.theta); 避免"月末 θ 一次性浓缩"错误
         - 交换相/矿物相绝对摩尔量不变 (Q6): EXCHANGE/EQUILIBRIUM_PHASES mol
           为绝对量, 仅溶液体积随 θ 重建, PHREEQC 自动重平衡浓度
         - 水量效应全部由 -water 体现, REACTION 只注入化学物质
           (inject_water=False)
 
         参数:
-            state: 当前土壤状态 (事件级水文步已就地更新 state.theta)
+            state: 当前土壤状态 (含上一场事件后的溶液/交换/矿物/体积)
             event: RainEvent (precip_mm/duration_h/precip_chem)
             action: 当月操作指令 (施肥/石灰)
             soil_profile: 土壤剖面数据
             forcing: 事件级补充 forcing dict (可选, 覆盖事件默认)
+            theta_after: 该场事件后的 θ (m³/m³); None → state.theta
 
         返回:
             (新状态, 诊断输出)
@@ -365,9 +369,12 @@ class PhreeqcEngine:
         eff.setdefault('pCO2', 0.015)
 
         # 体积-θ 耦合 (Q5): 事件后溶液体积由 θ 决定, 浓度按绝对量守恒换算
-        water_target_L = theta_to_water_L(state.theta,
+        theta_ev = (theta_after if theta_after is not None
+                    else state.theta)
+        water_target_L = theta_to_water_L(theta_ev,
                                           soil_profile.effective_depth)
-        self._rescale_solution_for_volume(state, water_target_L)
+        self._rescale_solution_for_volume(state, water_target_L,
+                                          soil_profile)
 
         # 模式分派 (与 run_monthly_step 一致)
         phreeqc_ready = (self.backend == 'official' and self.official is not None
@@ -408,7 +415,8 @@ class PhreeqcEngine:
             return state, None   # 简化模式不建模浓缩效应
 
         # 浓度按绝对量守恒换算 (浓缩), 然后仅重设 -water 平衡
-        self._rescale_solution_for_volume(state, water_target_L)
+        self._rescale_solution_for_volume(state, water_target_L,
+                                          soil_profile)
         eff = dict(forcing)
         eff['precip'] = 0.0
         eff['inflow_water_L'] = None
@@ -421,17 +429,28 @@ class PhreeqcEngine:
                                        inject_water=False)
 
     def _rescale_solution_for_volume(self, state: SoilState,
-                                     new_water_L: float):
+                                     new_water_L: float, profile=None):
         """体积-θ 耦合的浓度换算 (Q5/Q7 内部): 保持溶质绝对量守恒
 
         溶液浓度 C (mol/L) × 体积 V (L) = 溶质绝对量 (mol)。-water 从 V_old
         变到 V_new 时, 浓度调整为 C_new = C_old × V_old/V_new, 使总溶质不变
         (干燥浓缩 / 湿润稀释的数学表达)。就地更新 state.solution/volume。
+
+        v0.6.0 数值保护 (E2 实测修复):
+          - 体积物理下限: new_water_L ≥ θ_r×depth×1e5 (蒸发浓缩不越过残余含水,
+            防浓缩失控 → PHREEQC 不收敛)
+          - 单步浓缩比上限: ratio ≤ MAX_CONCENTRATION_RATIO (防单步极端浓缩)
         """
         old_water_L = state.volume
         if old_water_L <= 0 or new_water_L <= 0:
             return
-        ratio = old_water_L / new_water_L
+        # 物理下限 (θ ≥ θ_r, VGM 残余含水量)
+        if profile is not None:
+            from src.vgm import get_vgm_params
+            theta_r, _, _ = get_vgm_params(profile)
+            min_water_L = theta_r * profile.effective_depth * 1e5
+            new_water_L = max(new_water_L, min_water_L)
+        ratio = min(old_water_L / new_water_L, MAX_CONCENTRATION_RATIO)
         new_solution = {}
         for k, v in state.solution.items():
             if k in ('temp', 'pH', 'pe', 'units'):
@@ -750,9 +769,11 @@ class PhreeqcEngine:
                     layer_forcing['inflow_ions'] = inflow_ions
                 rain_ev = RainEvent(precip_mm=ev.get('precip_mm', 0.0),
                                     duration_h=2.0)
+                # 该场事件后的 θ (事件化水文已逐场更新, ev['theta'] 记录)
+                theta_ev = (ev.get('theta') or [None] * n)[i]
                 new_state, diag = self.run_event_step(
                     new_states[i], rain_ev, event_action, soil_profile,
-                    forcing=layer_forcing)
+                    forcing=layer_forcing, theta_after=theta_ev)
                 layer_states.append(new_state)
                 last_diags[i] = diag
                 # 该场该层淋失明细 (Q14, mmol/ha = conc(mol/L)×drain(L)×1000)
@@ -891,6 +912,16 @@ class PhreeqcEngine:
             col = f"{el}(mol/kgw)"
             if col in idx:
                 solution[el] = get(col)
+        # v0.6.0 数值防护 (E2/E3 实测): 离子浓度物理上限检查 —
+        # PHREEQC 高离子强度/碱性平衡失败时 SELECTED_OUTPUT 可能输出异常值
+        # (实测 Cl=44 mol/L), 若进入状态链会经层间 inflow_ions 级联放大。
+        # 判定为数值失败 (抛异常 → 走简化 fallback 保留前一正常状态)。
+        for _el, _c in solution.items():
+            if _el in ('temp', 'pH', 'pe', 'units'):
+                continue
+            if abs(float(_c)) > 10.0:
+                raise RuntimeError(
+                    f"离子浓度异常 ({_el}={_c:.2f} mol/L > 10), 判定数值失败")
         new_state.solution = solution
 
         # 交换组成: SELECTED_OUTPUT molality (mol/kgw) × 实际水质量(kg)

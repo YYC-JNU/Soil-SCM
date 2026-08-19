@@ -242,9 +242,12 @@ def _apply_hydrology_events(soil_states, layer_profiles, forcing, year, month,
         drains, runoff_extra, _ = cascade.run(inf_L, soil_states)
         inflows = [inf_L] + drains[:-1]
         bypass_water_L = runoff_mm * 10000.0 * bypass_fraction
+        # v0.6.0: 记录每场事件后各层 θ (引擎逐场 rescale 用, 避免用月末 θ
+        # 一次性浓缩 — 事件化水文/化学精确耦合)
         ev_entries.append({'inflows': inflows, 'drains': drains,
                            'bypass_water_L': bypass_water_L,
-                           'precip_mm': ev.precip_mm})
+                           'precip_mm': ev.precip_mm,
+                           'theta': [s.theta for s in soil_states]})
         total_inf_mm += inf_mm
         total_runoff_extra += runoff_extra
         for i in range(n):
