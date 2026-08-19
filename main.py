@@ -142,38 +142,50 @@ def _build_initial_layer_states(engine, reader, soil_profile, soil_info,
 
 
 def _apply_hydrology_month(soil_states, layer_profiles, forcing,
-                           year, month, seed=42, theta_i=None,
+                           year, month, seed=42,
                            bypass_fraction=0.2):
-    """v0.5.2: 月度水文 (随机降雨 + Green-Ampt 入渗 + 层间级联)
+    """v0.5.3: 月度水文 (ET → 入渗 → 级联, 时序 v0.5.3水分平衡闭合.txt §4.3)
 
-    就地更新各层 stored_water (跨月滞水); 返回引擎需要的各层入渗/排水量。
-    v0.5.2: 入渗用 Green-Ampt (ksat_surface 基质导水率), 移除 surface_coeff;
-    大孔隙优先流 bypass_fraction (径流水 β 绕过表层直通 L2)。
+    就地更新各层 theta (跨月滞水); 返回引擎需要的各层入渗/排水量。
+    v0.5.3 (spec 49):
+      ① ET 扣除最前端 (Feddes, 逐层独立, 亏缺丢弃计 et_deficit_mm, Q3/Q9)
+      ② Green-Ampt 入渗 (θ_i = L1 当前 θ, 已含 ET 扣除; 删除 50% 饱和魔法数)
+      ③ 层间级联 (θ_FC 可排水量 + K(θ) 界面通量, D3/Q2/Q11)
+    v0.5.2: 大孔隙优先流 bypass_fraction (径流水 β 绕过表层直通 L2)。
 
     参数:
-        theta_i: 表层初始体积含水量 (None → 0.5×θ_s; v0.5.2 由调用方传入,
-                 来自 L1 stored_water 换算的简化近似)
         bypass_fraction: 大孔隙优先流比例 (0~1, 超基质 Ks 积水直通 L2)
 
     返回:
         (hydrology_dict, runoff_mm, runoff_extra_L)
         - hydrology_dict: {'inflows': [L/ha 各层注入水量], 'drains': [L/ha 各层排水],
-                           'bypass_water_L': 优先流水量 (L/ha, 注入 L2)}
+                           'bypass_water_L': 优先流水量 (L/ha, 注入 L2),
+                           'aet_mm': 本月实际蒸散总量 (mm),
+                           'et_deficit_mm': ET 亏缺总量 (mm)}
         - runoff_mm: 超渗径流 (mm, = 月降水 − 月入渗)
         - runoff_extra_L: 超饱和溢出 (L/ha, 积水/侧排)
     """
-    from src.hydrology import monthly_hydrology, LayerCascade
+    from src.hydrology import (monthly_hydrology, LayerCascade,
+                               apply_feddes_et)
+    # ① ET 扣除 (最前端, 腾出孔隙空间; α=0 钳制 θ 不取负)
+    pet_mm = forcing.get('pet', 0.0)
+    aet_mm_list, et_deficit_mm = apply_feddes_et(
+        soil_states, pet_mm, layer_profiles)
+    # ② Green-Ampt 入渗 (θ_i = L1 当前 θ, v0.5.3 精确换算, 删除 50% 魔法数)
     inf_mm, runoff_mm, _ = monthly_hydrology(
         forcing.get('precip', 0.0), year, month, layer_profiles[0], seed,
-        theta_i=theta_i)
+        theta_i=soil_states[0].theta)
     inf_L = inf_mm * 10000.0
+    # ③ 层间级联 (θ_FC 可排水量 + K(θ) 界面通量, D3/Q2/Q11)
     cascade = LayerCascade(layer_profiles)
     drains, runoff_extra, _ = cascade.run(inf_L, soil_states)
     inflows = [inf_L] + drains[:-1]  # 层1=入渗, 下层=上层排水
     # v0.5.2: 大孔隙优先流 — 径流水中 β 绕过表层直通 L2 (携带原始降水化学)
     bypass_water_L = runoff_mm * 10000.0 * bypass_fraction
     return {'inflows': inflows, 'drains': drains,
-            'bypass_water_L': bypass_water_L}, runoff_mm, runoff_extra
+            'bypass_water_L': bypass_water_L,
+            'aet_mm': sum(aet_mm_list),
+            'et_deficit_mm': et_deficit_mm}, runoff_mm, runoff_extra
 
 
 def _extract_diagnostics_with_hydrology(soil_states, hydrology, runoff_mm,
@@ -408,13 +420,11 @@ def run_simulation(config_path: str = "config/config.yaml"):
                 if hydrology_enabled:
                     # v0.5.2: 水文模型 (Green-Ampt 入渗 + 级联), 替代
                     # precip_infiltration; 子时间步不适用 (水文为月度盒子)
-                    # theta_i: L1 初始含水量近似 (v0.5.2 保留 50% 饱和简化;
-                    # v0.5.3 迁移 θ 状态后由 stored_water 精确换算)
-                    theta_s = layer_profiles[0].porosity
-                    theta_i = 0.5 * theta_s
+                    # v0.5.3: theta_i = L1 当前 θ (由 _apply_hydrology_month 内部
+                    # 从 states[0].theta 精确读取, 删除 50% 饱和简化)
                     hydrology, runoff_mm, runoff_extra = _apply_hydrology_month(
                         soil_states, layer_profiles, forcing, year, month,
-                        cfg.simulation.hydrology_seed, theta_i=theta_i,
+                        cfg.simulation.hydrology_seed,
                         bypass_fraction=cfg.simulation.bypass_fraction)
                     soil_states, diags = engine.run_monthly_multi_layer(
                         soil_states, forcing, action, soil_profile,
