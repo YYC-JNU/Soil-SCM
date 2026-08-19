@@ -35,7 +35,8 @@ from src.logging_config import setup_logging
 from src.constants import (DEFAULT_4LAYER_DEPTHS, DEFAULT_4LAYER_CLAY_PCT,
                            DEFAULT_4LAYER_POROSITY, DEFAULT_4LAYER_KSAT,
                            DEFAULT_4LAYER_F0, DEFAULT_4LAYER_FC,
-                           DEFAULT_KSAT_SURFACE)
+                           DEFAULT_KSAT_SURFACE, OM_PROFILE_4LAYER)
+from src.climate_forcing import apply_om_pco2
 
 
 def _extract_diagnostics(soil_state, diag, variables):
@@ -106,6 +107,10 @@ def _build_initial_layer_states(engine, reader, soil_profile, soil_info,
             layer_mineral_infos.append(m)
             pco2 = lo.pCO2 if lo.pCO2 is not None else initial_pCO2
             layer_pco2s.append(pco2)
+        # v0.5.3 (Q4/Q10): OM 矿化加性调制 pCO₂_eff = base + k_om×OM_i
+        # (层内有机质, 表层富集强化表层酸性; 温度独立, 专家★3)
+        layer_pco2s = [apply_om_pco2(p, layer_profiles[i].organic_matter)
+                       for i, p in enumerate(layer_pco2s)]
         soil_states = [engine.build_initial_state(
             layer_profiles[i], layer_mineral_infos[i], layer_pco2s[i])
             for i in range(n_layers)]
@@ -124,12 +129,16 @@ def _build_initial_layer_states(engine, reader, soil_profile, soil_info,
                 ksat=DEFAULT_4LAYER_KSAT[i],
                 ksat_surface=DEFAULT_KSAT_SURFACE,
                 infiltration_initial=DEFAULT_4LAYER_F0[i],
-                infiltration_steady=DEFAULT_4LAYER_FC[i])
+                infiltration_steady=DEFAULT_4LAYER_FC[i],
+                organic_matter=OM_PROFILE_4LAYER[i])   # v0.5.3: OM 垂直剖面
             depth = DEFAULT_4LAYER_DEPTHS[i]
             p = reader.apply_layer_override(soil_profile, lo, depth)
             layer_profiles.append(p)
             layer_mineral_infos.append(soil_info)
             layer_pco2s.append(initial_pCO2)
+        # v0.5.3 (Q4/Q10): OM 矿化加性调制 (表层富集 → pCO₂_eff 梯度)
+        layer_pco2s = [apply_om_pco2(p, layer_profiles[i].organic_matter)
+                       for i, p in enumerate(layer_pco2s)]
         soil_states = [engine.build_initial_state(
             layer_profiles[i], layer_mineral_infos[i], layer_pco2s[i])
             for i in range(4)]
