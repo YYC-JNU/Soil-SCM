@@ -15,7 +15,8 @@ from typing import Optional, List, Dict, Any
 from src.logging_config import get_logger
 from src.constants import (PRECIP_INFILTRATION_DEFAULT,
                            NITRIFICATION_K1, NITRIFICATION_K2,
-                           INITIAL_PSI_CM, DEFAULT_LATITUDE)
+                           INITIAL_PSI_CM, DEFAULT_LATITUDE,
+                           DEFAULT_DIURNAL_RANGE)
 
 logger = get_logger("config_manager")
 
@@ -127,10 +128,13 @@ class ClimateConfig:
     temp_increase_rate: float = 0.05     # 情景4: 0.05°C/yr
     # v0.5.3 PET 通道 (D5)
     latitude: float = DEFAULT_LATITUDE                  # 站点纬度 (°N, Oudin 必需)
-    pet_method: str = "oudin"                           # "oudin" | "fixed" (hargreaves=v0.6.0 预留报错)
+    pet_method: str = "oudin"                           # "oudin" | "fixed" | "hargreaves"
+                                                        # (hargreaves_enhanced=v0.6.0 预留报错)
     pet_monthly_climate: Optional[List[float]] = None   # 12 值固定气候态月 PET (mm/month, 提供时优先)
     pet_correction_factor: List[float] = field(
         default_factory=lambda: [1.0] * 12)             # 12 值月度修正系数 (默认恒等)
+    # v0.6.0 Hargreaves PET (Q8/Q9): 日较差 T_max−T_min (°C, 默认 8.0, 校验 >0)
+    diurnal_range_deg: float = DEFAULT_DIURNAL_RANGE
 
 
 @dataclass
@@ -353,7 +357,9 @@ class ConfigManager:
                 pet_method=c.get('pet_method', 'oudin'),
                 pet_monthly_climate=c.get('pet_monthly_climate'),
                 pet_correction_factor=(c.get('pet_correction_factor')
-                                       or [1.0] * 12)
+                                       or [1.0] * 12),
+                diurnal_range_deg=c.get('diurnal_range_deg',
+                                        DEFAULT_DIURNAL_RANGE)
             )
 
         # 解析 fertilizer
@@ -523,15 +529,21 @@ class ConfigManager:
             raise ValueError(
                 f"['climate.latitude' 参数存在问题: 纬度 {clim.latitude} "
                 f"超出范围 (-60,60), 请确认后再输入]")
-        if clim.pet_method == "hargreaves":
+        if clim.pet_method == "hargreaves_enhanced":
             raise ValueError(
-                "['climate.pet_method' 参数存在问题: 'hargreaves' 为 "
-                "v0.6.0 预留 (需补充 T_max/T_min 输入), 当前版本仅支持 "
-                "'oudin'/'fixed', 请确认后再输入]")
-        if clim.pet_method not in ("oudin", "fixed"):
+                "['climate.pet_method' 参数存在问题: 'hargreaves_enhanced' 为 "
+                "v0.7.0 预留 (12 值日较差 + 外部气候文件内插), v0.6.0 仅支持 "
+                "'oudin'/'fixed'/'hargreaves', 请确认后再输入]")
+        if clim.pet_method not in ("oudin", "fixed", "hargreaves"):
             raise ValueError(
                 f"['climate.pet_method' 参数存在问题: 方法 {clim.pet_method} "
-                f"无效, 可选: 'oudin'/'fixed', 请确认后再输入]")
+                f"无效, 可选: 'oudin'/'fixed'/'hargreaves', 请确认后再输入]")
+        # v0.6.0 (Q8): 日较差校验 (>0, Hargreaves 必需)
+        if clim.diurnal_range_deg <= 0:
+            raise ValueError(
+                f"['climate.diurnal_range_deg' 参数存在问题: 日较差 "
+                f"{clim.diurnal_range_deg} 必须为正 (>0, Hargreaves 用), "
+                f"请确认后再输入]")
         if clim.pet_monthly_climate is not None \
                 and len(clim.pet_monthly_climate) != 12:
             raise ValueError(

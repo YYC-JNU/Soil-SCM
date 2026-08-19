@@ -55,9 +55,10 @@
 # precip_increase_rate   | float | 0.02   | /yr   | 0~1
 # temp_increase_rate     | float | 0.05   | °C/yr | 0~1
 # latitude               | float | 23.1   | °N    | v0.5.3: Oudin PET 站点纬度 (-60~60)
-# pet_method             | str   | oudin  | -     | v0.5.3: oudin|fixed (hargreaves=v0.6.0 预留报错)
+# pet_method             | str   | oudin  | -     | v0.6.0: oudin|fixed|hargreaves (enhanced=v0.7.0 预留报错)
 # pet_monthly_climate    | list  | null   | mm/月 | v0.5.3: 12 值固定气候态 PET (提供时优先)
 # pet_correction_factor  | list  | [1]*12 | -     | v0.5.3: 12 值月度修正系数
+# diurnal_range_deg      | float | 8.0    | °C    | v0.6.0: Hargreaves 日较差 (>0)
 #
 # === fertilizer ===
 # n              | float | 12.0 | kg N/ha/次      | 10~13
@@ -155,9 +156,10 @@ climate:
   precip_increase_rate: 0.02     # precip_increase 情景: 降水年增比例
   temp_increase_rate: 0.05       # temp_increase 情景: 温度年增量 °C/yr
   latitude: 23.1                 # v0.5.3: Oudin PET 站点纬度 (°N, 广州 23.1/鹰潭 28.2)
-  pet_method: oudin              # v0.5.3: "oudin"|"fixed" (fixed 需 pet_monthly_climate)
+  pet_method: oudin              # v0.6.0: "oudin"|"fixed"|"hargreaves" (hargreaves_enhanced=v0.7.0 预留报错)
   pet_monthly_climate: null      # v0.5.3: 12 值固定气候态月 PET (mm/month); null=公式正算
   pet_correction_factor: null    # v0.5.3: 12 值月度修正系数; null=[1.0]×12
+  diurnal_range_deg: 8.0         # v0.6.0: Hargreaves 日较差 T_max−T_min (°C, 华南典型 6~10, >0)
 
 # ─────────────────────────────────────────────
 # fertilizer: 肥料配置（仅 fertilizer/fertilizer_lime 情景生效）
