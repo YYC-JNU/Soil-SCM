@@ -83,3 +83,26 @@ def test_csv_save_multi_layer_with_variables_filter(tmp_path):
     assert "pH_10_30" in content
     # 未配置变量 (exchangeable_Al) 的层列不应输出
     assert "exchangeable_Al_0_10" not in content
+
+
+def test_apply_hydrology_events_month_conservation(profile):
+    """v0.6.0 (Q3/Q15): 事件级水文编排 — Σ事件降水=月降水, 入渗+径流=降水"""
+    import pytest
+    from main import _apply_hydrology_events
+    from src.phreeqc_engine import SoilState
+    states = [SoilState(theta=0.41)]
+    forcing = {"precip": 158.0, "pet": 0.0}
+    hydrology, runoff_mm, runoff_extra = _apply_hydrology_events(
+        states, [profile], forcing, 0, 0, seed=42, bypass_fraction=0.2)
+    # events 键: 每场 precip_mm, Σ = 月降水 (质量守恒)
+    assert len(hydrology["events"]) >= 4
+    total_ev_precip = sum(e["precip_mm"] for e in hydrology["events"])
+    assert total_ev_precip == pytest.approx(158.0, rel=1e-6)
+    # 月入渗(mm) + 月径流(mm) = 月降水 (Green-Ampt 守恒)
+    total_inf = sum(e["inflows"][0] for e in hydrology["events"]) / 10000.0
+    assert total_inf + runoff_mm == pytest.approx(158.0, abs=0.5)
+    # 月聚合键 = Σ 各场
+    assert hydrology["inflows"][0] == pytest.approx(
+        sum(e["inflows"][0] for e in hydrology["events"]))
+    assert hydrology["drains"][0] == pytest.approx(
+        sum(e["drains"][0] for e in hydrology["events"]))

@@ -34,7 +34,8 @@ from src.initial_condition import InitialConditionBuilder
 from src.logging_config import setup_logging
 from src.constants import (DEFAULT_4LAYER_DEPTHS, DEFAULT_4LAYER_CLAY_PCT,
                            DEFAULT_4LAYER_POROSITY, DEFAULT_4LAYER_KSAT,
-                           DEFAULT_KSAT_SURFACE, OM_PROFILE_4LAYER)
+                           DEFAULT_KSAT_SURFACE, OM_PROFILE_4LAYER,
+                           DAYS_IN_MONTH)
 from src.climate_forcing import apply_om_pco2
 
 
@@ -194,6 +195,71 @@ def _apply_hydrology_month(soil_states, layer_profiles, forcing,
             'et_deficit_mm': et_deficit_mm}, runoff_mm, runoff_extra
 
 
+def _apply_hydrology_events(soil_states, layer_profiles, forcing, year, month,
+                            seed=42, bypass_fraction=0.2):
+    """v0.6.0 事件级水文编排 (Q3/Q15, spec 55 §4)
+
+    月首 ET 一次 (Feddes, 与月级一致) → 逐场:
+      ① Green-Ampt 单场入渗 (θ_i = L1 当前 θ, 逐场更新)
+      ② 层间级联 (LayerCascade, 排水窗 = 月天数/场次数)
+      ③ bypass = 该场径流×β (逐场注入 L2)
+    返回:
+        (hydrology_dict, runoff_mm, runoff_extra_L)
+        - hydrology_dict: 含 'events' 键 (每场 inflows/drains/bypass_water_L/
+          precip_mm) + 月聚合键 (inflows/drains/bypass_water_L/aet_mm/
+          et_deficit_mm, 供诊断列)
+        - runoff_mm: 月超渗径流 (mm = 月降水 − Σ 单场入渗)
+        - runoff_extra_L: 月超饱和溢出总量 (L/ha)
+
+    LayerCascade 排水窗: 月级 n_days=30 (整月排水能力); 事件级每场
+    n_days=月天数/场次数 → Σ排水窗 = 月天数 → 月排水总量与月级一致
+    (子步长不改变水分平衡, E1 复验门禁)。
+    """
+    from src.hydrology import (generate_events, green_ampt_infiltration,
+                               LayerCascade, apply_feddes_et)
+    # ① ET 扣除 (月首一次, 与月级 _apply_hydrology_month 一致)
+    pet_mm = forcing.get('pet', 0.0)
+    aet_mm_list, et_deficit_mm = apply_feddes_et(
+        soil_states, pet_mm, layer_profiles)
+    # ② 逐场: Green-Ampt → 级联 → bypass
+    events = generate_events(forcing.get('precip', 0.0), year, month, seed)
+    n_ev = max(len(events), 1)
+    interval_days = DAYS_IN_MONTH[month] / n_ev
+    cascade = LayerCascade(layer_profiles, n_days=interval_days)
+    n = len(layer_profiles)
+    ev_entries = []
+    month_inflows = [0.0] * n
+    month_drains = [0.0] * n
+    month_bypass = 0.0
+    total_inf_mm = 0.0
+    total_runoff_extra = 0.0
+    for ev in events:
+        inf_mm, runoff_mm = green_ampt_infiltration(
+            ev.precip_mm, layer_profiles[0].ksat_surface,
+            theta_s=layer_profiles[0].porosity,
+            theta_i=soil_states[0].theta)
+        inf_L = inf_mm * 10000.0
+        drains, runoff_extra, _ = cascade.run(inf_L, soil_states)
+        inflows = [inf_L] + drains[:-1]
+        bypass_water_L = runoff_mm * 10000.0 * bypass_fraction
+        ev_entries.append({'inflows': inflows, 'drains': drains,
+                           'bypass_water_L': bypass_water_L,
+                           'precip_mm': ev.precip_mm})
+        total_inf_mm += inf_mm
+        total_runoff_extra += runoff_extra
+        for i in range(n):
+            month_inflows[i] += inflows[i]
+            month_drains[i] += drains[i]
+        month_bypass += bypass_water_L
+    runoff_mm = forcing.get('precip', 0.0) - total_inf_mm
+    hydrology = {'events': ev_entries,
+                 'inflows': month_inflows, 'drains': month_drains,
+                 'bypass_water_L': month_bypass,
+                 'aet_mm': sum(aet_mm_list),
+                 'et_deficit_mm': et_deficit_mm}
+    return hydrology, runoff_mm, total_runoff_extra
+
+
 def _extract_diagnostics_with_hydrology(soil_states, hydrology, runoff_mm,
                                         runoff_extra, diag_objs, variables,
                                         layer_profiles, layer_pco2s=None):
@@ -232,6 +298,13 @@ def _extract_diagnostics_with_hydrology(soil_states, hydrology, runoff_mm,
     # v0.5.2: 大孔隙优先流 (绕过表层直通 L2) 诊断列, 可选输出
     if n > 1 and hydrology.get('bypass_water_L', 0.0) > 0:
         layer_diags[1]['bypass_drainage'] = hydrology['bypass_water_L']
+    # v0.6.0 (Q14): First-Flush 峰值列 (L1 当月最大单场淋失, mmol/ha;
+    # 非事件驱动路径恒 0, 列保持存在)
+    if diag_objs and diag_objs[0] is not None:
+        layer_diags[0]['flush_NO3_peak_mmol'] = \
+            diag_objs[0].flush_no3_peak_mmol
+        layer_diags[0]['flush_base_peak_mmol'] = \
+            diag_objs[0].flush_base_peak_mmol
     return layer_diags
 
 
@@ -440,10 +513,18 @@ def run_simulation(config_path: str = "config/config.yaml"):
                     # precip_infiltration; 子时间步不适用 (水文为月度盒子)
                     # v0.5.3: theta_i = L1 当前 θ (由 _apply_hydrology_month 内部
                     # 从 states[0].theta 精确读取, 删除 50% 饱和简化)
-                    hydrology, runoff_mm, runoff_extra = _apply_hydrology_month(
-                        soil_states, layer_profiles, forcing, year, month,
-                        cfg.simulation.hydrology_seed,
-                        bypass_fraction=cfg.simulation.bypass_fraction)
+                    # v0.6.0: event_driven 用事件级水文编排 (逐场 Green-Ampt+
+                    # 级联+bypass, Q3/Q15), 否则月级编排 (护栏)
+                    if cfg.simulation.event_driven:
+                        hydrology, runoff_mm, runoff_extra = _apply_hydrology_events(
+                            soil_states, layer_profiles, forcing, year, month,
+                            cfg.simulation.hydrology_seed,
+                            bypass_fraction=cfg.simulation.bypass_fraction)
+                    else:
+                        hydrology, runoff_mm, runoff_extra = _apply_hydrology_month(
+                            soil_states, layer_profiles, forcing, year, month,
+                            cfg.simulation.hydrology_seed,
+                            bypass_fraction=cfg.simulation.bypass_fraction)
                     soil_states, diags = engine.run_monthly_multi_layer(
                         soil_states, forcing, action, soil_profile,
                         layer_pco2s=layer_pco2s, hydrology=hydrology)
@@ -456,6 +537,13 @@ def run_simulation(config_path: str = "config/config.yaml"):
                     # output.variables 一致)
                     global_diag = {'AET_mm': hydrology['aet_mm'],
                                    'et_deficit_mm': hydrology['et_deficit_mm']}
+                    # v0.6.0 (Q14): 逐场事件明细 CSV (event_output=true 时)
+                    if cfg.output.event_output and hydrology.get('event_details'):
+                        for det in hydrology['event_details']:
+                            det_out = dict(det)
+                            det_out['year'] = det_out.get('year', 0) + 1
+                            det_out['month'] = det_out.get('month', 0) + 1
+                            output_writer.record_event(det_out)
                 else:
                     # WF2/Q4: 多分层 — 高层编排层 (层循环 + 级联平流)
                     if sub_steps > 0:
@@ -489,8 +577,16 @@ def run_simulation(config_path: str = "config/config.yaml"):
                             soil_state, sub_forcing, action, soil_profile)
                 else:
                     # 月步长模式
-                    soil_state, diag = engine.run_monthly_step(
-                        soil_state, forcing, action, soil_profile)
+                    if cfg.simulation.event_driven:
+                        # v0.6.0: 单层事件驱动 (run_monthly_step 内部事件化)
+                        ev_forcing = dict(forcing, event_driven=True,
+                                          year=year, month=month,
+                                          seed=cfg.simulation.hydrology_seed)
+                        soil_state, diag = engine.run_monthly_step(
+                            soil_state, ev_forcing, action, soil_profile)
+                    else:
+                        soil_state, diag = engine.run_monthly_step(
+                            soil_state, forcing, action, soil_profile)
 
                 # 记录诊断量 (从模拟状态提取, 反映化学演化)
                 diagnostics = _extract_diagnostics(

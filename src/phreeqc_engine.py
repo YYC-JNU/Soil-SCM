@@ -112,6 +112,9 @@ class DiagnosticOutput:
     exchangeable_al: float = 0.0
     mineral_masses: dict = field(default_factory=dict)
     solution_ions: dict = field(default_factory=dict)
+    # v0.6.0 (Q14): First-Flush 峰值列 (当月 L1 最大单场淋失, mmol/ha)
+    flush_no3_peak_mmol: float = 0.0
+    flush_base_peak_mmol: float = 0.0
 
 
 def _monthly_step_worker(q, database, mode, enable_surface, precip_infiltration,
@@ -653,7 +656,7 @@ class PhreeqcEngine:
         if event_list:
             return self._run_multi_layer_events(
                 states, monthly_forcing, action, soil_profile,
-                layer_pco2s, event_list)
+                layer_pco2s, event_list, hydrology)
 
         new_states = []
         diags = []
@@ -704,12 +707,13 @@ class PhreeqcEngine:
 
     def _run_multi_layer_events(self, states: list, monthly_forcing: dict,
                                 action, soil_profile, layer_pco2s,
-                                event_list: list):
+                                event_list: list, hydrology: dict = None):
         """v0.6.0 (Q4): 逐场逐层级联 (层间溶质事件粒度传递, First-Flush 本质)
 
         hydrology['events'] 驱动: 每场事件按层顺序执行 run_event_step,
         该场上层排水携带溶质 (conc×drain) 作为下层当场 inflow_ions。
         施肥/石灰 (action) 仅第一场事件注入 (月内一次性干预)。
+        Q14: 每场每层淋失明细回填 hydrology['event_details'] (事件 CSV 用)。
 
         返回:
             (List[SoilState], List[DiagnosticOutput]) — 最后一场事件后各层状态
@@ -718,10 +722,18 @@ class PhreeqcEngine:
         n = len(states)
         new_states = list(states)
         last_diags = [None] * n
+        # v0.6.0 (Q14): First-Flush 峰值 (当月 L1 最大单场淋失, mmol/ha)
+        flush_no3_peak = 0.0
+        flush_base_peak = 0.0
+        event_details = []
         for ev_idx, ev in enumerate(event_list):
             layer_states = []
             inflow_ions = {}
             event_action = action if ev_idx == 0 else MonthlyAction()
+            row = {'year': monthly_forcing.get('year', 0),
+                   'month': monthly_forcing.get('month', 0),
+                   'event': ev_idx + 1,
+                   'precip_mm': ev.get('precip_mm', 0.0)}
             for i in range(n):
                 layer_forcing = dict(monthly_forcing)
                 # L6: 逐层 pCO₂ 注入 (缺省回退全局 forcing['pCO2'])
@@ -743,6 +755,25 @@ class PhreeqcEngine:
                     forcing=layer_forcing)
                 layer_states.append(new_state)
                 last_diags[i] = diag
+                # 该场该层淋失明细 (Q14, mmol/ha = conc(mol/L)×drain(L)×1000)
+                drain_i = ev['drains'][i]
+                row[f'leach_N_L{i+1}_mmol'] = \
+                    new_state.solution.get('N', 0.0) * drain_i * 1000.0
+                row[f'leach_base_L{i+1}_mmol'] = (
+                    new_state.solution.get('Ca', 0.0)
+                    + new_state.solution.get('Mg', 0.0)
+                    + new_state.solution.get('K', 0.0)) * drain_i * 1000.0
+                row[f'ph_L{i+1}'] = new_state.ph
+                # First-Flush 记录: L1 该场淋失 (mmol/ha)
+                if i == 0:
+                    no3_mmol = new_state.solution.get('N', 0.0) \
+                        * ev['drains'][0] * 1000.0
+                    base_mmol = (new_state.solution.get('Ca', 0.0)
+                                 + new_state.solution.get('Mg', 0.0)
+                                 + new_state.solution.get('K', 0.0)) \
+                        * ev['drains'][0] * 1000.0
+                    flush_no3_peak = max(flush_no3_peak, no3_mmol)
+                    flush_base_peak = max(flush_base_peak, base_mmol)
                 # 该场排水携带溶质 → 下层当场输入 (Q4 事件粒度)
                 if i < n - 1:
                     drain_water_L = ev['drains'][i]
@@ -753,7 +784,16 @@ class PhreeqcEngine:
                         if conc > 0:
                             inflow_ions[ion] = conc * drain_water_L
             new_states = layer_states
-        return new_states, last_diags
+            event_details.append(row)
+        # Q14: 事件明细回填 (main 经 hydrology['event_details'] 写事件 CSV)
+        if hydrology is not None:
+            hydrology['event_details'] = event_details
+        # First-Flush 峰值附加到 L1 诊断 (Q14, main 经 diag_objs 提取)
+        diags_out = list(last_diags)
+        if diags_out[0] is not None:
+            diags_out[0].flush_no3_peak_mmol = flush_no3_peak
+            diags_out[0].flush_base_peak_mmol = flush_base_peak
+        return new_states, diags_out
 
     def _run_official_step(self, state, forcing, action, profile,
                            solution_water_L=None, inject_water=True):
