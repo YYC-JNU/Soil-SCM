@@ -107,3 +107,83 @@ def test_run_event_step_exchange_evolves(profile, soil_info):
                                     forcing=forcing)
     assert new_state.exchange != {}
     assert new_state.minerals != {}
+
+
+# ==================== v0.6.0 run_monthly_step 聚合包装 (S1, Q10) ====================
+
+def test_run_monthly_step_event_driven_loops_events(profile, soil_info,
+                                                    monkeypatch):
+    """Q10: event_driven 事件化包装 — 逐场循环, Σ事件降水 = 月降水"""
+    e = _engine()
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    calls = []
+    orig = e.run_event_step
+
+    def spy(state, event, action, profile, forcing=None):
+        calls.append((event.precip_mm,
+                      forcing.get('inflow_water_L') if forcing else None))
+        return orig(state, event, action, profile, forcing=forcing)
+
+    monkeypatch.setattr(e, 'run_event_step', spy)
+    forcing = dict(EVENT_FORCING, precip=100.0, event_driven=True,
+                   seed=42, year=0, month=3)
+    new_state, diag = e.run_monthly_step(state, forcing, MonthlyAction(),
+                                         profile)
+    assert len(calls) >= 4
+    assert sum(c for c, _ in calls) == pytest.approx(100.0, rel=1e-6)
+    assert new_state.ph > 0
+
+
+def test_run_monthly_step_default_legacy_behavior(profile, soil_info,
+                                                  monkeypatch):
+    """Q10: 无 event_driven 标记 → 旧单次平衡路径 (expand 兼容门禁)"""
+    e = _engine()
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    calls = []
+    orig = e.run_event_step
+
+    def spy(state, event, action, profile, forcing=None):
+        calls.append(event.precip_mm)
+        return orig(state, event, action, profile, forcing=forcing)
+
+    monkeypatch.setattr(e, 'run_event_step', spy)
+    forcing = dict(EVENT_FORCING, precip=100.0)
+    new_state, diag = e.run_monthly_step(state, forcing, MonthlyAction(),
+                                         profile)
+    assert calls == []           # 未走事件路径
+    assert new_state.ph > 0
+
+
+# ==================== v0.6.0 多层 events 路径 (S5, Q4/Q10) ====================
+
+def test_run_monthly_multi_layer_events_path(profile, soil_info):
+    """Q4: hydrology['events'] → 逐场逐层级联 (层间溶质事件粒度)"""
+    e = _engine()
+    states = [e.build_initial_state(profile, soil_info, 0.015)
+              for _ in range(2)]
+    ev1 = {'inflows': [100000.0, 10000.0], 'drains': [10000.0, 1000.0],
+           'bypass_water_L': 0.0, 'precip_mm': 15.0}
+    ev2 = {'inflows': [200000.0, 20000.0], 'drains': [20000.0, 2000.0],
+           'bypass_water_L': 0.0, 'precip_mm': 15.0}
+    hydrology = {'events': [ev1, ev2], 'aet_mm': 0.0, 'et_deficit_mm': 0.0}
+    forcing = dict(EVENT_FORCING, precip=30.0)
+    new_states, diags = e.run_monthly_multi_layer(
+        states, forcing, MonthlyAction(), profile, hydrology=hydrology)
+    assert len(new_states) == 2
+    assert all(s.ph > 0 for s in new_states)
+    assert len(diags) == 2
+
+
+def test_run_monthly_multi_layer_fallback_without_events(profile, soil_info):
+    """Q10: 无 events 键 → 旧月级路径 (向后兼容护栏)"""
+    e = _engine()
+    states = [e.build_initial_state(profile, soil_info, 0.015)
+              for _ in range(2)]
+    hydrology = {'inflows': [100000.0, 10000.0], 'drains': [10000.0, 1000.0],
+                 'bypass_water_L': 0.0, 'aet_mm': 0.0, 'et_deficit_mm': 0.0}
+    forcing = dict(EVENT_FORCING, precip=100.0)
+    new_states, diags = e.run_monthly_multi_layer(
+        states, forcing, MonthlyAction(), profile, hydrology=hydrology)
+    assert len(new_states) == 2
+    assert all(s.ph > 0 for s in new_states)
+    assert len(diags) == 2

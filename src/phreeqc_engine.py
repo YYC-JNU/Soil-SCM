@@ -27,7 +27,8 @@ from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
                            PRE_EQUIL_PH_TOL, PRE_EQUIL_ION_TOL,
                            PRE_EQUIL_PH_GAIN, PRE_EQUIL_ION_GAIN,
                            ALX3_DEFAULT_LOGK, ALX3_SELECTIVITY_LOGK,
-                           INITIAL_PSI_CM)
+                           INITIAL_PSI_CM, GREEN_AMPT_PSI_F_MM,
+                           DEFAULT_KSAT_SURFACE)
 from src.vgm import theta_to_water_L
 from src.logging_config import get_logger
 from src.scenario_controller import MonthlyAction
@@ -267,11 +268,65 @@ class PhreeqcEngine:
             use_phreeqc = False
 
         if use_phreeqc:
+            # v0.6.0 (Q10): 事件驱动模式 (main 传 event_driven=True) —
+            # 月内逐场闭环 (generate_events → 逐场水文+化学 → 月末浓缩平衡);
+            # 缺省旧单次平衡 (预平衡/测试/向后兼容, expand 兼容门禁)
+            if monthly_forcing.get('event_driven'):
+                return self._run_monthly_step_events(state, monthly_forcing,
+                                                     action, soil_profile)
             return self._run_official_step(state, monthly_forcing,
                                            action, soil_profile)
         else:
             return self._run_simplified_step(state, monthly_forcing,
                                              action, soil_profile)
+
+    def _run_monthly_step_events(self, state: SoilState,
+                                 monthly_forcing: dict, action,
+                                 soil_profile) -> Tuple[SoilState, DiagnosticOutput]:
+        """run_monthly_step 的事件化内部 (v0.6.0, Q3/Q10)
+
+        月内逐场闭环: generate_events(月降水) → 逐场:
+          1. 事件级水文步: Green-Ampt 单场入渗 → θ 增量 (入渗水进入含水)
+          2. 化学步: run_event_step (体积-θ 耦合, 事件后 θ 驱动 -water)
+        → 月末浓缩平衡 (Q12, θ 月内下降才触发, 零额外计算)。
+
+        施肥/石灰 (action) 在第一场事件注入, 其余场次空操作 (月内一次性干预)。
+        """
+        from src.hydrology import generate_events, green_ampt_infiltration
+        seed = monthly_forcing.get('seed', 42)
+        year = monthly_forcing.get('year', 0)
+        month = monthly_forcing.get('month', 0)
+        precip = monthly_forcing.get('precip', 0.0)
+        events = generate_events(precip, year, month, seed)
+        depth = soil_profile.effective_depth
+        theta_s = getattr(soil_profile, 'porosity', 0.5)
+        ksat_surface = getattr(soil_profile, 'ksat_surface',
+                               DEFAULT_KSAT_SURFACE)
+        theta_start = state.theta
+        cur_state = state
+        last_diag = None
+        for idx, ev in enumerate(events):
+            # 事件级水文步: Green-Ampt 单场入渗 (θ_i = 事件前 θ)
+            inf_mm, _ = green_ampt_infiltration(
+                ev.precip_mm, ksat_surface, theta_s=theta_s,
+                theta_i=cur_state.theta)
+            inf_L = inf_mm * 10000.0
+            # 入渗水 → θ 增量 (Δθ = L / (depth_cm × 1e5))
+            cur_state.theta += inf_L / (depth * 1e5)
+            # 化学步 (第一场注入施肥/石灰, 其余空操作)
+            event_action = action if idx == 0 else MonthlyAction()
+            eff = {'inflow_water_L': inf_L,
+                   'temp': monthly_forcing.get('temp', 25.0),
+                   'pCO2': monthly_forcing.get('pCO2', 0.015)}
+            cur_state, last_diag = self.run_event_step(
+                cur_state, ev, event_action, soil_profile, forcing=eff)
+        # 月末浓缩平衡 (Q12): θ 月内下降 → 浓缩 (无降水事件期干化效应)
+        if cur_state.theta < theta_start - 1e-9:
+            cur_state, diag2 = self.apply_concentration_equilibrium(
+                cur_state, cur_state.theta, soil_profile, monthly_forcing)
+            if diag2 is not None:
+                last_diag = diag2
+        return cur_state, last_diag
 
     def run_event_step(self, state: SoilState, event, action,
                        soil_profile, forcing: dict = None
@@ -569,6 +624,12 @@ class PhreeqcEngine:
             precip×infiltration 计算; 进入 REACTION H2O 与降水化学离子
           - drains[i]: 第 i 层排水量 (Ksat 限制后), 用于层间溶质传递
 
+        v0.6.0 事件级水文模式 (Q4/Q10): hydrology 含可选 'events' 键
+          - events = List[dict], 每场含 inflows/drains/bypass_water_L/precip_mm
+          - 逐场逐层级联: for event: for layer: run_event_step (层间溶质
+            事件粒度传递, First-Flush 本质)
+          - 无 events 键 → 旧月级路径 (向后兼容护栏)
+
         参数:
             states: List[SoilState] — 各层当前状态 (长度 = n_layers)
             monthly_forcing: 当月气候强迫
@@ -586,6 +647,13 @@ class PhreeqcEngine:
             new_state, diag = self.run_monthly_step(
                 states[0], monthly_forcing, action, soil_profile)
             return [new_state], [diag]
+
+        # v0.6.0 (Q4): 事件级水文模式 — hydrology['events'] 逐场逐层级联
+        event_list = (hydrology or {}).get('events')
+        if event_list:
+            return self._run_multi_layer_events(
+                states, monthly_forcing, action, soil_profile,
+                layer_pco2s, event_list)
 
         new_states = []
         diags = []
@@ -633,6 +701,59 @@ class PhreeqcEngine:
                         inflow_ions[ion] = conc * drain_water_L
 
         return new_states, diags
+
+    def _run_multi_layer_events(self, states: list, monthly_forcing: dict,
+                                action, soil_profile, layer_pco2s,
+                                event_list: list):
+        """v0.6.0 (Q4): 逐场逐层级联 (层间溶质事件粒度传递, First-Flush 本质)
+
+        hydrology['events'] 驱动: 每场事件按层顺序执行 run_event_step,
+        该场上层排水携带溶质 (conc×drain) 作为下层当场 inflow_ions。
+        施肥/石灰 (action) 仅第一场事件注入 (月内一次性干预)。
+
+        返回:
+            (List[SoilState], List[DiagnosticOutput]) — 最后一场事件后各层状态
+        """
+        from src.hydrology import RainEvent
+        n = len(states)
+        new_states = list(states)
+        last_diags = [None] * n
+        for ev_idx, ev in enumerate(event_list):
+            layer_states = []
+            inflow_ions = {}
+            event_action = action if ev_idx == 0 else MonthlyAction()
+            for i in range(n):
+                layer_forcing = dict(monthly_forcing)
+                # L6: 逐层 pCO₂ 注入 (缺省回退全局 forcing['pCO2'])
+                if layer_pco2s is not None:
+                    layer_forcing['pCO2'] = layer_pco2s[i]
+                # v0.5.2: 硝化产酸仅 L1; 深层跳过氮过程
+                if i > 0:
+                    layer_forcing['skip_nitrification'] = True
+                # 事件级水量: 该场入渗/排水/优先流
+                layer_forcing['inflow_water_L'] = ev['inflows'][i]
+                if i == 1 and ev.get('bypass_water_L', 0.0) > 0:
+                    layer_forcing['bypass_water_L'] = ev['bypass_water_L']
+                if inflow_ions:
+                    layer_forcing['inflow_ions'] = inflow_ions
+                rain_ev = RainEvent(precip_mm=ev.get('precip_mm', 0.0),
+                                    duration_h=2.0)
+                new_state, diag = self.run_event_step(
+                    new_states[i], rain_ev, event_action, soil_profile,
+                    forcing=layer_forcing)
+                layer_states.append(new_state)
+                last_diags[i] = diag
+                # 该场排水携带溶质 → 下层当场输入 (Q4 事件粒度)
+                if i < n - 1:
+                    drain_water_L = ev['drains'][i]
+                    inflow_ions = {}
+                    for ion, conc in new_state.solution.items():
+                        if ion in ('temp', 'pH', 'pe', 'units'):
+                            continue
+                        if conc > 0:
+                            inflow_ions[ion] = conc * drain_water_L
+            new_states = layer_states
+        return new_states, last_diags
 
     def _run_official_step(self, state, forcing, action, profile,
                            solution_water_L=None, inject_water=True):
