@@ -162,3 +162,54 @@ def test_monthly_hydrology_theta_i_from_stored_water():
     inf_wet, r_wet, _ = monthly_hydrology(158.0, 0, 0, surf, seed=42, theta_i=0.50)
     assert inf_dry > inf_wet
     assert r_dry < r_wet
+
+
+# ==================== v0.5.3 Feddes ET (S2, Q3/Q9) ====================
+
+def test_apply_feddes_et_alpha_one():
+    """最适水分 (α=1): AET = PET×f_root (无亏缺, θ 按水柱换算下降)"""
+    from src.hydrology import apply_feddes_et
+    prof = _surface_profile(porosity=0.55, depth=20)
+    state = SoilState(theta=0.40)   # ψ≈-110cm ∈ (h3,h2) → α=1
+    aet, deficit = apply_feddes_et([state], 30.0, [prof], root_weights=[1.0])
+    assert aet[0] == pytest.approx(30.0)          # 需求 30mm < 可提取 51.5mm
+    assert deficit == pytest.approx(0.0)
+    # Δθ = AET/(depth×10) = 30/200 = 0.15
+    assert state.theta == pytest.approx(0.40 - 0.15)
+
+
+def test_apply_feddes_et_alpha_zero_wilting():
+    """永久萎蔫以下 (α=0): AET=0, θ 不变 (θ 不取负的天然钳制)"""
+    from src.hydrology import apply_feddes_et
+    prof = _surface_profile(porosity=0.55, depth=20)
+    state = SoilState(theta=0.10)   # < θ(ψ=h4)≈0.143 → α=0
+    aet, deficit = apply_feddes_et([state], 100.0, [prof], root_weights=[1.0])
+    assert aet[0] == pytest.approx(0.0)
+    assert deficit == pytest.approx(0.0)          # 需求因 α=0 归零, 非亏缺
+    assert state.theta == pytest.approx(0.10)
+
+
+def test_apply_feddes_et_deficit_clamped():
+    """需求超出可提取水量 → AET 截断至 θ(ψ=h4), 差额计入 et_deficit"""
+    from src.hydrology import apply_feddes_et
+    prof = _surface_profile(porosity=0.55, depth=20)
+    state = SoilState(theta=0.40)
+    aet, deficit = apply_feddes_et([state], 100.0, [prof], root_weights=[1.0])
+    # 可提取 = (0.40−θ_wp)×20×10 ≈ 51.5mm; 需求 100 → AET≈51.5, 亏缺≈48.5
+    assert aet[0] == pytest.approx(51.5, abs=0.5)
+    assert deficit == pytest.approx(100.0 - 51.5, abs=0.5)
+    # θ 回落到 θ_wp (不再低于萎蔫点)
+    assert state.theta == pytest.approx(0.143, abs=0.003)
+
+
+def test_apply_feddes_et_root_weights_4layer():
+    """4 层根系权重 60/30/10/0: AET 按权重分配, ΣAET = PET (α=1 无钳制)"""
+    from src.hydrology import apply_feddes_et
+    prof = _surface_profile(porosity=0.55, depth=20)
+    states = [SoilState(theta=0.40) for _ in range(4)]
+    aet, deficit = apply_feddes_et(states, 20.0, [prof] * 4)
+    assert aet == pytest.approx([12.0, 6.0, 2.0, 0.0])
+    assert sum(aet) == pytest.approx(20.0)
+    assert deficit == pytest.approx(0.0)
+    # L4 根权重 0: θ 不变
+    assert states[3].theta == pytest.approx(0.40)

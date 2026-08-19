@@ -15,7 +15,7 @@ from typing import Optional, List, Dict, Any
 from src.logging_config import get_logger
 from src.constants import (PRECIP_INFILTRATION_DEFAULT,
                            NITRIFICATION_K1, NITRIFICATION_K2,
-                           INITIAL_PSI_CM)
+                           INITIAL_PSI_CM, DEFAULT_LATITUDE)
 
 logger = get_logger("config_manager")
 
@@ -127,6 +127,12 @@ class ClimateConfig:
     base_annual_temp: float = 25.0       # °C
     precip_increase_rate: float = 0.02   # 情景3: 2%/yr
     temp_increase_rate: float = 0.05     # 情景4: 0.05°C/yr
+    # v0.5.3 PET 通道 (D5)
+    latitude: float = DEFAULT_LATITUDE                  # 站点纬度 (°N, Oudin 必需)
+    pet_method: str = "oudin"                           # "oudin" | "fixed" (hargreaves=v0.6.0 预留报错)
+    pet_monthly_climate: Optional[List[float]] = None   # 12 值固定气候态月 PET (mm/month, 提供时优先)
+    pet_correction_factor: List[float] = field(
+        default_factory=lambda: [1.0] * 12)             # 12 值月度修正系数 (默认恒等)
 
 
 @dataclass
@@ -339,7 +345,12 @@ class ConfigManager:
                 base_annual_precip=c.get('base_annual_precip', 1893.0),
                 base_annual_temp=c.get('base_annual_temp', 25.0),
                 precip_increase_rate=c.get('precip_increase_rate', 0.02),
-                temp_increase_rate=c.get('temp_increase_rate', 0.05)
+                temp_increase_rate=c.get('temp_increase_rate', 0.05),
+                latitude=c.get('latitude', DEFAULT_LATITUDE),
+                pet_method=c.get('pet_method', 'oudin'),
+                pet_monthly_climate=c.get('pet_monthly_climate'),
+                pet_correction_factor=c.get('pet_correction_factor',
+                                            [1.0] * 12)
             )
 
         # 解析 fertilizer
@@ -502,6 +513,35 @@ class ConfigManager:
                 f"['simulation.initial_psi_cm' 参数存在问题: "
                 f"初始水势 {psi} 必须为负 (吸力水头 cm, 田间持水量≈-100), "
                 f"请确认后再输入]")
+
+        # ---- v0.5.3: PET 通道校验 (D5) ----
+        clim = self.config.climate
+        if not (-60.0 < clim.latitude < 60.0):
+            raise ValueError(
+                f"['climate.latitude' 参数存在问题: 纬度 {clim.latitude} "
+                f"超出范围 (-60,60), 请确认后再输入]")
+        if clim.pet_method == "hargreaves":
+            raise ValueError(
+                "['climate.pet_method' 参数存在问题: 'hargreaves' 为 "
+                "v0.6.0 预留 (需补充 T_max/T_min 输入), 当前版本仅支持 "
+                "'oudin'/'fixed', 请确认后再输入]")
+        if clim.pet_method not in ("oudin", "fixed"):
+            raise ValueError(
+                f"['climate.pet_method' 参数存在问题: 方法 {clim.pet_method} "
+                f"无效, 可选: 'oudin'/'fixed', 请确认后再输入]")
+        if clim.pet_monthly_climate is not None \
+                and len(clim.pet_monthly_climate) != 12:
+            raise ValueError(
+                "['climate.pet_monthly_climate' 参数存在问题: 必须为 12 值 "
+                "(逐月气候态 PET), 请确认后再输入]")
+        if len(clim.pet_correction_factor) != 12:
+            raise ValueError(
+                "['climate.pet_correction_factor' 参数存在问题: 必须为 12 值 "
+                "(逐月修正系数), 请确认后再输入]")
+        if clim.pet_method == "fixed" and clim.pet_monthly_climate is None:
+            raise ValueError(
+                "['climate.pet_method' 参数存在问题: 'fixed' 方法必须提供 "
+                "'pet_monthly_climate' (12 值), 请确认后再输入]")
 
         # 创建输出目录
         os.makedirs(self.config.output.directory, exist_ok=True)

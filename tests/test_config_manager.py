@@ -565,3 +565,70 @@ def test_layer_override_vgm_invalid_raises(tmp_path):
     with pytest.raises(ValueError, match="vgm_alpha"):
         ConfigManager(str(p2))
 
+
+# ==================== v0.5.3: PET 通道配置 (D5) ====================
+
+def test_climate_pet_defaults(cfg):
+    """默认 config: latitude=23.1, pet_method=oudin, 修正系数恒等, 无气候态"""
+    clim = cfg.config.climate
+    assert clim.latitude == 23.1
+    assert clim.pet_method == "oudin"
+    assert clim.pet_monthly_climate is None
+    assert clim.pet_correction_factor == [1.0] * 12
+
+
+def test_climate_pet_parse(tmp_path):
+    """YAML 覆盖 PET 通道字段 → 解析生效"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text(
+        "climate:\n  latitude: 28.2\n  pet_method: fixed\n"
+        "  pet_monthly_climate: [30, 35, 50, 70, 90, 100, 115, 110, 90, 65, 45, 30]\n"
+        "  pet_correction_factor: [0.95, 0.95, 1, 1, 1, 0.9, 0.85, 0.85, 0.9, 1, 1.05, 1.05]\n",
+        encoding="utf-8")
+    clim = ConfigManager(str(p)).config.climate
+    assert clim.latitude == 28.2
+    assert clim.pet_method == "fixed"
+    assert len(clim.pet_monthly_climate) == 12
+    assert clim.pet_correction_factor[5] == 0.9
+
+
+def test_climate_pet_hargreaves_reserved_raises(tmp_path):
+    """v0.5.3: pet_method=hargreaves → 显式报错 (v0.6.0 预留, 专家★4)"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text("climate:\n  pet_method: hargreaves\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="hargreaves"):
+        ConfigManager(str(p))
+
+
+def test_climate_pet_invalid_method_raises(tmp_path):
+    """pet_method 非法值 → 报错"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text("climate:\n  pet_method: unknown\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="pet_method"):
+        ConfigManager(str(p))
+
+
+def test_climate_pet_fixed_requires_climate(tmp_path):
+    """pet_method=fixed 但未提供 pet_monthly_climate → 报错"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text("climate:\n  pet_method: fixed\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="pet_monthly_climate"):
+        ConfigManager(str(p))
+
+
+def test_climate_pet_climate_length_raises(tmp_path):
+    """pet_monthly_climate 长度 ≠ 12 → 报错"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text("climate:\n  pet_monthly_climate: [1, 2, 3]\n",
+                 encoding="utf-8")
+    with pytest.raises(ValueError, match="pet_monthly_climate"):
+        ConfigManager(str(p))
+
+
+def test_climate_latitude_invalid_raises(tmp_path):
+    """latitude 越界 → 报错"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text("climate:\n  latitude: 90.0\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="latitude"):
+        ConfigManager(str(p))
+

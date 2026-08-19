@@ -10,7 +10,8 @@
 import pytest
 import types
 from src.vgm import (vgm_theta_from_psi, calc_psi, calc_Kr, calc_K,
-                     get_vgm_params, theta_to_water_L, water_L_to_theta)
+                     get_vgm_params, theta_to_water_L, water_L_to_theta,
+                     feddes_alpha)
 
 # 4 层内置默认 L1 剖面 VGM 参数 (VGM参数化方案.txt: 粘粒 25%)
 L1_THETA_S = 0.55
@@ -162,3 +163,33 @@ def test_conversion_boundaries():
     assert sat == pytest.approx(0.55 * 20.0 * 1e5)   # 1.1e6
     assert water_L_to_theta(0.0, 20.0) == 0.0
     assert water_L_to_theta(sat, 20.0) == pytest.approx(L1_THETA_S)
+
+
+# ==================== Feddes α(ψ) 四阈值 (Q3/Q9) ====================
+
+H1, H2, H3, H4 = -25.0, -100.0, -800.0, -15000.0
+
+
+def test_feddes_alpha_piecewise():
+    """α(ψ) 四阈值分段 (S1 专家★2): 厌氧0/线性升/平台1/线性降/萎蔫0"""
+    assert feddes_alpha(0.0, H1, H2, H3, H4) == 0.0       # 积水/饱和
+    assert feddes_alpha(-25.0, H1, H2, H3, H4) == 0.0     # h1 厌氧点
+    assert feddes_alpha(-50.0, H1, H2, H3, H4) == pytest.approx(
+        (-50 + 25) / (-100 + 25))                         # h1→h2 线性升 0.333
+    assert feddes_alpha(-100.0, H1, H2, H3, H4) == 1.0    # h2 最适上界
+    assert feddes_alpha(-500.0, H1, H2, H3, H4) == 1.0    # 平台
+    assert feddes_alpha(-800.0, H1, H2, H3, H4) == 1.0    # h3 最适下界
+    assert feddes_alpha(-2000.0, H1, H2, H3, H4) == pytest.approx(
+        (-2000 + 15000) / (-800 + 15000))                 # h3→h4 线性降
+    assert feddes_alpha(-15000.0, H1, H2, H3, H4) == 0.0  # h4 永久萎蔫
+    assert feddes_alpha(-20000.0, H1, H2, H3, H4) == 0.0  # 更深
+
+
+def test_feddes_alpha_monotonic_dry_side():
+    """旱端 (ψ<h2) 单调下降; 湿端为厌氧斜坡 (0→1, 非单调, Feddes 梯形)"""
+    # 旱端: 从最适区到永久萎蔫单调不增
+    dry_psis = [-100.0, -400.0, -800.0, -4000.0, -15000.0]
+    dry_alphas = [feddes_alpha(p, H1, H2, H3, H4) for p in dry_psis]
+    assert all(a1 >= a2 for a1, a2 in zip(dry_alphas, dry_alphas[1:]))
+    # 湿端厌氧斜坡: 饱和/积水 α=0, 向 h2 上升 (梯形, 非全局单调)
+    assert feddes_alpha(0.0, H1, H2, H3, H4) < feddes_alpha(-50.0, H1, H2, H3, H4)

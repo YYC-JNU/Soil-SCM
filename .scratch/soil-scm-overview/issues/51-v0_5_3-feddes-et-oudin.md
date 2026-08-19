@@ -4,11 +4,11 @@
 
 **Blocked by:** 50（依赖 θ 状态 + VGM ψ(θ)）
 
-**Status:** ready-for-agent
+**Status:** ✅ 已完成 (2026-08-19, v0.5.3)
 
-- [ ] calc_pet_oudin 逐月数组正确（纬度/温变/修正系数生效；广州 φ=23.1 参照）
-- [ ] config：latitude∈(−60,60)、pet_method 枚举、pet_correction_factor 长度 12；`pet_method="hargreaves"` 显式报错（S4 专家★4）
-- [ ] pet_monthly_climate 提供时优先于公式（解析断言）
-- [ ] feddes_alpha 四阈值分段：ψ≥h1→0 / h1→h2 线性升 / h2→h3=1 / h3→h4 线性降 / ψ≤h4→0（S1）
-- [ ] apply_feddes_et：逐层独立、亏缺丢弃、α=0 钳制（θ 不取负）、AET_i 与 et_deficit 数值手算验证
-- [ ] 测试（S3 + S2）：全绿
+- [x] calc_pet_oudin 逐月数组正确（纬度/温变/修正系数生效；广州 φ=23.1 参照：1 月 2.046 / 7 月 5.931 mm/day）
+- [x] config：latitude∈(−60,60)、pet_method 枚举、pet_correction_factor 长度 12；`pet_method="hargreaves"` 显式报错（S4 专家★4）
+- [x] pet_monthly_climate 提供时优先于公式（解析断言）
+- [x] feddes_alpha 四阈值分段：ψ≥h1→0 / h1→h2 线性升 / h2→h3=1 / h3→h4 线性降 / ψ≤h4→0（S1）
+- [x] apply_feddes_et：逐层独立、亏缺丢弃、α=0 钳制（θ 不取负）、AET_i 与 et_deficit 数值手算验证
+- [x] 测试（S3 + S2）：全绿；**223 passed 全绿**

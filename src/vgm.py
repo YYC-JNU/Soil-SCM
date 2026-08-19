@@ -17,7 +17,8 @@ from src.constants import (VGM_CLAY_THETA_R_A, VGM_CLAY_THETA_R_B,
                            VGM_CLAY_ALPHA_A, VGM_CLAY_ALPHA_B,
                            VGM_CLAY_N_A, VGM_CLAY_N_B,
                            VGM_FALLBACK_THETA_R, VGM_FALLBACK_ALPHA,
-                           VGM_FALLBACK_N, VGM_MUALEM_L)
+                           VGM_FALLBACK_N, VGM_MUALEM_L,
+                           FEDDES_H1, FEDDES_H2, FEDDES_H3, FEDDES_H4)
 
 
 def vgm_theta_from_psi(psi_cm: float, theta_s: float, theta_r: float,
@@ -120,3 +121,26 @@ def theta_to_water_L(theta: float, depth_cm: float) -> float:
 def water_L_to_theta(water_L: float, depth_cm: float) -> float:
     """层内水量 (L/ha) → θ (m³/m³): water_L / (depth_cm × 1e5)"""
     return water_L / (depth_cm * 1e5)
+
+
+def feddes_alpha(psi_cm: float, h1: float = FEDDES_H1,
+                 h2: float = FEDDES_H2, h3: float = FEDDES_H3,
+                 h4: float = FEDDES_H4) -> float:
+    """Feddes 水分胁迫函数 α(ψ) (0~1, ψ 版, Q3/Q9)
+
+    分段线性 (h1>h2>h3>h4, 均为负值 cm):
+      ψ ≥ h1  (厌氧/积水)  → 0
+      h2 ≤ ψ < h1           → 线性升 0→1
+      h3 < ψ < h2 (最适)    → 1
+      h4 ≤ ψ ≤ h3           → 线性降 1→0
+      ψ < h4  (永久萎蔫)    → 0
+    """
+    if psi_cm >= h1:
+        return 0.0
+    if psi_cm >= h2:                        # h2 ≤ ψ < h1: 线性升
+        return (psi_cm - h1) / (h2 - h1)
+    if psi_cm > h3:                         # h3 < ψ < h2: 平台 1
+        return 1.0
+    if psi_cm >= h4:                        # h4 ≤ ψ ≤ h3: 线性降
+        return (psi_cm - h4) / (h3 - h4)
+    return 0.0
