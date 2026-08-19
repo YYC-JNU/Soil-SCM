@@ -2,7 +2,7 @@
 
 基于 PHREEQC 地球化学引擎的土壤单点物理化学数值模式，用于模拟长期（数十年）施肥、酸化、淋溶与改良条件下的土壤化学演变（pH、盐基饱和度、交换性阳离子等）。
 
-> **当前版本**：v0.5.2（2026-08-18，Green-Ampt 物理入渗 + Ksat 字段拆分 + 大孔隙优先流 + 硝化限 L1）
+> **当前版本**：v0.5.3（2026-08-19，VGM 水分特征 + Feddes ET/Oudin PET + LayerCascade 重构 + OM 矿化产 CO₂）
 > **快速上手**：见 [USERGUIDE.md](USERGUIDE.md) ｜ **版本历史**：见 [§十一 版本更新记录](#十一版本更新记录)
 
 ---
@@ -338,6 +338,17 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 ---
 
 ## 十一、版本更新记录
+
+### v0.5.3（2026-08-19）
+
+> - **VGM 水分特征（θ 状态迁移）**：`SoilState.stored_water` → `theta`（规范状态，L/ha 由 `vgm.theta_to_water_L` 派生）；初始 θ 由 VGM 从 `initial_psi_cm=-100`（田间持水量）正算（废弃"50% 饱和"）；化学初始溶液体积联动 `θ_init×depth×1e5`；VGM 参数三级优先级（layer_overrides 显式 > clay_pct 回归 > 红壤兜底）
+> - **Feddes ET / Oudin PET**：`calc_pet_oudin` 逐月 PET（月均温+纬度）；`LayerCascade` 最前端扣除 AET_i=PET×f_root,i×α(ψ_i)（ψ 版 Feddes 四阈值，根系 60/30/10/0）；亏缺丢弃计 `et_deficit_mm`；config 新增 `latitude/pet_method/pet_monthly_climate/pet_correction_factor`
+> - **LayerCascade 重构**：θ_FC 可排水量 + K(θ) Mualem 界面通量（min(上下层 ksat) 木桶短板）+ 底部深层排水；`calc_interface_flux` 纯向下（`mode="bidirectional"` 预留 v0.6.0 毛细上升）
+> - **OM 矿化产 CO₂**：加性调制每层 pCO₂（`pCO₂_eff = base + k_om×OM_i`，钳制 0.05 atm）；4 层默认 OM 剖面 [30,15,8,5] 强化表层酸性
+> - **输出扩展**：新增 `AET_mm`/`et_deficit_mm`/`soil_moisture_Li`/`pCO2_eff` 列；`stored_water` 列语义不变（向后兼容）
+> - **breaking change**：`infiltration_initial/infiltration_steady`（Horton f0/fc）已移除，config 残留显式报错；`pet_method="hargreaves"` 报错（v0.6.0 预留）
+> - **运行验证**（E1：4 层 15 年 natural, seed=42）：预平衡收敛 pH 4.92（4 层）、年均 AET 935mm（水分闭合）；**科学诚实**——末月表层 pH 6.94（仍碳酸缓冲主导），E2/E3 显示 pH 无 PET/OM 方向响应（月尾 θ 恒 θ_FC + 化学体积解耦），pH 回落依赖 v0.6.0（子步长+体积耦合+Ks 重标定），详见 `docs/analysis/OPTIMIZATION_PLAN.md` §7.6
+> - **测试**：178 → **234 passed**（VGM/Feddes/OM/级联重构/输出扩展/废弃字段报错）
 
 ### v0.5.2（2026-08-18）
 

@@ -407,13 +407,12 @@ def test_nitrification_rates_invalid(tmp_path):
 # ==================== v0.5.0: 水文配置扩展 (T1) ====================
 
 def test_hydrology_fields_parse(tmp_path):
-    """layer_overrides 含 5 水文字段 + hydrology_seed 解析"""
+    """layer_overrides 含水文字段 (v0.5.3: f0/fc 已移除) + hydrology_seed 解析"""
     p = tmp_path / "cfg.yaml"
     p.write_text(
         "simulation:\n  n_years: 2\n  n_layers: 4\n  hydrology_seed: 123\n"
         "  layer_overrides:\n"
         "    - clay_pct: 25\n      porosity: 0.55\n      ksat: 76.8\n"
-        "      infiltration_initial: 1.0\n      infiltration_steady: 0.4\n"
         "    - {}\n    - {}\n    - {}\n", encoding="utf-8")
     sim = ConfigManager(str(p)).config.simulation
     assert sim.hydrology_seed == 123
@@ -421,8 +420,6 @@ def test_hydrology_fields_parse(tmp_path):
     assert lo.clay_pct == 25
     assert lo.porosity == 0.55
     assert lo.ksat == 76.8
-    assert lo.infiltration_initial == 1.0
-    assert lo.infiltration_steady == 0.4
     # 未覆盖水文字段保持 None
     assert sim.layer_overrides[1].ksat is None
 

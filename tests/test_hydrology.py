@@ -17,11 +17,9 @@ from src.phreeqc_engine import SoilState
 _reader = InputReader("data/soil_survey.csv", "data/exchangeable_ions.csv")
 
 
-def _surface_profile(porosity=0.55, depth=20.0, ksat=76.8, f0=1.0, fc=0.4,
-                     ksat_surface=7.2):
+def _surface_profile(porosity=0.55, depth=20.0, ksat=76.8, ksat_surface=7.2):
     base = _reader.build_soil_profile()
-    lo = LayerOverrideConfig(porosity=porosity, ksat=ksat, ksat_surface=ksat_surface,
-                             infiltration_initial=f0, infiltration_steady=fc)
+    lo = LayerOverrideConfig(porosity=porosity, ksat=ksat, ksat_surface=ksat_surface)
     return _reader.apply_layer_override(base, lo, depth)
 
 

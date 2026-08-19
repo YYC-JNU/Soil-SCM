@@ -131,8 +131,6 @@ DEFAULT_4LAYER_DEPTHS = [20.0, 20.0, 20.0, 40.0]    # 每层厚度 (cm)
 DEFAULT_4LAYER_CLAY_PCT = [25.0, 35.0, 45.0, 50.0]  # 粘粒含量 (%)
 DEFAULT_4LAYER_POROSITY = [0.55, 0.47, 0.45, 0.43]  # 孔隙度
 DEFAULT_4LAYER_KSAT = [12.0, 1.9, 0.48, 0.05]  # 层间排水上限 (cm/day, v0.5.2 起仅 LayerCascade 用)
-DEFAULT_4LAYER_F0 = [1.0, 0.4, 0.15, 0.04]          # 初渗率 f0 (mm/min, deprecated: Horton 废弃, v0.5.3 清理)
-DEFAULT_4LAYER_FC = [0.4, 0.2, 0.08, 0.02]          # 稳渗率 fc (mm/min, deprecated: Horton 废弃, v0.5.3 清理)
 
 # ---- v0.5.3 VGM 水分特征 (D8, VGM参数化方案.txt) ----
 # 三级参数优先级: ①layer_overrides 显式 vgm_* ②clay_pct 连续回归
