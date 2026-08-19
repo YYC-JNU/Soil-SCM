@@ -17,7 +17,9 @@
 import numpy as np
 from src.logging_config import get_logger
 from src.constants import (GREEN_AMPT_PSI_F_MM, GREEN_AMPT_NEWTON_TOL,
-                           GREEN_AMPT_NEWTON_MAX_ITER)
+                           GREEN_AMPT_NEWTON_MAX_ITER,
+                           FEDDES_H1, FEDDES_H2, FEDDES_H3, FEDDES_H4,
+                           ROOT_FRACTION_4LAYER)
 from src.vgm import theta_to_water_L, water_L_to_theta
 
 logger = get_logger("hydrology")
@@ -186,3 +188,48 @@ class LayerCascade:
             drains.append(drain)
             inflow = drain
         return drains, runoff_extra, drains[-1]
+
+
+# ---- v0.5.3 Feddes ET (Q3/Q9, spec 49 §3) ----
+
+def apply_feddes_et(states, pet_mm: float, profiles, root_weights=None):
+    """Feddes 根系吸水 ET 扣除 (逐层独立, 无跨层补偿, Q9)
+
+    物理: AET_i = PET × f_root,i × α(ψ_i); ψ 由 VGM 反算 (ψ 版 Feddes)。
+    - 逐层独立: 某层需求不足 (α 或水量) 即丢弃, 不向深层再分配 (Q9=A);
+    - 亏缺丢弃: 需求超出可提取水量 → AET 截断, 差额计入 et_deficit_mm (Q3b=B1);
+    - α=0 钳制: θ ≤ θ(ψ=h4) 永久萎蔫后 AET=0, θ 不取负 (天然钳制)。
+
+    参数:
+        states: List[SoilState] (theta 就地更新)
+        pet_mm: 本月 PET (mm, 已含月度修正系数)
+        profiles: List[SoilProfile] (逐层, 含 porosity/clay_pct/vgm_*)
+        root_weights: 根系分布权重 (默认 60/30/10/0, Σ=1)
+    返回:
+        (aet_mm_list, et_deficit_mm): 各层实际蒸散 (mm) + 亏缺总量 (mm)
+    """
+    from src.vgm import (calc_psi, feddes_alpha, get_vgm_params,
+                         vgm_theta_from_psi)
+    if root_weights is None:
+        root_weights = ROOT_FRACTION_4LAYER
+    aet_list = []
+    et_deficit = 0.0
+    for i, state in enumerate(states):
+        p = profiles[i]
+        depth = p.effective_depth
+        theta_r, alpha, n = get_vgm_params(p)
+        # θ → ψ (VGM 反算) → Feddes α(ψ)
+        psi = calc_psi(state.theta, p.porosity, theta_r, alpha, n)
+        a_stress = feddes_alpha(psi, FEDDES_H1, FEDDES_H2,
+                                FEDDES_H3, FEDDES_H4)
+        demand_mm = pet_mm * root_weights[i] * a_stress
+        # 可提取水量上限: θ ≥ θ(ψ=h4) (永久萎蔫以下不可提取), mm 水柱
+        theta_wp = vgm_theta_from_psi(FEDDES_H4, p.porosity,
+                                      theta_r, alpha, n)
+        avail_mm = max(0.0, (state.theta - theta_wp) * depth * 10.0)
+        aet_mm = min(demand_mm, avail_mm)
+        et_deficit += max(0.0, demand_mm - aet_mm)
+        # Δθ = AET_mm / (depth_cm × 10) (mm 水柱 → 体积含水量)
+        state.theta = max(0.0, state.theta - aet_mm / (depth * 10.0))
+        aet_list.append(aet_mm)
+    return aet_list, et_deficit

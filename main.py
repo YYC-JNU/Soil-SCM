@@ -284,6 +284,12 @@ def run_simulation(config_path: str = "config/config.yaml"):
         scenario=cfg.simulation.scenario,
         precip_increase_rate=cfg.climate.precip_increase_rate,
         temp_increase_rate=cfg.climate.temp_increase_rate,
+        # v0.5.3: PET 通道 (D5) — Oudin 为主 + fixed 气候态兜底
+        latitude=getattr(cfg.climate, 'latitude', 23.1),
+        pet_method=getattr(cfg.climate, 'pet_method', 'oudin'),
+        pet_monthly_climate=getattr(cfg.climate, 'pet_monthly_climate', None),
+        pet_correction_factor=getattr(cfg.climate, 'pet_correction_factor',
+                                      None),
     )
     climate.print_summary()
 
