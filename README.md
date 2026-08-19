@@ -2,7 +2,7 @@
 
 基于 PHREEQC 地球化学引擎的土壤单点物理化学数值模式，用于模拟长期（数十年）施肥、酸化、淋溶与改良条件下的土壤化学演变（pH、盐基饱和度、交换性阳离子等）。
 
-> **当前版本**：v0.5.3（2026-08-19，VGM 水分特征 + Feddes ET/Oudin PET + LayerCascade 重构 + OM 矿化产 CO₂）
+> **当前版本**：v0.6.0（2026-08-19，化学子步长拆分：事件驱动 PHREEQC + 体积-θ 耦合 + First-Flush + Hargreaves PET）
 > **快速上手**：见 [USERGUIDE.md](USERGUIDE.md) ｜ **版本历史**：见 [§十一 版本更新记录](#十一版本更新记录)
 
 ---
@@ -338,6 +338,16 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 ---
 
 ## 十一、版本更新记录
+
+### v0.6.0（2026-08-19）
+
+> - **事件驱动化学（子步长拆分）**：`RainEvent` dataclass + `generate_events`（seed 可复现，Σ 事件=月降水）+ `run_event_step` 事件级 PHREEQC（每场全量平衡）+ 主循环嵌套（for month → for event: 水文步→化学步→月末聚合）；`run_monthly_step` 保持签名（`event_driven` 标记激活，expand-contract 门禁，既有测试零改动）
+> - **化学溶液体积-θ 耦合（Q8b）**：`SOLUTION -water = θ_事件后×depth×1e5`（替换恒定 volume）；浓度按绝对量守恒换算（C_new=C_old×V_old/V_new）；月末浓缩平衡（θ 下降才触发）；交换相/矿物相绝对摩尔量不变；数值防护（θ_r 体积下限 + 单步浓缩比上限 3× + 离子浓度 >10 mol/L 判定失败）
+> - **First-Flush 捕获**：月度峰值列 `flush_NO3_peak_mmol`/`flush_base_peak_mmol`（当月 L1 最大单场淋失，默认开）+ 可选事件明细 CSV `output/event_leaching_<scenario>.csv`（`output.event_output: true`）
+> - **Hargreaves PET**：`calc_pet` 单入口分派（`pet_method: oudin|hargreaves`，`hargreaves_enhanced` 预留报错）；`climate.diurnal_range_deg`（默认 8.0）——Oudin 精度增强模式，下游 ET 无需感知
+> - **breaking change**：`pet_method="hargreaves"` 由"预留报错"转为可用；config 新增 `simulation.event_driven`（默认 false）/`output.event_output`（默认 false）
+> - **运行验证**（事件驱动 2 年 4 层 natural, seed=42）：预平衡 pH 4.92、末月表层 pH **3.86**（酸化方向，对比 v0.5.3 恒 6.94）、年均 AET 957mm（水分闭合）、First-Flush 峰值/月均比 3.15；**科学诚实**——E2 PET 敏感性 pH 非单调（600/900→3.87，1200/1400→5.49），E3 k_om 表层酸化方向达成（5.57→3.86）；3 年+ 深层盐分累积极端场景存在 PHREEQC 数值边界（留 v0.6.1），详见 `docs/analysis/OPTIMIZATION_PLAN.md` §8
+> - **测试**：234 → **259 passed**（事件生成/事件级化学/体积-θ 耦合/浓缩平衡/多层 events 路径/First-Flush 输出/Hargreaves）
 
 ### v0.5.3（2026-08-19）
 

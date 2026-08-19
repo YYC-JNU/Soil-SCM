@@ -341,7 +341,7 @@ climate:
   precip_increase_rate: 0.02   # 降水年递增 2%
   temp_increase_rate: 0.05     # 温度年递增 0.05°C（仅在 temp_increase 时生效）
   latitude: 23.1               # v0.5.3: Oudin PET 站点纬度 (°N)
-  pet_method: oudin            # v0.5.3: "oudin"|"fixed" (hargreaves=v0.6.0 预留)
+  pet_method: oudin            # v0.6.0: "oudin"|"fixed"|"hargreaves" (hargreaves_enhanced=v0.7.0 预留)
 ```
 
 ---
