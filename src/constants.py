@@ -164,4 +164,11 @@ ROOT_FRACTION_4LAYER = [0.60, 0.30, 0.10, 0.00]
 DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 DEFAULT_LATITUDE = 23.1                 # 站点纬度默认 (广州, 华南红壤典型)
 
+# ---- v0.5.3 OM 矿化产 CO₂ (D7/Q4/Q10) ----
+# 加性调制 GAS_PHASE pCO₂: pCO₂_eff = base(T) + k_om×OM_i, 钳制 ≤ pCO₂_max
+# (加性防高 OM 失控, 专家 Q4 修订; 温度独立性: T 响应仅归 base 项, 专家★3)
+K_OM_PCO2 = 0.0005          # OM → ΔpCO₂ 系数 (atm per g/kg): L1 30g/kg → +0.015 atm
+PCO2_MAX = 0.05             # 层内 pCO₂ 上限钳制 (atm)
+OM_PROFILE_4LAYER = [30.0, 15.0, 8.0, 5.0]   # 4 层内置默认有机质 (g/kg, 表层富集)
+
 

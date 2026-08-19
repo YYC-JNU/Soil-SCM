@@ -149,10 +149,12 @@ def test_build_initial_layer_states_with_overrides(profile, soil_info):
     assert states[0].gas_phase != states[1].gas_phase
     assert states[0].ph == pytest.approx(4.5)
     assert states[1].ph == pytest.approx(5.0)
-    # pCO2: 第 1 层覆盖 0.03, 第 2 层回退全局 0.015
-    assert pco2s == [0.030, 0.015]
-    assert states[0].gas_phase["CO2(g)"] == pytest.approx(0.030)
-    assert states[1].gas_phase["CO2(g)"] == pytest.approx(0.015)
+    # pCO2: 第 1 层覆盖 0.03, 第 2 层回退全局 0.015;
+    # v0.5.3/Q6: OM 加性调制后 = base + k_om×OM (两层 OM 均为 20 g/kg → +0.01)
+    assert pco2s == pytest.approx([0.030 + 0.0005 * 20.0,
+                                   0.015 + 0.0005 * 20.0])
+    assert states[0].gas_phase["CO2(g)"] == pytest.approx(0.040)
+    assert states[1].gas_phase["CO2(g)"] == pytest.approx(0.025)
     # 层深派生
     assert profiles[0].effective_depth == 10.0
     assert profiles[1].effective_depth == 20.0
@@ -229,6 +231,39 @@ def test_build_initial_layer_states_n4_injects_ksat_surface(profile, soil_info):
         e, _reader(), profile, soil_info, 0.015, cfg)
     for i in range(4):
         assert profiles[i].ksat_surface == DEFAULT_KSAT_SURFACE
+
+
+def test_n4_default_om_profile_applied(profile, soil_info):
+    """v0.5.3/T4 (S3 专家★3): 4 层内置默认注入 OM 剖面 [30,15,8,5]"""
+    from src.constants import OM_PROFILE_4LAYER
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    cfg = SimulationConfig(n_layers=4)
+    _, _, _, profiles = main._build_initial_layer_states(
+        e, _reader(), profile, soil_info, 0.015, cfg)
+    for i in range(4):
+        assert profiles[i].organic_matter == OM_PROFILE_4LAYER[i]
+
+
+def test_n4_default_pco2_om_gradient(profile, soil_info):
+    """v0.5.3/T4 (S3): 逐层 pCO₂_eff = base + k_om×OM_i, 表层最大且钳制
+
+    加性调制注入 GAS_PHASE (Q4/Q10); 垂直梯度 L1>L2>L3>L4。
+    """
+    from src.constants import OM_PROFILE_4LAYER, PCO2_MAX
+    from src.climate_forcing import apply_om_pco2
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    cfg = SimulationConfig(n_layers=4)
+    _, states, pco2s, _ = main._build_initial_layer_states(
+        e, _reader(), profile, soil_info, 0.015, cfg)
+    assert pco2s is not None
+    for i in range(4):
+        assert pco2s[i] == pytest.approx(apply_om_pco2(0.015, OM_PROFILE_4LAYER[i]))
+    # 垂直梯度: L1 最大 (表层有机质富集 → 表层酸性强化)
+    assert pco2s[0] > pco2s[1] > pco2s[2] > pco2s[3]
+    # 全部 ≤ 钳制上限 (防高 OM 失控)
+    assert all(p <= PCO2_MAX for p in pco2s)
+    # 初始气相已用有效 pCO₂ (注入生效)
+    assert states[0].gas_phase["CO2(g)"] == pytest.approx(pco2s[0])
 
 
 # ==================== v0.5.2: 大孔隙优先流 bypass (S4/S5 seam) ====================

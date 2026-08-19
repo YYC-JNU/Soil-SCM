@@ -79,3 +79,36 @@ def test_get_monthly_forcing_has_pet():
     f = cf.get_monthly_forcing(0, 0)
     assert "pet" in f
     assert f["pet"] == pytest.approx(cf.monthly_pet[0, 0])
+
+
+# ==================== v0.5.3 OM 矿化产 CO₂ (Q4/Q10, 专家★3) ====================
+
+def test_apply_om_pco2_additive():
+    """加性: pCO₂_eff = base + k_om×OM (L1 30g/kg → +0.015 atm)"""
+    from src.climate_forcing import apply_om_pco2
+    assert apply_om_pco2(0.015, 30.0) == pytest.approx(0.030)
+    assert apply_om_pco2(0.015, 0.0) == pytest.approx(0.015)
+
+
+def test_apply_om_pco2_clamped():
+    """钳制: 高 OM 下 pCO₂_eff ≤ pCO₂_max (不失控, Q4 专家修订)"""
+    from src.climate_forcing import apply_om_pco2
+    assert apply_om_pco2(0.04, 30.0) == pytest.approx(0.05)    # 0.055 → 钳制
+    assert apply_om_pco2(0.049, 100.0) == pytest.approx(0.05)  # 极高 OM 也钳制
+
+
+def test_apply_om_pco2_temperature_independent():
+    """温度独立性 (专家★3): ΔpCO₂ 与 T/base 无关 (增量恒定, T 响应仅归 base)"""
+    from src.climate_forcing import apply_om_pco2
+    d_low = apply_om_pco2(0.010, 30.0) - 0.010
+    d_high = apply_om_pco2(0.030, 30.0) - 0.030
+    assert d_low == pytest.approx(d_high)   # 同 OM 异 base → 增量相同
+
+
+def test_apply_om_pco2_vertical_gradient():
+    """垂直梯度 (专家★3): OM [30,15,8,5] → pCO₂_eff 单调不增且表层增量最大"""
+    from src.climate_forcing import apply_om_pco2
+    base = 0.015
+    effs = [apply_om_pco2(base, om) for om in (30.0, 15.0, 8.0, 5.0)]
+    assert all(e1 >= e2 for e1, e2 in zip(effs, effs[1:]))
+    assert effs[0] - base > effs[3] - base   # 表层增量最大

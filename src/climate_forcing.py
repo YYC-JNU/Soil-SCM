@@ -15,7 +15,27 @@
 import numpy as np
 from typing import Tuple
 from src.utils import estimate_soil_pCO2
-from src.constants import (DAYS_IN_MONTH, DEFAULT_LATITUDE)
+from src.constants import (DAYS_IN_MONTH, DEFAULT_LATITUDE,
+                           K_OM_PCO2, PCO2_MAX)
+
+
+def apply_om_pco2(pco2_base: float, om_gkg: float,
+                  k_om: float = K_OM_PCO2,
+                  pco2_max: float = PCO2_MAX) -> float:
+    """OM 矿化产 CO₂ 加性调制: pCO₂_eff = pCO₂_base + k_om×OM_i, 钳制 ≤ pCO₂_max
+
+    D7/Q4/Q10: 加性 (非乘性, 防高 OM 失控, 专家 Q4 修订) + 上限钳制;
+    温度独立性 (T 响应仅归 base 项, 不 double-count, 专家★3)。
+
+    参数:
+        pco2_base: 层内基准 pCO₂ (atm, 温度驱动)
+        om_gkg: 有机质含量 (g/kg, 逐层)
+        k_om: OM → ΔpCO₂ 系数 (atm per g/kg)
+        pco2_max: 层内 pCO₂ 上限钳制 (atm)
+    返回:
+        float: 层内有效 pCO₂ (atm)
+    """
+    return min(pco2_base + k_om * om_gkg, pco2_max)
 
 
 def calc_pet_oudin(t_mean_c: float, latitude_deg: float, month: int) -> float:
