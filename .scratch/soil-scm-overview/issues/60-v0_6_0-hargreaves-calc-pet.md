@@ -4,11 +4,11 @@
 
 **Blocked by:** None — can start immediately（spec 55 已定案）
 
-**Status:** ready-for-agent
+**Status:** ✅ 已完成 (2026-08-19, v0.6.0)
 
-- [ ] `calc_pet` 单入口分派：`"oudin"` 与 `calc_pet_oudin` 数值等价（回归测试）
-- [ ] `"hargreaves"` 公式端点正确（T_max/T_min 代入断言）；日较差敏感性（range↑→PET↑）
-- [ ] `"hargreaves_enhanced"` 显式报错（不静默）
-- [ ] `_generate_pet` 改走 `calc_pet`；`pet_monthly_climate` 兜底优先语义不变
-- [ ] config：`diurnal_range_deg` 解析 + 值域校验（>0）；config.yaml/config_example.yaml 同步
-- [ ] 全测试绿（S4 接缝 test_climate_forcing.py 扩展 + test_config_manager.py）
+- [x] `calc_pet` 单入口分派：`"oudin"` 与 `calc_pet_oudin` 数值等价（回归测试）
+- [x] `"hargreaves"` 公式端点正确（T_max/T_min 代入断言）；日较差敏感性（range↑→PET↑，∝√range）
+- [x] `"hargreaves_enhanced"` 显式报错（不静默）
+- [x] `_generate_pet` 改走 `calc_pet`；`pet_monthly_climate` 兜底优先语义不变
+- [x] config：`diurnal_range_deg` 解析 + 值域校验（>0）；config.yaml/config_example.yaml 同步
+- [x] 全测试绿（S4 接缝 test_climate_forcing.py 扩展 + test_config_manager.py）；**255 passed 全绿**

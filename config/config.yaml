@@ -26,6 +26,8 @@ simulation:
   hydrology_seed: 42                 # v0.5.0: 随机降雨种子 (同 seed 可复现)
   bypass_fraction: 0.2               # v0.5.2: 大孔隙优先流比例 (0~1, 超基质 Ks 积水直通 L2, 携带原始降水化学)
   initial_psi_cm: -100               # v0.5.3: 初始基质势 (cm, 负值, 田间持水量; VGM 正算初始 θ, 化学溶液体积联动)
+  event_driven: false                # v0.6.0: 事件驱动化学 (子步长拆分: 逐场 Green-Ampt+PHREEQC+体积-θ耦合
+                                     #   +First-Flush 峰值列); 默认关 (月级路径护栏); 开启后计算量 4~12 倍
 
   # ---- L6 (v0.4.0): 逐层参数覆盖 (真实剖面约束, 仅 n_layers>1 时生效) ----
   layer_depths: null                 # 每层厚度 (cm), 长度必须 = n_layers; null=等分兜底; 每层 effective_depth 由此派生

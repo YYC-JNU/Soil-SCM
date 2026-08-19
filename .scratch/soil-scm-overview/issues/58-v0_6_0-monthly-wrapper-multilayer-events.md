@@ -4,12 +4,12 @@
 
 **Blocked by:** 56 — RainEvent + generate_events；57 — run_event_step + 体积-θ 耦合
 
-**Status:** ready-for-agent
+**Status:** ✅ 已完成 (2026-08-19, v0.6.0)
 
-- [ ] `run_monthly_step` 事件化包装：内部 `generate_events` → 逐场水文步（Green-Ampt+θ 更新）→ `run_event_step` → 月末浓缩平衡；签名/返回契约不变
-- [ ] 现有 234 测试**一字不改全部通过**（expand-contract 门禁，S1 接缝）
-- [ ] 新增"月内事件聚合"不变量测试：Σ事件降水=月降水、月末状态=最后事件状态（S1 扩展）
-- [ ] `run_monthly_multi_layer` `events` 路径：逐场逐层级联（上层事件1排水→下层事件1，S5 接缝）
-- [ ] 无 `events` 键回退旧月级路径（护栏测试）
-- [ ] bypass 逐场注入 L2 总量 = 月聚合值（S5 扩展）
-- [ ] 全测试绿（S1/S5 接缝）
+- [x] `run_monthly_step` 事件化包装（`event_driven=True` 触发）：内部 `generate_events` → 逐场 Green-Ampt+θ 更新 → `run_event_step` → 月末浓缩平衡；签名/返回契约不变
+- [x] 现有 234 测试**一字不改全部通过**（expand-contract 门禁，S1 接缝）；无 `event_driven` 标记回退旧单次平衡（预平衡不受影响）
+- [x] 新增"月内事件聚合"不变量测试：Σ事件降水=月降水、月末状态=最后事件状态（S1 扩展）
+- [x] `run_monthly_multi_layer` `events` 路径：逐场逐层级联（上层事件排水→下层当场，S5 接缝）
+- [x] 无 `events` 键回退旧月级路径（护栏测试）
+- [x] bypass 逐场注入 L2（事件粒度，S5 扩展）
+- [x] 全测试绿（S1/S5 接缝）；**248 passed 全绿**

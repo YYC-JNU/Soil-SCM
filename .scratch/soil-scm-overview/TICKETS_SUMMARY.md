@@ -65,6 +65,13 @@
 | 52 | v0.5.3 LayerCascade 重构 + ET 集成（T3） | 2026-08-19 | ✅ 已完成 | θ_FC/K(θ) 通量 + calc_interface_flux 纯向下 + ET 前置编排（spec 49 S2/S5）；226 测试全绿 |
 | 53 | v0.5.3 OM 矿化产 CO₂（T4） | 2026-08-19 | ✅ 已完成 | apply_om_pco2 加性+钳制 + OM 剖面 [30,15,8,5] + 逐层 pCO₂ 调制（spec 49 S3/S4/S6）；232 测试全绿 |
 | 54 | v0.5.3 集成、验收 E1~E3 与发布（T5） | 2026-08-19 | ✅ 已完成 | main 编排 + 输出列 + f0/fc 移除 + 验收（E1 收敛 ✓/E2/E3 无方向响应, 诚实记录）+ 发布 v0.5.3；234 测试全绿 |
+| 55 | v0.6.0 事件驱动化学 spec（子步长拆分最小闭环） | 2026-08-19 | ✅ 已落地 | 经工单 56~61 (2026-08-19, v0.6.0) 全部实现；259 测试全绿 |
+| 56 | v0.6.0 RainEvent + generate_events（S3） | 2026-08-19 | ✅ 已完成 | src/hydrology.py：RainEvent dataclass + generate_events（seed 复现/Σ=月降水）；237 测试全绿 |
+| 57 | v0.6.0 run_event_step + 体积-θ 耦合（S2） | 2026-08-19 | ✅ 已完成 | 事件级 PHREEQC + -water=θ×depth×1e5 + 浓缩平衡 + 浓度下限 1e-10；244 测试全绿 |
+| 58 | v0.6.0 run_monthly_step 包装 + 多层 events 路径（S1/S5） | 2026-08-19 | ✅ 已完成 | event_driven 事件化（expand-contract 门禁）+ events 键逐场逐层级联 + 无 events 回退护栏；248 测试全绿 |
+| 59 | v0.6.0 main 事件编排 + First-Flush 输出（S6） | 2026-08-19 | ✅ 已完成 | _apply_hydrology_events 逐场编排 + flush 峰值列 + 事件明细 CSV；259 测试全绿 |
+| 60 | v0.6.0 Hargreaves calc_pet 单入口分派（S4） | 2026-08-19 | ✅ 已完成 | calc_pet 分派（oudin/hargreaves/enhanced 报错）+ diurnal_range_deg config；259 测试全绿 |
+| 61 | v0.6.0 集成、验收 E1~E3 与发布 | 2026-08-19 | ✅ 已完成 | 事件 θ 精确耦合修复 + 数值稳定性防护（浓缩上限/浓度检查）+ 验收（E1 ✓/E2 非单调诚实记录/E3 酸化方向 ✓/FF 比 3.15）+ 发布 v0.6.0；259 测试全绿 |
 
 ---
 

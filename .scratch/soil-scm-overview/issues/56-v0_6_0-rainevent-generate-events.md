@@ -4,10 +4,10 @@
 
 **Blocked by:** None — can start immediately（spec 55 已定案）
 
-**Status:** ready-for-agent
+**Status:** ✅ 已完成 (2026-08-19, v0.6.0)
 
-- [ ] `RainEvent` dataclass 落位 `src/hydrology.py`：precip_mm/duration_h/date_hint/precip_chem，默认值正确（duration_h=EVENT_HOURS=2.0）
-- [ ] `generate_events` 复用 `generate_rainfall` seed 派生，同 seed 同事件序列（可复现测试）
-- [ ] 事件数量落在 [4,12] 范围；Σ precip_mm = 月总量（质量守恒不变量测试）
-- [ ] 事件降水均为正；单场历时默认 2.0 h（RainEvent.duration_h）
-- [ ] 全测试绿（S3 接缝 test_hydrology.py 扩展）
+- [x] `RainEvent` dataclass 落位 `src/hydrology.py`：precip_mm/duration_h/date_hint/precip_chem，默认值正确（duration_h=EVENT_HOURS=2.0）
+- [x] `generate_events` 复用 `generate_rainfall` seed 派生，同 seed 同事件序列（可复现测试）
+- [x] 事件数量落在 [4,12] 范围；Σ precip_mm = 月总量（质量守恒不变量测试）
+- [x] 事件降水均为正；单场历时默认 2.0 h（RainEvent.duration_h）
+- [x] 全测试绿（S3 接缝 test_hydrology.py 扩展）；**237 passed 全绿**

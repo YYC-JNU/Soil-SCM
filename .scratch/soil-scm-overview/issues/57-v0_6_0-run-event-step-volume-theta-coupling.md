@@ -4,11 +4,11 @@
 
 **Blocked by:** 56 — RainEvent + generate_events
 
-**Status:** ready-for-agent
+**Status:** ✅ 已完成 (2026-08-19, v0.6.0)
 
-- [ ] `run_event_step` 事件级 forcing 契约：precip（单场）/inflow_water_L/bypass_water_L/inflow_ions/temp/pCO2/skip_nitrification/injection
-- [ ] 体积-θ 重建：`-water` = θ_事件后×depth×1e5（数值断言，S2 接缝）
-- [ ] 交换相/矿物相绝对摩尔量不变（仅溶液体积随 θ 变化）
-- [ ] `apply_concentration_equilibrium`：θ 下降触发浓缩平衡、θ 不变跳过（零额外计算）
-- [ ] 浓度下限 `1e-10 mol/L` 施加于 `_build_phreeqc_input`
-- [ ] 全测试绿（S2 接缝新 test_event_chemistry.py）
+- [x] `run_event_step` 事件级 forcing 契约：precip（单场）/inflow_water_L/bypass_water_L/inflow_ions/temp/pCO2/skip_nitrification/injection
+- [x] 体积-θ 重建：`-water` = θ_事件后×depth×1e5（数值断言，S2 接缝）+ 浓度按绝对量守恒换算（C_new = C_old×V_old/V_new）
+- [x] 交换相/矿物相绝对摩尔量不变（仅溶液体积随 θ 变化）
+- [x] `apply_concentration_equilibrium`：θ 下降触发浓缩平衡、θ 不变跳过（零额外计算）
+- [x] 浓度下限 `1e-10 mol/L` 施加于 `_build_phreeqc_input`
+- [x] 全测试绿（S2 接缝新 test_event_chemistry.py）；**244 passed 全绿**

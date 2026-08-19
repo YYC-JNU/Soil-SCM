@@ -205,17 +205,19 @@ Q10 子时间步、Q11 输出变量、Q14 anatase、Q17 包结构、Q19 魔法�
       与 pH 回落 4.5~5.5 的**方向**（不承诺具体值）
 
 #### v0.6.0 — 化学子步长拆分（物理-化学范式转变）
-- [ ] **逐场化学平衡**：`phreeqc_engine` 接口从 `run_monthly` 改为 `run_event`
+- [x] **逐场化学平衡**：`phreeqc_engine` 接口从 `run_monthly` 改为 `run_event`
       （Q_in/C_in/θ/离子状态）；每场降雨一次 PHREEQC（**全量，无解析近似**）
-- [ ] **嵌套循环**：`scenario_controller` 主循环改为
+- [x] **嵌套循环**：`scenario_controller` 主循环改为
       `for month → for event: 水文步 → 化学步 → 月末聚合`
-- [ ] **First-Flush 捕获**：龙舟水/台风期重金属、硝酸盐脉冲式淋失峰值如实输出
+- [x] **First-Flush 捕获**：龙舟水/台风期重金属、硝酸盐脉冲式淋失峰值如实输出
       （冲击顶刊核心武器）
-- [ ] **计算成本**：接受 4~12 倍计算量；长模拟用 `run_monthly_step_with_timeout`
+- [x] **计算成本**：接受 4~12 倍计算量；长模拟用 `run_monthly_step_with_timeout`
       分块断点续跑（sensitivity 脚本 `--all --max N` 模式）
-- [ ] **PET 升级 Hargreaves-Samani**（补充 T_max/T_min 输入，区分干热/湿热）；
+- [x] **PET 升级 Hargreaves-Samani**（补充 T_max/T_min 输入，区分干热/湿热）；
       WRF 耦合后转 Penman-Monteith 纯读取模式
 - [ ] **β 动态调整**（后续小版本）：旱季 0.30~0.40 / 雨季 0.10~0.15
+- [x] **化学溶液体积-θ 耦合（Q8b）**：`-water = θ×depth×1e5` 逐事件重建 + 月末浓缩平衡
+      （v0.5.3 E2/E3 无方向响应的根因修复，OPTIMIZATION_PLAN §7.6）
 
 **工程要点**：
 - 三阶段 = 改动量/风险从小到大（v0.5.2 仅替换入渗函数；v0.5.3 状态迁移；v0.6.0 循环重构）；
@@ -254,5 +256,6 @@ Q10 子时间步、Q11 输出变量、Q14 anatase、Q17 包结构、Q19 魔法�
 | v0.5.1 | 2026-08-17 | 表层入渗系数 config 化 + 入渗率敏感性实验（发现层间级联穿透阈值 L2~0.25/L3~0.45/L4~0.65）；**168 测试全绿** |
 | **v0.5.2** | 2026-08-18 | **Green-Ampt 物理入渗**（废弃 surface_coeff）+ Ksat 字段拆分（排水 [12,1.9,0.48,0.05] + ksat_surface 7.2）+ 优先流（bypass_fraction=0.2 注入 L2）+ 硝化限 L1；**178 测试全绿** |
 | **v0.5.2** | 规划 | Green-Ampt 表层入渗（废弃 surface_coeff）+ Ksat_surface/ksat_drainage 字段拆分 + β=0.2 优先流注入 L2 + 硝化产酸限 L1 |
-| **v0.5.3** | 规划 | VGM 水分特征（三级参数化 + 田间持水量初始化）+ Feddes ET（Oudin PET）+ LayerCascade 下游接收能力重构 + OM 矿化产 CO₂ + θ/ψ 状态迁移 |
-| **v0.6.0** | 规划 | 化学子步长拆分（逐场全量 PHREEQC + First-Flush）+ Hargreaves PET 升级 + β 动态调整 |
+| **v0.5.3** | 2026-08-19 | **VGM 水分特征 + Feddes ET/Oudin PET + LayerCascade 重构 + OM 矿化产 CO₂**（θ 状态迁移）；**234 测试全绿** |
+| **v0.6.0** | 2026-08-19 | **化学子步长拆分**（事件驱动 PHREEQC + 体积-θ 耦合 Q8b + First-Flush 峰值列/事件明细 + Hargreaves calc_pet 分派）；**259 测试全绿** |
+| **v0.6.1** | 规划 | 数值稳定性调校（E2 PET 非单调 + 深层盐分累积 PHREEQC 边界）+ β 动态调整 |

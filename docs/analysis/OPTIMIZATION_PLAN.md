@@ -461,3 +461,31 @@
 - **E2（PET 600~1400mm）**：月尾 θ 恒 0.41、pH 恒 6.94——月度盒子的**月尾聚合丢失旱季干化信号**（旱季干化发生在月内，被 ET→入渗→回充至 θ_FC 掩盖）；**化学溶液体积与 θ 解耦**（Q8b 已知，月度 REACTION 增量式）使干燥不产生浓缩酸化。干湿交替的可见化依赖 v0.6.0 化学子步长/体积耦合。
 - **E3（k_om 0.0003~0.0008）**：pCO₂_eff 注入生效（0.024→0.039 atm）但 **pH 无响应（恒 6.94）**——OM 加性调制被矿物/碳酸缓冲完全抵消，当前参数化**未产生表层酸化方向**；k_om 需重参数化（可能需显著提高或改变注入方式），E3 在发布前暴露此局限（符合 spec 49 Q13 要求）。
 - **验收结论**：v0.5.3 验收**仅覆盖机制落地 + 水分平衡闭合 + 预平衡收敛**（对照 spec 49 科学诚实边界）；**pH 回落 4.5~5.5 未达成**，方向性证据不足，留待 v0.6.0（子步长 + 体积耦合 + Ks 重标定）联合解决。不夸大。
+
+### 8.1 v0.6.0 落地执行日志（2026-08-19，工单 56~61）
+
+**实施**：`/grilling`（Q1~Q16 定案）→ `/to-spec`（spec 55）→ `/to-tickets`（56~61）→ `/implement`（TDD 红绿循环，逐工单提交）。
+
+| 工单 | 内容 | 落地 |
+|------|------|------|
+| 56 | RainEvent + generate_events | `src/hydrology.py`：`RainEvent` dataclass + `generate_events`（seed 派生与 `generate_rainfall` 一致，Σ 事件=月降水）（237 测试） |
+| 57 | run_event_step + 体积-θ 耦合 | `run_event_step`（事件级 PHREEQC，`-water=θ×depth×1e5` + 浓度绝对量守恒换算）+ `apply_concentration_equilibrium`（月末浓缩平衡）+ 浓度下限 1e-10（244 测试） |
+| 58 | run_monthly_step 聚合包装 + 多层 events 路径 | `event_driven` 标记事件化（expand-contract，现有测试零改动）+ `run_monthly_multi_layer` hydrology `events` 键逐场逐层级联 + 无 events 回退护栏（248 测试） |
+| 59 | main 事件编排 + First-Flush | `_apply_hydrology_events`（月首 ET + 逐场 Green-Ampt/级联/bypass）+ 峰值列 `flush_NO3_peak_mmol`/`flush_base_peak_mmol` + 事件明细 CSV（259 测试） |
+| 60 | Hargreaves calc_pet | `calc_pet` 单入口分派（oudin/hargreaves/hargreaves_enhanced 预留报错）+ `diurnal_range_deg` config（259 测试） |
+| 61 | 集成 + 验收 + 发布 | 验收 E1~E3 + 数值稳定性修复（theta_after/浓缩保护/浓度上限检查）+ 文档 + 发布（259 测试） |
+
+**运行验证（事件驱动 2 年 4 层 natural, seed=42, `tools/verify_v0_6_0_acceptance.py`）**：
+
+| 指标 | v0.5.3（月级） | v0.6.0（事件驱动） |
+|------|----------------|--------------------|
+| 预平衡收敛 pH | 4.92 | **4.92**（4 层全收敛） |
+| 末月表层 pH | 6.94（恒，碳酸缓冲主导） | **3.86**（酸化方向，事件驱动+体积-θ 耦合生效） |
+| 年均 AET | 935 mm | **957 mm**（水分闭合：AET+径流<降水，含水/深层余量） |
+| First-Flush 峰值/月均比 | — | **3.15**（脉冲式淋失如实输出） |
+| E3 k_om 敏感性 | 无 pH 响应（恒 6.94） | **5.57→3.86**（表层酸化方向达成） |
+
+**科学诚实记录（验收边界，留 v0.6.1）**：
+- **E2（PET 600~1400mm）非单调**：PET 600/900 → pH 3.87（酸化），1200/1400 → 5.49（反跳）——pH 对 PET **有响应**（对比 v0.5.3 恒 6.94）但方向非单调，疑似高 PET 强浓缩 → 高离子强度 → 缓冲体系改变（碳酸/矿物缓冲非线性），需 v0.6.1 参数调校。
+- **3 年+ 深层盐分累积数值边界**：长期模拟深层（L2~L4）盐分累积极端场景 PHREEQC 平衡失败并输出异常浓度（实测 Cl=44 mol/L）→ 已加三层防护（`theta_after` 事件 θ 精确耦合、`MAX_CONCENTRATION_RATIO=3` + θ_r 体积下限、`_parse_official_output` 离子浓度 >10 mol/L 判定失败防级联放大）；**fallback 永久降级语义未改**（v0.5.3 契约，测试依赖），失败事件局部降级/盐分淋失路径调校列为 v0.6.1。
+- **验收结论**：v0.6.0 达成核心（**事件驱动化学 + 体积-θ 耦合（Q8b 根因修复）+ First-Flush + Hargreaves + E1/E3 方向性验收**）；**pH 回落 4.5~5.5 方向证据已出现（3.86）但具体值/E2 单调性未承诺**，与 v0.5.3 同口径。不夸大。
