@@ -71,6 +71,7 @@ class SimulationConfig:
     hydrology_seed: int = 42                    # v0.5.0: 随机降雨生成种子 (可复现)
     bypass_fraction: float = 0.2                # v0.5.2: 大孔隙优先流比例 (0~1, 超基质 Ks 积水直通 L2)
     initial_psi_cm: float = INITIAL_PSI_CM      # v0.5.3: 初始基质势 (cm, 负值, 田间持水量, VGM 正算 θ_init)
+    event_driven: bool = False                  # v0.6.0: 事件驱动化学 (子步长拆分, 逐场 PHREEQC), 默认关
 
 
 @dataclass
@@ -212,6 +213,7 @@ class OutputConfig:
         "pH", "base_saturation", "CEC_occupied",
         "exchangeable_Ca", "exchangeable_Al"
     ])
+    event_output: bool = False           # v0.6.0: 逐场事件明细 CSV (默认关, 文件体积控制)
 
 
 @dataclass
@@ -301,7 +303,8 @@ class ConfigManager:
                 nitrification_k2=s.get('nitrification_k2', NITRIFICATION_K2),
                 hydrology_seed=s.get('hydrology_seed', 42),
                 bypass_fraction=s.get('bypass_fraction', 0.2),
-                initial_psi_cm=s.get('initial_psi_cm', INITIAL_PSI_CM)
+                initial_psi_cm=s.get('initial_psi_cm', INITIAL_PSI_CM),
+                event_driven=s.get('event_driven', False)
             )
             # v0.5.2: surface_infiltration_coeff 已废弃 (Green-Ampt 入渗替代
             # Horton), 残留配置显式报错 (breaking change 明示, 不静默忽略)
@@ -419,7 +422,8 @@ class ConfigManager:
             config.output = OutputConfig(
                 directory=o.get('directory', './output'),
                 format=o.get('format', 'csv'),
-                variables=o.get('variables', config.output.variables)
+                variables=o.get('variables', config.output.variables),
+                event_output=o.get('event_output', False)
             )
 
         return config

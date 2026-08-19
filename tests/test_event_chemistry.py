@@ -187,3 +187,30 @@ def test_run_monthly_multi_layer_fallback_without_events(profile, soil_info):
     assert len(new_states) == 2
     assert all(s.ph > 0 for s in new_states)
     assert len(diags) == 2
+
+
+def test_run_monthly_multi_layer_events_flush_peak(profile, soil_info):
+    """Q14: events 路径 → L1 诊断携带 First-Flush 峰值 (月内最大单场)"""
+    e = _engine()
+    states = [e.build_initial_state(profile, soil_info, 0.015)
+              for _ in range(2)]
+    ev1 = {'inflows': [100000.0, 10000.0], 'drains': [10000.0, 1000.0],
+           'bypass_water_L': 0.0, 'precip_mm': 15.0}
+    ev2 = {'inflows': [200000.0, 20000.0], 'drains': [20000.0, 2000.0],
+           'bypass_water_L': 0.0, 'precip_mm': 15.0}
+    hydrology = {'events': [ev1, ev2], 'aet_mm': 0.0, 'et_deficit_mm': 0.0}
+    forcing = dict(EVENT_FORCING, precip=30.0)
+    new_states, diags = e.run_monthly_multi_layer(
+        states, forcing, MonthlyAction(), profile, hydrology=hydrology)
+    assert diags[0].flush_no3_peak_mmol > 0
+    assert diags[0].flush_base_peak_mmol > 0
+    # event_details 回填: 每场每层淋失 + pH (事件明细 CSV 用)
+    assert len(hydrology['event_details']) == 2
+    det = hydrology['event_details'][0]
+    assert 'leach_N_L1_mmol' in det
+    assert 'leach_base_L2_mmol' in det
+    assert 'ph_L1' in det
+    # 峰值 = 月内 L1 各场 max
+    assert diags[0].flush_no3_peak_mmol == pytest.approx(
+        max(det['leach_N_L1_mmol']
+            for det in hydrology['event_details']), rel=1e-9)

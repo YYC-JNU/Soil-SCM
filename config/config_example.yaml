@@ -213,9 +213,13 @@ precipitation_chemistry:
 output:
   directory: ./output            # 输出目录（自动创建，含CSV/图/日志）
   format: csv                    # csv|netcdf（netcdf 需安装 netCDF4，未装自动回退）
+  event_output: false            # v0.6.0: 逐场事件明细 CSV (event_leaching_<scenario>.csv); 默认关
   variables: [pH, base_saturation, CEC_occupied, exchangeable_Ca,
               exchangeable_Al, mineral_mass, solution_ions]  # 输出变量
   # 可选变量: pH, base_saturation, CEC_occupied, exchangeable_Ca,
-  #           exchangeable_Al, mineral_mass(JSON), solution_ions(JSON)
+  #           exchangeable_Al, mineral_mass(JSON), solution_ions(JSON),
+  #           infiltration, drainage, stored_water, runoff, bypass_drainage,
+  #           AET_mm, et_deficit_mm, soil_moisture, pCO2_eff,
+  #           flush_NO3_peak_mmol, flush_base_peak_mmol (v0.6.0 First-Flush 峰值)
   # 时间列 year/month/time_decimal 始终输出
 

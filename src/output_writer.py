@@ -35,6 +35,16 @@ class OutputWriter:
         # 存储时间序列数据
         self.time_records = []
         self.data_records = []
+        # v0.6.0 (Q14): 逐场事件明细 (event_output=true 时由 main 填充)
+        self.event_records = []
+
+    def record_event(self, event_row: dict):
+        """v0.6.0 (Q14): 记录逐场事件明细 (event_output=true 时)
+
+        参数:
+            event_row: 事件行 dict (year/month/event/precip_mm/逐层淋失/pH)
+        """
+        self.event_records.append(dict(event_row))
 
     def record_step(self, year: int, month: int, diagnostics: dict):
         """记录单步诊断量 (单层)"""
@@ -88,6 +98,7 @@ class OutputWriter:
         """保存输出文件"""
         if self.output_format == 'csv':
             self._save_csv()
+            self._save_event_csv()
         elif self.output_format == 'netcdf':
             self._save_netcdf()
 
@@ -118,6 +129,18 @@ class OutputWriter:
             df = df[time_cols + var_cols]
         filename = f"soil_scm_{self.scenario}_output.csv"
         filepath = self.output_dir / filename
+        df.to_csv(filepath, index=False, encoding='utf-8')
+        logger.info("已保存: %s", filepath)
+
+    def _save_event_csv(self):
+        """v0.6.0 (Q14): 保存逐场事件明细 CSV (event_leaching_<scenario>.csv)
+
+        event_records 为空 (event_output=false 默认) 时不产生文件。
+        """
+        if not self.event_records:
+            return
+        df = pd.DataFrame(self.event_records)
+        filepath = self.output_dir / f"event_leaching_{self.scenario}.csv"
         df.to_csv(filepath, index=False, encoding='utf-8')
         logger.info("已保存: %s", filepath)
 
