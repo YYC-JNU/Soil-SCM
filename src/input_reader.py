@@ -50,8 +50,6 @@ class SoilProfile:
     # v0.5.0 水文 (逐层土壤水文盒子模型)
     ksat: float = 0.0                   # 层间排水上限 (cm/day, v0.5.2 起仅 LayerCascade 用)
     ksat_surface: float = 0.0           # v0.5.2: 基质导水率 (cm/day, 仅 Green-Ampt 地表入渗)
-    infiltration_initial: float = 0.0   # 初渗率 f0 (mm/min, deprecated: Horton 废弃, v0.5.3 清理)
-    infiltration_steady: float = 0.0    # 稳渗率 fc (mm/min, deprecated: Horton 废弃, v0.5.3 清理)
 
     # v0.5.3 VGM 水分特征参数 (D8 三级优先级: None=未显式 → clay_pct 回归 → 红壤兜底)
     vgm_theta_r: Optional[float] = None   # 残余含水量 θ_r (m³/m³)
@@ -260,11 +258,11 @@ class InputReader:
             v = getattr(override, fld, None)
             if v is not None:
                 setattr(prof, fld, v)
-        # v0.5.0 水文: 水文字段应用 (clay_pct 已有; ksat/初渗/稳渗)
+        # v0.5.0 水文: 水文字段应用 (clay_pct 已有; ksat)
         # v0.5.2: +ksat_surface (Green-Ampt 基质导水率)
         # v0.5.3: +vgm_theta_r/vgm_alpha/vgm_n (VGM 显式参数, D8 最高优先级)
-        for fld in ('clay_pct', 'ksat', 'ksat_surface', 'infiltration_initial',
-                    'infiltration_steady', 'vgm_theta_r', 'vgm_alpha', 'vgm_n'):
+        for fld in ('clay_pct', 'ksat', 'ksat_surface',
+                    'vgm_theta_r', 'vgm_alpha', 'vgm_n'):
             v = getattr(override, fld, None)
             if v is not None:
                 setattr(prof, fld, v)

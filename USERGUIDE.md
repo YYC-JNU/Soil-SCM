@@ -336,9 +336,12 @@ simulation:
 simulation:
   n_years: 50
   scenario: precip_increase    # 或 temp_increase
+  initial_psi_cm: -100         # v0.5.3: 初始基质势 (田间持水量, VGM 正算初始 θ)
 climate:
   precip_increase_rate: 0.02   # 降水年递增 2%
   temp_increase_rate: 0.05     # 温度年递增 0.05°C（仅在 temp_increase 时生效）
+  latitude: 23.1               # v0.5.3: Oudin PET 站点纬度 (°N)
+  pet_method: oudin            # v0.5.3: "oudin"|"fixed" (hargreaves=v0.6.0 预留)
 ```
 
 ---

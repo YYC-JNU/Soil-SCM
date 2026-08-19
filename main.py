@@ -34,7 +34,6 @@ from src.initial_condition import InitialConditionBuilder
 from src.logging_config import setup_logging
 from src.constants import (DEFAULT_4LAYER_DEPTHS, DEFAULT_4LAYER_CLAY_PCT,
                            DEFAULT_4LAYER_POROSITY, DEFAULT_4LAYER_KSAT,
-                           DEFAULT_4LAYER_F0, DEFAULT_4LAYER_FC,
                            DEFAULT_KSAT_SURFACE, OM_PROFILE_4LAYER)
 from src.climate_forcing import apply_om_pco2
 
@@ -128,8 +127,6 @@ def _build_initial_layer_states(engine, reader, soil_profile, soil_info,
                 porosity=DEFAULT_4LAYER_POROSITY[i],
                 ksat=DEFAULT_4LAYER_KSAT[i],
                 ksat_surface=DEFAULT_KSAT_SURFACE,
-                infiltration_initial=DEFAULT_4LAYER_F0[i],
-                infiltration_steady=DEFAULT_4LAYER_FC[i],
                 organic_matter=OM_PROFILE_4LAYER[i])   # v0.5.3: OM 垂直剖面
             depth = DEFAULT_4LAYER_DEPTHS[i]
             p = reader.apply_layer_override(soil_profile, lo, depth)
@@ -199,7 +196,7 @@ def _apply_hydrology_month(soil_states, layer_profiles, forcing,
 
 def _extract_diagnostics_with_hydrology(soil_states, hydrology, runoff_mm,
                                         runoff_extra, diag_objs, variables,
-                                        layer_profiles):
+                                        layer_profiles, layer_pco2s=None):
     """v0.5.0: 提取层诊断并附加水文列 (infiltration/drainage/stored_water/runoff)
 
     水文列值:
@@ -208,6 +205,9 @@ def _extract_diagnostics_with_hydrology(soil_states, hydrology, runoff_mm,
       - stored_water: 该层跨月滞水 (L/ha, v0.5.3: 由 θ 状态经 vgm 换算, 语义不变)
       - runoff:       表层径流合计 (mm×10000 + 超饱和溢出, L/ha)
       - bypass_drainage: v0.5.2 大孔隙优先流水量 (L/ha, 注入 L2, 可选诊断列)
+      - soil_moisture: v0.5.3 本层体积含水量 θ (m³/m³, 逐层)
+      - pCO2_eff:     v0.5.3 本层有效 pCO₂ (atm, 含 OM 加性调制, Q4)
+    AET_mm / et_deficit_mm 为月度全局列 (由主循环经 global_diagnostics 输出)。
     """
     from src.vgm import theta_to_water_L
     layer_diags = [_extract_diagnostics(s, d, variables)
@@ -221,6 +221,13 @@ def _extract_diagnostics_with_hydrology(soil_states, hydrology, runoff_mm,
         # v0.5.3: stored_water 列向后兼容 (L/ha, 由 θ×depth×1e5 换算, 专家★5)
         layer_diags[i]['stored_water'] = theta_to_water_L(
             soil_states[i].theta, layer_profiles[i].effective_depth)
+        # v0.5.3: 逐层土壤含水量 + 有效 pCO₂ (含 OM 加性调制)
+        layer_diags[i]['soil_moisture'] = soil_states[i].theta
+        if layer_pco2s is not None:
+            layer_diags[i]['pCO2_eff'] = layer_pco2s[i]
+        else:
+            layer_diags[i]['pCO2_eff'] = soil_states[i].gas_phase.get(
+                'CO2(g)', 0.0)
     layer_diags[0]['runoff'] = runoff_mm * 10000.0 + runoff_extra
     # v0.5.2: 大孔隙优先流 (绕过表层直通 L2) 诊断列, 可选输出
     if n > 1 and hydrology.get('bypass_water_L', 0.0) > 0:
@@ -423,9 +430,11 @@ def run_simulation(config_path: str = "config/config.yaml"):
             # 执行化学计算
             if n_layers > 1:
                 # v0.5.0: 水文模式 (4 层内置默认或 layer_overrides 含水文)
+                # v0.5.3: f0/fc 已移除, 水文字段触发 = ksat>0 (层间排水物理)
                 hydrology_enabled = (
                     layer_profiles is not None
-                    and getattr(layer_profiles[0], 'infiltration_initial', 0.0) > 0.0)
+                    and getattr(layer_profiles[0], 'ksat', 0.0) > 0.0)
+                global_diag = None
                 if hydrology_enabled:
                     # v0.5.2: 水文模型 (Green-Ampt 入渗 + 级联), 替代
                     # precip_infiltration; 子时间步不适用 (水文为月度盒子)
@@ -441,7 +450,12 @@ def run_simulation(config_path: str = "config/config.yaml"):
                     # WF2/Q6 + v0.5.0: 逐层诊断 + 水文列 + 层后缀输出
                     layer_diagnostics = _extract_diagnostics_with_hydrology(
                         soil_states, hydrology, runoff_mm, runoff_extra,
-                        diags, cfg.output.variables, layer_profiles)
+                        diags, cfg.output.variables, layer_profiles,
+                        layer_pco2s=layer_pco2s)
+                    # v0.5.3: 月度全局聚合列 (ET 收支, 无层后缀; 列名与 config
+                    # output.variables 一致)
+                    global_diag = {'AET_mm': hydrology['aet_mm'],
+                                   'et_deficit_mm': hydrology['et_deficit_mm']}
                 else:
                     # WF2/Q4: 多分层 — 高层编排层 (层循环 + 级联平流)
                     if sub_steps > 0:
@@ -461,7 +475,8 @@ def run_simulation(config_path: str = "config/config.yaml"):
                         _extract_diagnostics(s, d, cfg.output.variables)
                         for s, d in zip(soil_states, diags)]
                 output_writer.record_multi_step(
-                    year + 1, month + 1, layer_diagnostics)
+                    year + 1, month + 1, layer_diagnostics,
+                    global_diagnostics=global_diag)
             else:
                 # 单层路径 (回归护栏: 走原接口)
                 if sub_steps > 0:

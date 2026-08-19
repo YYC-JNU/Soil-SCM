@@ -46,11 +46,14 @@ class OutputWriter:
         self.data_records.append(diagnostics.copy())
 
     def record_multi_step(self, year: int, month: int,
-                          layer_diagnostics: List[dict]):
+                          layer_diagnostics: List[dict],
+                          global_diagnostics: Dict = None):
         """记录多分层诊断量 (WF2/Q6: 列名加层深度后缀)
 
         参数:
             layer_diagnostics: 每层诊断 dict 列表, 长度 = n_layers
+            global_diagnostics: v0.5.3 月度全局聚合列 (如 AET_mm/et_deficit_mm,
+                不加层后缀; None=无)
         后缀规则: 每层用深度区间命名 (0_10, 10_20, 20_40, 40_60...),
                  列如 pH_0_10, base_saturation_10_20.
         """
@@ -59,6 +62,8 @@ class OutputWriter:
         for diag, suffix in zip(layer_diagnostics, suffixes):
             for key, val in diag.items():
                 merged[f"{key}_{suffix}"] = val
+        if global_diagnostics:
+            merged.update(global_diagnostics)
         self.record_step(year, month, merged)
 
     def _layer_suffixes(self) -> List[str]:

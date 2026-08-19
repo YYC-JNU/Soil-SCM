@@ -70,6 +70,20 @@ def test_build_initial_state_sets_theta(profile, soil_info):
     assert s_custom.theta != pytest.approx(state.theta)
 
 
+def test_monthly_step_preserves_theta(profile, soil_info):
+    """v0.5.3 (S5): 月度化学步保留 θ 跨月状态 (Q1/Q7, 水文状态连续)
+
+    引擎 _parse_official_output/_run_simplified_step 创建新 SoilState 时
+    必须复制 theta, 否则 θ 在月度步后归零 → ET/级联失去状态。
+    """
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    theta0 = state.theta
+    assert theta0 > 0
+    new_state, _ = e.run_monthly_step(state, FORCING, ACTION, profile)
+    assert new_state.theta == pytest.approx(theta0)
+
+
 def test_multi_layer_pco2_injection(profile, soil_info, monkeypatch):
     """L6/T3: run_monthly_multi_layer(layer_pco2s) → 月度 GAS_PHASE 分压按层注入"""
     e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
@@ -179,7 +193,7 @@ def test_build_initial_layer_states_n4_auto_hydrology_defaults(profile, soil_inf
     """v0.5.0/T3: n_layers=4 且未配置 layer_overrides → 自动注入内置物理剖面默认 (水文)"""
     from src.constants import (DEFAULT_4LAYER_DEPTHS, DEFAULT_4LAYER_CLAY_PCT,
                                DEFAULT_4LAYER_POROSITY, DEFAULT_4LAYER_KSAT,
-                               DEFAULT_4LAYER_F0, DEFAULT_4LAYER_FC)
+                               OM_PROFILE_4LAYER)
     e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
     cfg = SimulationConfig(n_layers=4)
     s0, states, pco2s, profiles = main._build_initial_layer_states(
@@ -195,11 +209,11 @@ def test_build_initial_layer_states_n4_auto_hydrology_defaults(profile, soil_inf
         assert profiles[i].porosity == pytest.approx(DEFAULT_4LAYER_POROSITY[i])
         assert profiles[i].bulk_density == pytest.approx(
             2.65 * (1 - DEFAULT_4LAYER_POROSITY[i]))
-    # 水文参数 + 粘粒
+    # 水文参数 + 粘粒 (v0.5.3: f0/fc 已移除, 加 OM 剖面)
     assert profiles[0].ksat == DEFAULT_4LAYER_KSAT[0]
     assert profiles[3].ksat == DEFAULT_4LAYER_KSAT[3]
-    assert profiles[0].infiltration_initial == DEFAULT_4LAYER_F0[0]
-    assert profiles[3].infiltration_steady == DEFAULT_4LAYER_FC[3]
+    assert profiles[0].organic_matter == OM_PROFILE_4LAYER[0]
+    assert profiles[3].organic_matter == OM_PROFILE_4LAYER[3]
     assert profiles[0].clay_pct == DEFAULT_4LAYER_CLAY_PCT[0]
     assert profiles[3].clay_pct == DEFAULT_4LAYER_CLAY_PCT[3]
 
@@ -485,7 +499,7 @@ def test_hydrology_multi_layer_month_step(profile, soil_info):
 
 
 def test_hydrology_diagnostics_extracted(profile, soil_info):
-    """v0.5.0/T5: 层诊断附加水文列 (infiltration/drainage/stored_water)"""
+    """v0.5.0/T5 + v0.5.3 (S6): 层诊断附加水文列 + soil_moisture/pCO2_eff"""
     e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
     cfg = SimulationConfig(n_layers=4)
     _, states, pco2s, profiles = main._build_initial_layer_states(
@@ -498,7 +512,8 @@ def test_hydrology_diagnostics_extracted(profile, soil_info):
     layer_diags = main._extract_diagnostics_with_hydrology(
         new_states, hydrology, runoff_mm, runoff_extra, diags,
         ["pH", "base_saturation", "CEC_occupied", "exchangeable_Ca",
-         "exchangeable_Al", "mineral_mass", "solution_ions"], profiles)
+         "exchangeable_Al", "mineral_mass", "solution_ions"], profiles,
+        layer_pco2s=pco2s)
     assert "infiltration" in layer_diags[0]
     assert "drainage" in layer_diags[0]
     assert "stored_water" in layer_diags[0]
@@ -506,6 +521,12 @@ def test_hydrology_diagnostics_extracted(profile, soil_info):
     # v0.5.3: stored_water 列向后兼容 (L/ha, 由 θ 换算, 专家★5)
     assert layer_diags[0]["stored_water"] == pytest.approx(
         new_states[0].theta * profiles[0].effective_depth * 1e5)
+    # v0.5.3 (S6): soil_moisture = θ (逐层) + pCO2_eff (含 OM 调制, Q4)
+    assert layer_diags[0]["soil_moisture"] == pytest.approx(new_states[0].theta)
+    assert layer_diags[0]["pCO2_eff"] == pytest.approx(pco2s[0])
+    # soil_moisture 与 stored_water 双列互证: θ = stored_water/(depth×1e5)
+    assert layer_diags[0]["soil_moisture"] == pytest.approx(
+        layer_diags[0]["stored_water"] / (profiles[0].effective_depth * 1e5))
 
 
 # ==================== T5: 诊断实验逻辑 (impact_tag/depletion_year) ====================

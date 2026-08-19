@@ -22,17 +22,19 @@
 # nitrification_k2     | float | 0.4              | /月 | 0~1 (硝化速率)
 # hydrology_seed       | int   | 42               | -   | 随机降雨种子 (可复现)
 # bypass_fraction      | float | 0.2              | 0~1 | v0.5.2: 大孔隙优先流比例 (超基质 Ks 积水直通 L2, 携带原始降水化学)
+# initial_psi_cm       | float | -100             | cm  | v0.5.3: 初始基质势 (负值, 田间持水量; VGM 正算初始 θ)
 # layer_depths         | list  | null             | cm | 长度 = n_layers; null=等分兜底 (L6)
 # layer_overrides      | list  | []               | -  | 密集列表长度 = n_layers; 部分覆盖 (L6)
 #   clay_pct           | float | -                | %  | 粘粒含量 (v0.5.0 水文)
 #   porosity           | float | -                | 0~1| 孔隙度, 反推容重 ρ=2.65(1−φ)
 #   ksat               | float | -                | cm/day | v0.5.2: 层间排水上限 (>0, 仅 LayerCascade 用)
 #   ksat_surface       | float | -                | cm/day | v0.5.2: 基质导水率 (>0, 仅 Green-Ampt 地表入渗)
-#   infiltration_initial | float | -              | mm/min | 初渗率 f0 (>fc, deprecated: Horton 废弃)
-#   infiltration_steady | float | -               | mm/min | 稳渗率 fc (≥0, deprecated: Horton 废弃)
+#   vgm_theta_r        | float | -                | m³/m³| v0.5.3: VGM 残余含水量 (D8 ①, None=clay_pct 回归/兜底)
+#   vgm_alpha          | float | -                | 1/cm | v0.5.3: VGM 进气值倒数 (>0)
+#   vgm_n              | float | -                | -    | v0.5.3: VGM 孔隙分布指数 (>1)
 #   (n_layers=4 且未配置 layer_overrides → 自动启用内置物理剖面默认: 厚度[20,20,20,40]/
 #    粘粒[25,35,45,50]/孔隙度[55,47,45,43]/排水Ksat[12,1.9,0.48,0.05]/ksat_surface[7.2]/
-#    f0[1.0,0.4,0.15,0.04]/fc[0.4,0.2,0.08,0.02] — 详见 docs/analysis/HYDROLOGY_BOX.md)
+#    有机质[30,15,8,5] — 详见 docs/analysis/HYDROLOGY_BOX.md 与 spec 49)
 #
 # === soil_data ===
 # input_file               | str | data/soil_survey.csv       | - | CSV 文件路径
@@ -52,6 +54,10 @@
 # base_annual_temp       | float | 25.0   | °C    | 5~25
 # precip_increase_rate   | float | 0.02   | /yr   | 0~1
 # temp_increase_rate     | float | 0.05   | °C/yr | 0~1
+# latitude               | float | 23.1   | °N    | v0.5.3: Oudin PET 站点纬度 (-60~60)
+# pet_method             | str   | oudin  | -     | v0.5.3: oudin|fixed (hargreaves=v0.6.0 预留报错)
+# pet_monthly_climate    | list  | null   | mm/月 | v0.5.3: 12 值固定气候态 PET (提供时优先)
+# pet_correction_factor  | list  | [1]*12 | -     | v0.5.3: 12 值月度修正系数
 #
 # === fertilizer ===
 # n              | float | 12.0 | kg N/ha/次      | 10~13
@@ -105,6 +111,7 @@ simulation:
   nitrification_k2: 0.4          # 硝化速率 /月 (0~1)，NH4+→NO3- 比例
   layer_depths: null             # L6: 每层厚度 cm (长度=n_layers)；null=等分兜底
   layer_overrides: []            # L6: 逐层参数覆盖密集列表 (长度=n_layers)；[]=无覆盖
+  initial_psi_cm: -100           # v0.5.3: 初始基质势 cm (负值, 田间持水量; VGM 正算初始 θ)
 
 # ─────────────────────────────────────────────
 # soil_data: 土壤数据配置
@@ -147,6 +154,10 @@ climate:
   base_annual_temp: 25.0         # 基准年均温，广东约 25 °C
   precip_increase_rate: 0.02     # precip_increase 情景: 降水年增比例
   temp_increase_rate: 0.05       # temp_increase 情景: 温度年增量 °C/yr
+  latitude: 23.1                 # v0.5.3: Oudin PET 站点纬度 (°N, 广州 23.1/鹰潭 28.2)
+  pet_method: oudin              # v0.5.3: "oudin"|"fixed" (fixed 需 pet_monthly_climate)
+  pet_monthly_climate: null      # v0.5.3: 12 值固定气候态月 PET (mm/month); null=公式正算
+  pet_correction_factor: null    # v0.5.3: 12 值月度修正系数; null=[1.0]×12
 
 # ─────────────────────────────────────────────
 # fertilizer: 肥料配置（仅 fertilizer/fertilizer_lime 情景生效）

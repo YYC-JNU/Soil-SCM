@@ -4,14 +4,16 @@
 
 **Blocked by:** 50、51、52、53
 
-**Status:** ready-for-agent
+**Status:** ✅ 已完成 (2026-08-19, v0.5.3)
 
-- [ ] main 编排集成：逐层 pCO₂（含 OM 增量）+ ET 传递 + 诊断扩展；输出列完整且 stored_water 向后兼容（S6 专家★5）
-- [ ] 水量守恒不变量保持（入渗+径流+ET+优先流+深层排水+Δ储水=降水）（S6）
-- [ ] config.yaml/config_example.yaml 同步；f0/fc 残留显式报错（breaking change 明示）
-- [ ] E1：预平衡收敛复验（初始溶液体积变更后）+ 4 层 15 年 natural 基线记录
-- [ ] E2：PET 600~1400mm 扫描 → L1/L2 干湿交替 + pH 回落方向（不承诺具体值）
-- [ ] E3：k_om 敏感性扫描 → 表层酸化方向
-- [ ] 全量 pytest 195~210 全绿（Q6 契约：不变量四类一字不改）
-- [ ] 文档同步（README/ROADMAP 勾选/OPTIMIZATION_PLAN §7.6/USERGUIDE/TICKETS_SUMMARY）
-- [ ] 发布 v0.5.3：commit + annotated tag + push main + push tag
+- [x] main 编排集成：逐层 pCO₂（含 OM 增量）+ ET 传递 + 诊断扩展；输出列完整且 stored_water 向后兼容（S6 专家★5）
+- [x] 水量守恒不变量保持（入渗+径流+ET+优先流+深层排水+Δ储水=降水）（S6）
+- [x] config.yaml/config_example.yaml 同步；f0/fc 残留显式报错（breaking change 明示）
+- [x] E1：预平衡收敛复验（初始溶液体积变更后）+ 4 层 15 年 natural 基线记录——**预平衡 4 层全收敛 pH 4.92（观测 5.0 偏差 0.08）✓；年均 AET 935mm（水分闭合）✓**
+- [x] E2：PET 600~1400mm 扫描 → L1/L2 干湿交替 + pH 回落方向——**✗ 未达成**：月尾 θ 恒 θ_FC（0.41）、pH 恒 6.94（月度聚合丢失旱季干化 + 化学体积与 θ 解耦）；诚实记录
+- [x] E3：k_om 敏感性扫描 → 表层酸化方向——**✗ 未达成**：pCO₂_eff 注入生效（0.024→0.039）但 pH 恒 6.94（矿物/碳酸缓冲抵消，k_om 需重参数化）；E3 发布前暴露（符合 spec 49 Q13）
+- [x] 全量 pytest 195~210 全绿（Q6 契约：不变量四类一字不改）——**234 passed**
+- [x] 文档同步（README v0.5.3/ROADMAP 勾选/OPTIMIZATION_PLAN §7.6/USERGUIDE/TICKETS_SUMMARY）
+- [x] 发布 v0.5.3：commit + annotated tag + push main + push tag
+
+**科学诚实验收结论**：v0.5.3 验收覆盖 **机制落地 + 水分平衡闭合 + 预平衡收敛**（对照 spec 49 边界）；**pH 回落 4.5~5.5 未达成**（E2/E3 无方向响应），留待 v0.6.0 子步长/体积耦合/Ks 重标定。不夸大。

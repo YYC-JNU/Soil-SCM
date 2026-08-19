@@ -590,6 +590,8 @@ class PhreeqcEngine:
         # 排水模型: 降水入渗+平衡后, 多余水分排水, 溶液体积恢复初始值
         # (淋溶损失由浓度稀释体现: 下月用恢复体积×稀释后浓度)
         new_state.volume = old_state.volume
+        # v0.5.3 (Q1/Q7): θ 为跨月规范状态, 化学步必须保留 (水文状态连续)
+        new_state.theta = old_state.theta
         new_state.ph = get('pH')
         new_state.pe = get('pe')
         new_state.temperature = get('temp(C)')
@@ -873,6 +875,8 @@ class PhreeqcEngine:
         new_state.gas_phase = state.gas_phase
         new_state.surface = state.surface   # WF4: 保留表面位点
         new_state.volume = state.volume
+        # v0.5.3 (Q1/Q7): θ 为跨月规范状态, 简化模式同样保留 (状态连续)
+        new_state.theta = state.theta
         new_state.temperature = state.temperature
         new_state.pe = state.pe
         new_state.ph = state.ph

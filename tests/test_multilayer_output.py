@@ -22,6 +22,19 @@ def test_record_multi_step_layer_suffixes(tmp_path):
     assert "pH" not in merged  # 无未加后缀的列
 
 
+def test_record_multi_step_global_columns(tmp_path):
+    """v0.5.3 (S6): global_diagnostics 月度全局列不加层后缀"""
+    ow = OutputWriter(str(tmp_path), n_layers=2,
+                      layer_depths=[10.0, 20.0])
+    ow.record_multi_step(1, 1, [
+        {"pH": 5.0}, {"pH": 5.5},
+    ], global_diagnostics={"aet_mm": 42.0, "et_deficit_mm": 3.5})
+    merged = ow.data_records[0]
+    assert merged["aet_mm"] == 42.0          # 全局列无后缀
+    assert merged["et_deficit_mm"] == 3.5
+    assert merged["pH_0_10"] == 5.0          # 层列仍带后缀
+
+
 def test_record_step_single_layer_unchanged(tmp_path):
     """WF2/Q6: 单层 (record_step) 列名不变"""
     ow = OutputWriter(str(tmp_path))

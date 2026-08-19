@@ -44,8 +44,6 @@ class LayerOverrideConfig:
     porosity: Optional[float] = None             # 孔隙度 (0~1), 覆盖容重派生
     ksat: Optional[float] = None                 # 层间排水上限 (cm/day, v0.5.2 起仅 LayerCascade 用)
     ksat_surface: Optional[float] = None         # v0.5.2: 基质导水率 (cm/day, 仅 Green-Ampt 地表入渗)
-    infiltration_initial: Optional[float] = None  # 初渗率 f0 (mm/min, deprecated)
-    infiltration_steady: Optional[float] = None   # 稳渗率 fc (mm/min, deprecated)
     # v0.5.3 VGM 显式参数 (D8 三级优先级 ①: None=走 clay_pct 回归/红壤兜底)
     vgm_theta_r: Optional[float] = None           # 残余含水量 θ_r
     vgm_alpha: Optional[float] = None             # 进气值倒数 α (1/cm)
@@ -253,6 +251,13 @@ class ConfigManager:
             for item in overrides_raw:
                 if not isinstance(item, dict):
                     item = {}
+                # v0.5.3: Horton 废弃清理 — infiltration_initial/steady (f0/fc)
+                # 残留配置显式报错 (breaking change 明示, 先例 surface_infiltration_coeff)
+                if 'infiltration_initial' in item or 'infiltration_steady' in item:
+                    raise ValueError(
+                        "[layer_overrides infiltration_initial/infiltration_steady "
+                        "参数存在问题: v0.5.3 已废弃 (Horton 入渗移除, Green-Ampt 替代), "
+                        "请移除这些字段, 请确认后再输入]")
                 overrides.append(LayerOverrideConfig(
                     ph=item.get('ph'),
                     organic_matter=item.get('organic_matter'),
@@ -270,8 +275,6 @@ class ConfigManager:
                     porosity=item.get('porosity'),
                     ksat=item.get('ksat'),
                     ksat_surface=item.get('ksat_surface'),
-                    infiltration_initial=item.get('infiltration_initial'),
-                    infiltration_steady=item.get('infiltration_steady'),
                     vgm_theta_r=item.get('vgm_theta_r'),
                     vgm_alpha=item.get('vgm_alpha'),
                     vgm_n=item.get('vgm_n')
@@ -349,8 +352,8 @@ class ConfigManager:
                 latitude=c.get('latitude', DEFAULT_LATITUDE),
                 pet_method=c.get('pet_method', 'oudin'),
                 pet_monthly_climate=c.get('pet_monthly_climate'),
-                pet_correction_factor=c.get('pet_correction_factor',
-                                            [1.0] * 12)
+                pet_correction_factor=(c.get('pet_correction_factor')
+                                       or [1.0] * 12)
             )
 
         # 解析 fertilizer
@@ -628,20 +631,6 @@ class ConfigManager:
                 raise ValueError(
                     f"[layer_overrides[{i}]/clay_pct 参数存在问题: {lo.clay_pct} "
                     f"超出范围 (0~100), 请确认后再输入]")
-            f0 = lo.infiltration_initial
-            fc = lo.infiltration_steady
-            if f0 is not None and not (0.0 < f0 <= 3.0):
-                raise ValueError(
-                    f"[layer_overrides[{i}]/infiltration_initial 参数存在问题: "
-                    f"初渗率 {f0} 超出合理范围 (0~3 mm/min), 请确认后再输入]")
-            if fc is not None and not (0.0 <= fc < 3.0):
-                raise ValueError(
-                    f"[layer_overrides[{i}]/infiltration_steady 参数存在问题: "
-                    f"稳渗率 {fc} 超出合理范围 (0~3 mm/min), 请确认后再输入]")
-            if f0 is not None and fc is not None and f0 <= fc:
-                raise ValueError(
-                    f"[layer_overrides[{i}]/infiltration 参数存在问题: "
-                    f"初渗率 {f0} 必须大于稳渗率 {fc}, 请确认后再输入]")
             # v0.5.3 VGM 显式参数值域校验 (D8 ① 优先级)
             if lo.vgm_theta_r is not None and not (0.0 <= lo.vgm_theta_r < 1.0):
                 raise ValueError(
