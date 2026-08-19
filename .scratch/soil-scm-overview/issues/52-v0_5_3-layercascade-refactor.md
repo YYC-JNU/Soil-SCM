@@ -4,13 +4,13 @@
 
 **Blocked by:** 50、51
 
-**Status:** ready-for-agent
+**Status:** ✅ 已完成 (2026-08-19, v0.5.3)
 
-- [ ] 纯向下方向约束：任意状态 q≥0 恒成立、干上层无逆向回流、mode="downward" 上行恒 0（S2 专家★2）
-- [ ] θ→θ_s 时界面通量 = min(ksat_i,ksat_{i+1})×1e5×n_days（与 D3 精确一致）
-- [ ] θ_FC 可排水量：θ≤θ_FC 不排水；θ>θ_FC 可排水 = (θ−θ_FC)×depth×1e5
-- [ ] 底部 L4 深层排水 + 超饱和溢出计入 runoff（既有语义保留）
-- [ ] run() 最前端 ET：顺序 ET→入渗→级联（v0.5.3水分平衡闭合.txt §4.3）；水分平衡闭合（入渗+径流+ET+深层排水+Δ储水=降水）
-- [ ] Green-Ampt θ_i = L1 当前 θ（main.py 50% 魔法数删除）
-- [ ] n_layers=1 完全回退（不进入重构路径）
-- [ ] 测试（S2 + S5）：全绿
+- [x] 纯向下方向约束：任意状态 q≥0 恒成立、干上层无逆向回流、mode="downward" 上行恒 0（S2 专家★2）
+- [x] θ→θ_s 时界面通量 = min(ksat_i,ksat_{i+1})×1e5×n_days（与 D3 精确一致）
+- [x] θ_FC 可排水量：θ≤θ_FC 不排水；θ>θ_FC 可排水 = (θ−θ_FC)×depth×1e5
+- [x] 底部 L4 深层排水 + 超饱和溢出计入 runoff（既有语义保留）
+- [x] run() 最前端 ET：顺序 ET→入渗→级联（v0.5.3水分平衡闭合.txt §4.3）；水分平衡闭合（入渗+径流+ET+深层排水+Δ储水=降水）——注：ET 实现在月度编排 `_apply_hydrology_month` 最前端（LayerCascade 保持纯级联, 职责分离）
+- [x] Green-Ampt θ_i = L1 当前 θ（main.py 50% 魔法数删除）
+- [x] n_layers=1 完全回退（不进入重构路径）
+- [x] 测试（S2 + S5）：全绿；**226 passed 全绿**

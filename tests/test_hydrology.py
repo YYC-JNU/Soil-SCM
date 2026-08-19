@@ -53,58 +53,84 @@ def test_monthly_hydrology_conserves_water():
     assert inf > 0
 
 
-def test_cascade_fills_storage_before_drain():
-    """级联: 先填 50%→100% 持水增量, 超出才排水
+def test_cascade_drains_only_above_field_capacity():
+    """v0.5.3 (D3/Q11): 可排水量 = max(0, θ−θ_FC)×depth×1e5
 
-    v0.5.3/Q6: SoilState.stored_water→theta 状态迁移 (Q1/Q7),
-    断言改为 θ (5.5e5 L/ha ÷ 20cm×1e5 = 0.275 = 0.5×θ_s)。
+    Q6: 原 test_cascade_fills_storage_before_drain 断言 50% 饱和持水语义,
+    v0.5.3 重构为 VGM 田间持水量 θ_FC (L1≈0.410) 以下不排水。
     """
-    profiles = [
-        _surface_profile(porosity=0.55, depth=20, ksat=76.8),
-        _surface_profile(porosity=0.47, depth=20, ksat=24.5),
-    ]
-    states = [SoilState(), SoilState()]
-    # 层1 sat=0.55×20×1e5=1.1e6, space=5.5e5; 来水 1e6 < sat
-    cascade = LayerCascade(profiles)
-    drains, runoff, deep = cascade.run(1.0e6, states)
-    assert drains[0] == pytest.approx(1.0e6 - 5.5e5)  # 超持水部分排
-    assert states[0].theta == pytest.approx(0.275)    # 填满至 50% 持水增量
-    assert drains[1] == 0.0  # 层2来水 4.5e5 < space 4.7e5, 无排水
+    prof = _surface_profile(porosity=0.55, depth=20, ksat=76.8)
+    # θ=θ_FC → 无排水
+    state_fc = SoilState(theta=0.4101)
+    drains, runoff, deep = LayerCascade([prof]).run(0.0, [state_fc])
+    assert drains[0] == pytest.approx(0.0)
     assert runoff == 0.0
-    assert deep == 0.0
+    # θ>θ_FC → 排水至 θ_FC (可排水量 = (0.50−0.4101)×20×1e5)
+    state_wet = SoilState(theta=0.50)
+    drains, runoff, deep = LayerCascade([prof]).run(0.0, [state_wet])
+    assert drains[0] == pytest.approx((0.50 - 0.4101) * 20.0 * 1e5, rel=1e-3)
+    assert state_wet.theta == pytest.approx(0.4101, rel=1e-3)
 
 
-def test_cascade_ksat_limits_drain_and_overflow():
-    """Ksat 限制排水 + 超饱和溢出计入径流
+def test_cascade_interface_min_ksat_bucket():
+    """v0.5.3 (D3): 界面通量受 min(K_r(θ)·ksat_i, ksat_{i+1}) 木桶短板限制
 
-    v0.5.3/Q6: 断言改 θ (3e5 L/ha ÷ 10cm×1e5 = 0.30 = θ_s 饱和)。
+    θ_L1=θ_s → K_r=1 → 界面 = min(76.8, 0.05)=0.05 cm/day → 1.5e5 L/ha/月。
     """
-    profiles = [
-        _surface_profile(porosity=0.30, depth=10, ksat=0.1),
-        # ksat_cap = 0.1cm/day×30天×1e8cm² = 3e5 L/ha/月
-    ]
-    states = [SoilState()]
-    # sat=0.3×10×1e5=3e5, space=1.5e5; 来水 1e6
-    cascade = LayerCascade(profiles)
-    drains, runoff, deep = cascade.run(1.0e6, states)
-    assert drains[0] == pytest.approx(3.0e5)  # Ksat 限制 (cap=3e5)
-    assert states[0].theta == pytest.approx(0.30)  # 饱和
-    assert runoff == pytest.approx(1.0e6 - 3.0e5 - 3.0e5)  # 溢出=4e5
+    up = _surface_profile(porosity=0.55, depth=20, ksat=76.8)
+    dn = _surface_profile(porosity=0.47, depth=20, ksat=0.05)
+    state_up = SoilState(theta=0.55)   # 饱和, K_r=1
+    state_dn = SoilState(theta=0.30)
+    drains, runoff, _ = LayerCascade([up, dn]).run(0.0, [state_up, state_dn])
+    assert drains[0] == pytest.approx(0.05 * 1e5 * 30.0)  # 1.5e5
+    assert runoff == 0.0
+    # L1 仅排到可排水量上限下的界面通量, θ 相应下降
+    assert state_up.theta == pytest.approx(0.55 - 1.5e5 / (20.0 * 1e5))
 
 
-def test_cascade_theta_carries_to_next_month():
-    """跨月滞水: 上月末 θ 作为下月初始 (饱和后新来水全排)
+def test_cascade_saturation_overflow_to_runoff():
+    """v0.5.3: 来水使 θ>θ_s → 超饱和溢出计入 runoff (既有语义保留)"""
+    prof = _surface_profile(porosity=0.55, depth=20, ksat=76.8)
+    state = SoilState(theta=0.55)     # 已饱和
+    drains, runoff, _ = LayerCascade([prof]).run(5.0e5, [state])
+    # 入渗 5e5 全部溢出 (θ 已饱和), 随后排到 θ_FC
+    assert runoff == pytest.approx(5.0e5)
+    assert drains[0] == pytest.approx((0.55 - 0.4101) * 20.0 * 1e5, rel=1e-3)
+    assert state.theta == pytest.approx(0.4101, rel=1e-3)
 
-    v0.5.3/Q6: 原名 test_cascade_stored_water_carries_to_next_month,
-    SoilState(stored_water=2.5e5)→SoilState(theta=0.25) (2.5e5/(10×1e5))。
+
+def test_cascade_bottom_deep_drainage():
+    """v0.5.3: 最底层无接收层 → 通量=K_r(θ)·ksat (深层排水)"""
+    prof = _surface_profile(porosity=0.55, depth=20, ksat=76.8)
+    state_up = SoilState(theta=0.50)
+    state_dn = SoilState(theta=0.4101)   # 起始于 θ_FC, 接收上层排水
+    drains, runoff, deep = LayerCascade([prof, prof]).run(
+        0.0, [state_up, state_dn])
+    assert drains[0] == pytest.approx(
+        (0.50 - 0.4101) * 20.0 * 1e5, rel=1e-3)
+    assert drains[1] > 0.0
+    assert deep == drains[1]              # 底层排水 = 深层排水流失
+    assert runoff == 0.0
+
+
+def test_calc_interface_flux_downward_only():
+    """v0.5.3 (S2 专家★2): 纯向下方向约束 — q≥0 恒成立, 干源层 q=0,
+    饱和退化 min(ksat_up, ksat_dn) (D3); bidirectional 预留报错
     """
-    profiles = [_surface_profile(porosity=0.5, depth=10, ksat=76.8)]
-    state = SoilState(theta=0.25)  # 上月已填满 50% 增量 (sat=5e5, θ_s=0.5)
-    cascade = LayerCascade(profiles)
-    # 新来水 2e5 → avail=4.5e5 > space=2.5e5 → 排水 2e5
-    drains, _, _ = cascade.run(2.0e5, [state])
-    assert drains[0] == pytest.approx(2.0e5)
-    assert state.theta == pytest.approx(0.25)
+    from src.hydrology import calc_interface_flux
+    up = _surface_profile(porosity=0.55, depth=20, ksat=12.0)
+    dn = _surface_profile(porosity=0.47, depth=20, ksat=1.9)
+    # 饱和源层 → K_r=1 → 界面 = min(12, 1.9) = 1.9 cm/day
+    q_sat = calc_interface_flux(up, 0.55, dn, 0.40, 30)
+    assert q_sat == pytest.approx(1.9 * 1e5 * 30.0)
+    # 残余含水量 → K_r=0 → 无下行通量 (干源层不"抽"上层水, 无逆向回流)
+    assert calc_interface_flux(up, 0.06, dn, 0.40, 30) == 0.0
+    # 任意 θ ∈ [θ_r, θ_s] → q ≥ 0
+    for th in (0.10, 0.25, 0.40, 0.55):
+        assert calc_interface_flux(up, th, dn, 0.40, 30) >= 0.0
+    # bidirectional 接口预留 (v0.6.0+ 毛细上升)
+    with pytest.raises(NotImplementedError):
+        calc_interface_flux(up, 0.55, dn, 0.40, 30, mode="bidirectional")
 
 
 # ==================== v0.5.2 Green-Ampt 入渗 (S1 seam) ====================

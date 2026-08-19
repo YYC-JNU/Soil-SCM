@@ -330,7 +330,7 @@ def test_hydrology_diagnostics_bypass_column(profile, soil_info):
     s0, states, _, profiles = main._build_initial_layer_states(
         e, _reader(), profile, soil_info, 0.015, cfg)
     hydrology, runoff_mm, runoff_extra = main._apply_hydrology_month(
-        states, profiles, FORCING, 0, 0, seed=42, theta_i=0.275,
+        states, profiles, FORCING, 0, 0, seed=42,
         bypass_fraction=0.2)
     # 构造与层数匹配的诊断对象 (用 None 占位, 函数仅访问 hydrology 字段)
     diag_objs = [None] * 4
@@ -382,7 +382,7 @@ def test_engine_build_input_uses_inflow_water(profile, soil_info):
 # ==================== v0.5.0/T5: main 水文集成 + 输出 ====================
 
 def test_apply_hydrology_month(profile, soil_info):
-    """v0.5.0/T5: 月度水文 (随机降雨+Horton+级联) → inflows/drains/stored_water"""
+    """v0.5.0/T5: 月度水文 (Green-Ampt 入渗 + 级联) → inflows/drains/stored_water"""
     from src.config_manager import SimulationConfig as _SC
     e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
     cfg = _SC(n_layers=4)
@@ -399,6 +399,38 @@ def test_apply_hydrology_month(profile, soil_info):
     assert inf_mm + runoff_mm == pytest.approx(FORCING['precip'])
     # 持水生效: 至少一层有滞水 (v0.5.3: θ 状态)
     assert any(s.theta > 0 for s in states)
+
+
+def test_hydrology_water_balance_with_et(profile, soil_info):
+    """v0.5.3 (S6): 水分平衡闭合 — 入渗+径流=降水; 入渗=ET+深层排水+溢出+Δ储水
+
+    时序 ET→入渗→级联 (v0.5.3水分平衡闭合.txt §4.3): 加 PET 强迫后
+    ET 最前端扣除, 全月水账严格闭合 (质量守恒不变量, Q6 保护)。
+    """
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    cfg = SimulationConfig(n_layers=4)
+    _, states, _, profiles = main._build_initial_layer_states(
+        e, _reader(), profile, soil_info, 0.015, cfg)
+    forcing = dict(FORCING)
+    forcing['pet'] = 80.0
+    init_storage_mm = sum(s.theta * p.effective_depth * 10.0
+                          for s, p in zip(states, profiles))
+    hydrology, runoff_mm, runoff_extra = main._apply_hydrology_month(
+        states, profiles, forcing, 0, 0, seed=42)
+    final_storage_mm = sum(s.theta * p.effective_depth * 10.0
+                           for s, p in zip(states, profiles))
+    inf_mm = hydrology['inflows'][0] / 10000.0
+    # ① 入渗 + 径流 = 降水 (Green-Ampt 守恒)
+    assert inf_mm + runoff_mm == pytest.approx(FORCING['precip'])
+    # ② 入渗去向: ET + 深层排水 + 饱和溢出 + Δ储水 (水量守恒闭合)
+    deep_mm = hydrology['drains'][-1] / 10000.0
+    overflow_mm = runoff_extra / 10000.0
+    assert inf_mm == pytest.approx(
+        hydrology['aet_mm'] + deep_mm + overflow_mm
+        + (final_storage_mm - init_storage_mm))
+    # ET 亏缺非负且 ≤ PET (亏缺丢弃语义, Q3b)
+    assert hydrology['et_deficit_mm'] >= 0.0
+    assert hydrology['aet_mm'] + hydrology['et_deficit_mm'] <= forcing['pet']
 
 
 def test_hydrology_multi_layer_month_step(profile, soil_info):

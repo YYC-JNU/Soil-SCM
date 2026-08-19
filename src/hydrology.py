@@ -19,8 +19,9 @@ from src.logging_config import get_logger
 from src.constants import (GREEN_AMPT_PSI_F_MM, GREEN_AMPT_NEWTON_TOL,
                            GREEN_AMPT_NEWTON_MAX_ITER,
                            FEDDES_H1, FEDDES_H2, FEDDES_H3, FEDDES_H4,
-                           ROOT_FRACTION_4LAYER)
-from src.vgm import theta_to_water_L, water_L_to_theta
+                           ROOT_FRACTION_4LAYER, INITIAL_PSI_CM)
+from src.vgm import (theta_to_water_L, water_L_to_theta, get_vgm_params,
+                     calc_Kr, vgm_theta_from_psi)
 
 logger = get_logger("hydrology")
 
@@ -133,33 +134,36 @@ def monthly_hydrology(monthly_precip_mm: float, year: int, month: int,
 
 
 class LayerCascade:
-    """层间级联渗漏 (v0.5.0): 持水 + Ksat 限制 + 跨月滞水
+    """层间级联渗漏 (v0.5.3 VGM 物理重构, D3/Q2/Q11)
 
-    每层:
-      sat   = φ × depth_cm × 1e5  (L/ha, 饱和持水量)
-      space = 0.5 × sat           (50%→100% 饱和增量, 初始溶液体积=50%饱和)
-      来水   = 上层排水 + 本层 stored_water
-      可排水 = max(0, 来水 − space)
-      排水   = min(可排水, Ksat×10000×天数×10)  (Ksat cm/day → L/ha/月)
-      滞留   = 来水 − 排水; 超饱和部分 (retained > sat) 溢出计入径流
-    最底层排水 = 深层排水流失。
+    v0.5.3 重构 (spec 49 §4):
+      - 有效持水下限 θ_FC = VGM(ψ=-100cm) 正算 (与初始 θ 同源, 系统自田间持水启动)
+      - 可排水量_i = max(0, θ_i − θ_FC,i) × depth_i × 1e5 (L/ha)
+      - 界面通量_i→i+1 = min(可排水量_i, min(K_r(θ_i)·ksat_i, ksat_{i+1}) × 1e5 × n_days)
+        (源层非饱和 K(θ) × 接收层饱和 ksat 木桶短板; θ→θ_s 退化为 min(上下层 ksat), 与 D3 精确一致)
+      - 底部 L4 无接收层 → 通量 = K_r(θ_4)·ksat_4 (深层排水)
+      - 超饱和溢出 (θ > θ_s) 计入 runoff (既有语义保留)
+    ET 扣除由月度编排 (main._apply_hydrology_month) 最前端执行
+    (顺序 ET→入渗→级联, v0.5.3水分平衡闭合.txt §4.3; Q3)。
     """
 
     def __init__(self, profiles: list, n_days: int = 30):
         self.profiles = profiles
         self.n_days = n_days
 
-    def saturation_capacity(self, i: int) -> float:
-        """第 i 层饱和持水量 (L/ha) = φ × depth_cm × 1e5"""
+    def field_capacity_theta(self, i: int) -> float:
+        """第 i 层田间持水量 θ_FC = VGM(ψ=-100) (与初始 θ 同源, spec 49 §4)"""
         p = self.profiles[i]
-        return p.porosity * p.effective_depth * 1e5
+        theta_r, alpha, n = get_vgm_params(p)
+        return vgm_theta_from_psi(INITIAL_PSI_CM, p.porosity,
+                                  theta_r, alpha, n)
 
     def run(self, inflow_L: float, states: list):
-        """执行级联渗漏
+        """执行级联渗漏 (θ_FC 可排水量 + K(θ) 界面通量, v0.5.3)
 
         参数:
             inflow_L: 最上层入渗水量 (L/ha)
-            states: List[SoilState] (逐层状态, theta 就地更新)
+            states: List[SoilState] (theta 就地更新)
         返回:
             (drains, runoff_extra, deep_drainage)
             - drains: 各层排水量 (L/ha), 长度 = n_layers
@@ -171,23 +175,59 @@ class LayerCascade:
         inflow = inflow_L
         for i, state in enumerate(states):
             p = self.profiles[i]
-            sat = self.saturation_capacity(i)
-            space = 0.5 * sat
-            # v0.5.3: stored_water → theta 状态迁移 (Q1/Q7), L/ha 由 vgm 换算
-            # (50% 饱和持水语义保留至工单 52 的 LayerCascade 重构)
-            stored = theta_to_water_L(state.theta, p.effective_depth)
-            avail = inflow + stored
-            drainable = max(0.0, avail - space)
-            ksat_cap = p.ksat * 10000.0 * self.n_days * 10.0
-            drain = min(drainable, ksat_cap)
-            retained = avail - drain
-            overflow = max(0.0, retained - sat)
-            retained = min(retained, sat)
-            state.theta = water_L_to_theta(retained, p.effective_depth)
-            runoff_extra += overflow
+            depth = p.effective_depth
+            # 来水注入本层 (层0=入渗, 下层=上层排水); 超饱和溢出计入 runoff
+            state.theta += inflow / (depth * 1e5)
+            if state.theta > p.porosity:
+                runoff_extra += (state.theta - p.porosity) * depth * 1e5
+                state.theta = p.porosity
+            # 可排水量 = max(0, θ − θ_FC) × depth × 1e5
+            theta_fc = self.field_capacity_theta(i)
+            drainable = max(0.0, (state.theta - theta_fc) * depth * 1e5)
+            # 界面通量上限 (L/ha/月): 底部 L4 无接收层 → 深层排水
+            if i < len(states) - 1:
+                flux_cap = calc_interface_flux(
+                    p, state.theta, self.profiles[i + 1],
+                    states[i + 1].theta, self.n_days)
+            else:
+                theta_r, alpha, n = get_vgm_params(p)
+                kr = calc_Kr(state.theta, p.porosity, theta_r, alpha, n)
+                flux_cap = max(0.0, kr * p.ksat) * 1e5 * self.n_days
+            drain = min(drainable, flux_cap)
+            state.theta -= drain / (depth * 1e5)
             drains.append(drain)
             inflow = drain
         return drains, runoff_extra, drains[-1]
+
+
+def calc_interface_flux(profile_up, theta_up, profile_dn, theta_dn,
+                        n_days: int, mode: str = "downward") -> float:
+    """界面达西通量上限 (L/ha/月, 纯向下, D3/Q2/Q11)
+
+    v0.5.3 (mode="downward"): 下行 = min(K_r(θ_up)·ksat_up, ksat_dn) × 1e5 × n_days;
+    上行项恒 0 (纯向下方向约束, S2 专家★2)。θ_up→θ_s 时 K_r→1, 退化为
+    min(ksat_up, ksat_dn) (与 D3 木桶短板精确一致)。
+
+    mode="bidirectional" 预留 (v0.6.0+ 毛细上升): 签名已容纳上下层 θ/剖面
+    (ψ/depth 由 profile 与 theta 派生), 实现待 v0.6.0 (ROADMAP 条目)。
+
+    参数:
+        profile_up: 源层 SoilProfile (含 ksat/porosity/clay/vgm_*)
+        theta_up: 源层体积含水量
+        profile_dn: 接收层 SoilProfile
+        theta_dn: 接收层体积含水量 (downward 模式未使用, 双向预留)
+        n_days: 月天数
+        mode: "downward" (v0.5.3) | "bidirectional" (v0.6.0+)
+    返回:
+        float: 界面通量上限 (L/ha/月, ≥0)
+    """
+    if mode == "downward":
+        theta_r, alpha, n = get_vgm_params(profile_up)
+        kr = calc_Kr(theta_up, profile_up.porosity, theta_r, alpha, n)
+        k_eff = min(kr * profile_up.ksat, profile_dn.ksat)
+        return max(0.0, k_eff * 1e5 * n_days)
+    raise NotImplementedError(
+        "calc_interface_flux(mode='bidirectional') 毛细上升为 v0.6.0 预留")
 
 
 # ---- v0.5.3 Feddes ET (Q3/Q9, spec 49 §3) ----

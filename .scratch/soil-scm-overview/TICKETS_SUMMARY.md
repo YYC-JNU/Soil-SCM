@@ -62,7 +62,7 @@
 | 49 | v0.5.3 水文物理化阶段② spec（VGM + Feddes ET + 级联重构 + OM 产 CO₂） | 2026-08-19 | 🟡 ready-for-agent | spec 已发布（/grilling Q1~Q13 + 专家接缝审查）；经工单 50~54 实施 |
 | 50 | v0.5.3 VGM 模块 + θ 状态迁移（T1） | 2026-08-19 | ✅ 已完成 | src/vgm.py 纯函数 + SoilState.theta 迁移 + 初始 θ/体积联动 + config（spec 49 S1/S4/S5）；202 测试全绿 |
 | 51 | v0.5.3 Feddes ET / Oudin PET（T2） | 2026-08-19 | ✅ 已完成 | Oudin 逐月 PET + feddes_alpha(ψ) + apply_feddes_et（spec 49 S3/S2）；223 测试全绿 |
-| 52 | v0.5.3 LayerCascade 重构 + ET 集成（T3） | 2026-08-19 | 🟡 ready-for-agent | θ_FC/K(θ) 通量 + calc_interface_flux 纯向下 + run() 最前端 ET（spec 49 S2/S5） |
+| 52 | v0.5.3 LayerCascade 重构 + ET 集成（T3） | 2026-08-19 | ✅ 已完成 | θ_FC/K(θ) 通量 + calc_interface_flux 纯向下 + ET 前置编排（spec 49 S2/S5）；226 测试全绿 |
 | 53 | v0.5.3 OM 矿化产 CO₂（T4） | 2026-08-19 | 🟡 ready-for-agent | apply_om_pco2 加性+钳制 + OM 剖面 [30,15,8,5] + pCO2_eff 列（spec 49 S3/S4/S6） |
 | 54 | v0.5.3 集成、验收 E1~E3 与发布（T5） | 2026-08-19 | 🟡 ready-for-agent | main 编排 + 验收 E1/E2/E3 + 文档同步 + 发布 v0.5.3（spec 49 S6） |
 
