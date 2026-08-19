@@ -177,16 +177,18 @@ def _apply_hydrology_month(soil_states, layer_profiles, forcing,
 
 
 def _extract_diagnostics_with_hydrology(soil_states, hydrology, runoff_mm,
-                                        runoff_extra, diag_objs, variables):
+                                        runoff_extra, diag_objs, variables,
+                                        layer_profiles):
     """v0.5.0: 提取层诊断并附加水文列 (infiltration/drainage/stored_water/runoff)
 
     水文列值:
       - infiltration: 该层本月注入水量 (L/ha; 层1=入渗, 下层=上层排水)
       - drainage:     该层排水量 (L/ha, Ksat 限制后)
-      - stored_water: 该层跨月滞水 (L/ha)
+      - stored_water: 该层跨月滞水 (L/ha, v0.5.3: 由 θ 状态经 vgm 换算, 语义不变)
       - runoff:       表层径流合计 (mm×10000 + 超饱和溢出, L/ha)
       - bypass_drainage: v0.5.2 大孔隙优先流水量 (L/ha, 注入 L2, 可选诊断列)
     """
+    from src.vgm import theta_to_water_L
     layer_diags = [_extract_diagnostics(s, d, variables)
                    for s, d in zip(soil_states, diag_objs)]
     n = len(soil_states)
@@ -195,7 +197,9 @@ def _extract_diagnostics_with_hydrology(soil_states, hydrology, runoff_mm,
                   else hydrology['drains'][i - 1])
         layer_diags[i]['infiltration'] = inflow
         layer_diags[i]['drainage'] = hydrology['drains'][i]
-        layer_diags[i]['stored_water'] = soil_states[i].stored_water
+        # v0.5.3: stored_water 列向后兼容 (L/ha, 由 θ×depth×1e5 换算, 专家★5)
+        layer_diags[i]['stored_water'] = theta_to_water_L(
+            soil_states[i].theta, layer_profiles[i].effective_depth)
     layer_diags[0]['runoff'] = runoff_mm * 10000.0 + runoff_extra
     # v0.5.2: 大孔隙优先流 (绕过表层直通 L2) 诊断列, 可选输出
     if n > 1 and hydrology.get('bypass_water_L', 0.0) > 0:
@@ -319,7 +323,8 @@ def run_simulation(config_path: str = "config/config.yaml"):
                            precip_infiltration=cfg.simulation.precip_infiltration,
                            enable_surface=getattr(cfg.simulation, 'enable_surface', False),
                            nitrification_k1=getattr(cfg.simulation, 'nitrification_k1', 1.0),
-                           nitrification_k2=getattr(cfg.simulation, 'nitrification_k2', 0.4))
+                           nitrification_k2=getattr(cfg.simulation, 'nitrification_k2', 0.4),
+                           initial_psi_cm=getattr(cfg.simulation, 'initial_psi_cm', -100.0))
 
     # 构建初始状态 (initial_pCO2 已在阶段 4 中计算)
     # WF2/Q1: 多分层时构建 List[SoilState]; L6 (v0.4.0): 支持逐层参数覆盖
@@ -411,7 +416,7 @@ def run_simulation(config_path: str = "config/config.yaml"):
                     # WF2/Q6 + v0.5.0: 逐层诊断 + 水文列 + 层后缀输出
                     layer_diagnostics = _extract_diagnostics_with_hydrology(
                         soil_states, hydrology, runoff_mm, runoff_extra,
-                        diags, cfg.output.variables)
+                        diags, cfg.output.variables, layer_profiles)
                 else:
                     # WF2/Q4: 多分层 — 高层编排层 (层循环 + 级联平流)
                     if sub_steps > 0:

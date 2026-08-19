@@ -131,6 +131,23 @@ DEFAULT_4LAYER_DEPTHS = [20.0, 20.0, 20.0, 40.0]    # 每层厚度 (cm)
 DEFAULT_4LAYER_CLAY_PCT = [25.0, 35.0, 45.0, 50.0]  # 粘粒含量 (%)
 DEFAULT_4LAYER_POROSITY = [0.55, 0.47, 0.45, 0.43]  # 孔隙度
 DEFAULT_4LAYER_KSAT = [12.0, 1.9, 0.48, 0.05]  # 层间排水上限 (cm/day, v0.5.2 起仅 LayerCascade 用)
-DEFAULT_4LAYER_F0 = [1.0, 0.4, 0.15, 0.04]          # 初渗率 f0 (mm/min)
-DEFAULT_4LAYER_FC = [0.4, 0.2, 0.08, 0.02]          # 稳渗率 fc (mm/min)
+DEFAULT_4LAYER_F0 = [1.0, 0.4, 0.15, 0.04]          # 初渗率 f0 (mm/min, deprecated: Horton 废弃, v0.5.3 清理)
+DEFAULT_4LAYER_FC = [0.4, 0.2, 0.08, 0.02]          # 稳渗率 fc (mm/min, deprecated: Horton 废弃, v0.5.3 清理)
+
+# ---- v0.5.3 VGM 水分特征 (D8, VGM参数化方案.txt) ----
+# 三级参数优先级: ①layer_overrides 显式 vgm_* ②clay_pct 连续回归
+# (Saxton & Rawls 2006 + 红壤修正) ③华南红壤兜底; l=0.5 固定 (Mualem);
+# θ_s≡porosity (数学自洽, 状态转换无质量误差)
+INITIAL_PSI_CM = -100.0                 # 初始水势 (cm, 田间持水量, config 可配)
+VGM_CLAY_THETA_R_A = 0.01               # θ_r 回归: A + B×clay_pct
+VGM_CLAY_THETA_R_B = 0.002
+VGM_CLAY_ALPHA_A = 0.04                 # α (1/cm) 回归: A + B×clay_pct
+VGM_CLAY_ALPHA_B = -0.0006
+VGM_CLAY_N_A = 1.5                      # n 回归: A + B×clay_pct
+VGM_CLAY_N_B = -0.008
+VGM_FALLBACK_THETA_R = 0.08             # 华南红壤兜底 θ_r
+VGM_FALLBACK_ALPHA = 0.015              # 华南红壤兜底 α (1/cm)
+VGM_FALLBACK_N = 1.25                   # 华南红壤兜底 n
+VGM_MUALEM_L = 0.5                      # Mualem 曲折度参数 (固定)
+
 

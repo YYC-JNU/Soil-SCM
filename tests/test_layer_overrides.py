@@ -53,6 +53,23 @@ def test_build_initial_state_layer_differentiated(profile, soil_info):
     assert s_override.volume == pytest.approx(s_default.volume)
 
 
+def test_build_initial_state_sets_theta(profile, soil_info):
+    """v0.5.3/T1 (S5): build_initial_state 设 state.theta = VGM 田间持水量正算
+
+    θ 与化学初始溶液体积严格联动: state.volume = θ×depth×1e5 (Q8)。
+    """
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    assert 0 < state.theta < profile.porosity
+    assert state.volume == pytest.approx(
+        state.theta * profile.effective_depth * 1e5)
+    # 显式 vgm 覆盖 → θ 变化 (D8 ① 优先级生效于引擎初始化)
+    lo = LayerOverrideConfig(vgm_theta_r=0.05, vgm_alpha=0.03, vgm_n=1.35)
+    p_custom = _reader().apply_layer_override(profile, lo, depth=20.0)
+    s_custom = e.build_initial_state(p_custom, soil_info, 0.015)
+    assert s_custom.theta != pytest.approx(state.theta)
+
+
 def test_multi_layer_pco2_injection(profile, soil_info, monkeypatch):
     """L6/T3: run_monthly_multi_layer(layer_pco2s) → 月度 GAS_PHASE 分压按层注入"""
     e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
@@ -319,7 +336,7 @@ def test_hydrology_diagnostics_bypass_column(profile, soil_info):
     diag_objs = [None] * 4
     layer_diags = main._extract_diagnostics_with_hydrology(
         states, hydrology, runoff_mm, runoff_extra, diag_objs,
-        ["bypass_drainage"])
+        ["bypass_drainage"], profiles)
     assert layer_diags[1]["bypass_drainage"] == pytest.approx(
         hydrology["bypass_water_L"])
 
@@ -380,8 +397,8 @@ def test_apply_hydrology_month(profile, soil_info):
     # 月降水守恒: 入渗(mm) + 径流(mm) = 月降水
     inf_mm = hydrology['inflows'][0] / 10000.0
     assert inf_mm + runoff_mm == pytest.approx(FORCING['precip'])
-    # 持水生效: 至少一层有滞水
-    assert any(s.stored_water > 0 for s in states)
+    # 持水生效: 至少一层有滞水 (v0.5.3: θ 状态)
+    assert any(s.theta > 0 for s in states)
 
 
 def test_hydrology_multi_layer_month_step(profile, soil_info):
@@ -414,11 +431,14 @@ def test_hydrology_diagnostics_extracted(profile, soil_info):
     layer_diags = main._extract_diagnostics_with_hydrology(
         new_states, hydrology, runoff_mm, runoff_extra, diags,
         ["pH", "base_saturation", "CEC_occupied", "exchangeable_Ca",
-         "exchangeable_Al", "mineral_mass", "solution_ions"])
+         "exchangeable_Al", "mineral_mass", "solution_ions"], profiles)
     assert "infiltration" in layer_diags[0]
     assert "drainage" in layer_diags[0]
     assert "stored_water" in layer_diags[0]
     assert "runoff" in layer_diags[0]
+    # v0.5.3: stored_water 列向后兼容 (L/ha, 由 θ 换算, 专家★5)
+    assert layer_diags[0]["stored_water"] == pytest.approx(
+        new_states[0].theta * profiles[0].effective_depth * 1e5)
 
 
 # ==================== T5: 诊断实验逻辑 (impact_tag/depletion_year) ====================

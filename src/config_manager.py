@@ -14,7 +14,8 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 from src.logging_config import get_logger
 from src.constants import (PRECIP_INFILTRATION_DEFAULT,
-                           NITRIFICATION_K1, NITRIFICATION_K2)
+                           NITRIFICATION_K1, NITRIFICATION_K2,
+                           INITIAL_PSI_CM)
 
 logger = get_logger("config_manager")
 
@@ -45,6 +46,10 @@ class LayerOverrideConfig:
     ksat_surface: Optional[float] = None         # v0.5.2: 基质导水率 (cm/day, 仅 Green-Ampt 地表入渗)
     infiltration_initial: Optional[float] = None  # 初渗率 f0 (mm/min, deprecated)
     infiltration_steady: Optional[float] = None   # 稳渗率 fc (mm/min, deprecated)
+    # v0.5.3 VGM 显式参数 (D8 三级优先级 ①: None=走 clay_pct 回归/红壤兜底)
+    vgm_theta_r: Optional[float] = None           # 残余含水量 θ_r
+    vgm_alpha: Optional[float] = None             # 进气值倒数 α (1/cm)
+    vgm_n: Optional[float] = None                 # 孔隙分布指数 n
 
 
 @dataclass
@@ -66,6 +71,7 @@ class SimulationConfig:
     nitrification_k2: float = NITRIFICATION_K2  # L4: 硝化速率 (/月), NH4+→NO3- 比例
     hydrology_seed: int = 42                    # v0.5.0: 随机降雨生成种子 (可复现)
     bypass_fraction: float = 0.2                # v0.5.2: 大孔隙优先流比例 (0~1, 超基质 Ks 积水直通 L2)
+    initial_psi_cm: float = INITIAL_PSI_CM      # v0.5.3: 初始基质势 (cm, 负值, 田间持水量, VGM 正算 θ_init)
 
 
 @dataclass
@@ -259,7 +265,10 @@ class ConfigManager:
                     ksat=item.get('ksat'),
                     ksat_surface=item.get('ksat_surface'),
                     infiltration_initial=item.get('infiltration_initial'),
-                    infiltration_steady=item.get('infiltration_steady')
+                    infiltration_steady=item.get('infiltration_steady'),
+                    vgm_theta_r=item.get('vgm_theta_r'),
+                    vgm_alpha=item.get('vgm_alpha'),
+                    vgm_n=item.get('vgm_n')
                 ))
             layer_depths = s.get('layer_depths')  # None 或 List[float]
             config.simulation = SimulationConfig(
@@ -278,7 +287,8 @@ class ConfigManager:
                 nitrification_k1=s.get('nitrification_k1', NITRIFICATION_K1),
                 nitrification_k2=s.get('nitrification_k2', NITRIFICATION_K2),
                 hydrology_seed=s.get('hydrology_seed', 42),
-                bypass_fraction=s.get('bypass_fraction', 0.2)
+                bypass_fraction=s.get('bypass_fraction', 0.2),
+                initial_psi_cm=s.get('initial_psi_cm', INITIAL_PSI_CM)
             )
             # v0.5.2: surface_infiltration_coeff 已废弃 (Green-Ampt 入渗替代
             # Horton), 残留配置显式报错 (breaking change 明示, 不静默忽略)
@@ -485,6 +495,14 @@ class ConfigManager:
                 f"['simulation.bypass_fraction' 参数存在问题: "
                 f"比例 {bypass} 超出范围 (0~1), 请确认后再输入]")
 
+        # ---- v0.5.3: 初始基质势校验 (负值吸力) ----
+        psi = self.config.simulation.initial_psi_cm
+        if psi >= 0:
+            raise ValueError(
+                f"['simulation.initial_psi_cm' 参数存在问题: "
+                f"初始水势 {psi} 必须为负 (吸力水头 cm, 田间持水量≈-100), "
+                f"请确认后再输入]")
+
         # 创建输出目录
         os.makedirs(self.config.output.directory, exist_ok=True)
 
@@ -584,6 +602,22 @@ class ConfigManager:
                 raise ValueError(
                     f"[layer_overrides[{i}]/infiltration 参数存在问题: "
                     f"初渗率 {f0} 必须大于稳渗率 {fc}, 请确认后再输入]")
+            # v0.5.3 VGM 显式参数值域校验 (D8 ① 优先级)
+            if lo.vgm_theta_r is not None and not (0.0 <= lo.vgm_theta_r < 1.0):
+                raise ValueError(
+                    f"[layer_overrides[{i}]/vgm_theta_r 参数存在问题: "
+                    f"残余含水量 {lo.vgm_theta_r} 超出范围 [0,1), "
+                    f"请确认后再输入]")
+            if lo.vgm_alpha is not None and lo.vgm_alpha <= 0:
+                raise ValueError(
+                    f"[layer_overrides[{i}]/vgm_alpha 参数存在问题: "
+                    f"进气值倒数 {lo.vgm_alpha} 必须大于 0 (1/cm), "
+                    f"请确认后再输入]")
+            if lo.vgm_n is not None and lo.vgm_n <= 1:
+                raise ValueError(
+                    f"[layer_overrides[{i}]/vgm_n 参数存在问题: "
+                    f"孔隙分布指数 {lo.vgm_n} 必须大于 1, "
+                    f"请确认后再输入]")
 
     def _validate_precip_chemistry(self):
         """校验降水化学配置 (v0.2.3)

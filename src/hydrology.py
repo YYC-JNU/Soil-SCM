@@ -18,6 +18,7 @@ import numpy as np
 from src.logging_config import get_logger
 from src.constants import (GREEN_AMPT_PSI_F_MM, GREEN_AMPT_NEWTON_TOL,
                            GREEN_AMPT_NEWTON_MAX_ITER)
+from src.vgm import theta_to_water_L, water_L_to_theta
 
 logger = get_logger("hydrology")
 
@@ -156,7 +157,7 @@ class LayerCascade:
 
         参数:
             inflow_L: 最上层入渗水量 (L/ha)
-            states: List[SoilState] (逐层状态, stored_water 就地更新)
+            states: List[SoilState] (逐层状态, theta 就地更新)
         返回:
             (drains, runoff_extra, deep_drainage)
             - drains: 各层排水量 (L/ha), 长度 = n_layers
@@ -170,14 +171,17 @@ class LayerCascade:
             p = self.profiles[i]
             sat = self.saturation_capacity(i)
             space = 0.5 * sat
-            avail = inflow + state.stored_water
+            # v0.5.3: stored_water → theta 状态迁移 (Q1/Q7), L/ha 由 vgm 换算
+            # (50% 饱和持水语义保留至工单 52 的 LayerCascade 重构)
+            stored = theta_to_water_L(state.theta, p.effective_depth)
+            avail = inflow + stored
             drainable = max(0.0, avail - space)
             ksat_cap = p.ksat * 10000.0 * self.n_days * 10.0
             drain = min(drainable, ksat_cap)
             retained = avail - drain
             overflow = max(0.0, retained - sat)
             retained = min(retained, sat)
-            state.stored_water = retained
+            state.theta = water_L_to_theta(retained, p.effective_depth)
             runoff_extra += overflow
             drains.append(drain)
             inflow = drain

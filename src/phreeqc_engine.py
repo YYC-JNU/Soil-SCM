@@ -26,7 +26,8 @@ from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
                            N_MOL_PER_KG_N,
                            PRE_EQUIL_PH_TOL, PRE_EQUIL_ION_TOL,
                            PRE_EQUIL_PH_GAIN, PRE_EQUIL_ION_GAIN,
-                           ALX3_DEFAULT_LOGK, ALX3_SELECTIVITY_LOGK)
+                           ALX3_DEFAULT_LOGK, ALX3_SELECTIVITY_LOGK,
+                           INITIAL_PSI_CM)
 from src.logging_config import get_logger
 
 logger = get_logger("phreeqc_engine")
@@ -55,7 +56,8 @@ class SoilState:
     n_urea: float = 0.0          # 尿素形态氮 (mol N), 水解前库存
     n_nh4: float = 0.0           # 铵态氮 (mol N), 由 SELECTED_OUTPUT N(-3) 回填
     n_no3: float = 0.0           # 硝态氮 (mol N), 由 SELECTED_OUTPUT N(5) 回填
-    stored_water: float = 0.0    # v0.5.0: 本层滞留水量 (L/ha), 跨月累积 (水文盒子)
+    theta: float = 0.0           # v0.5.3: 本层体积含水量 θ (m³/m³), 跨月累积
+                                 # (规范状态, Q1/Q7; L/ha 由 vgm.theta_to_water_L 派生)
 
 
 def advance_nitrification(state: SoilState, action,
@@ -136,7 +138,8 @@ class PhreeqcEngine:
                  precip_infiltration: float = PRECIP_INFILTRATION_DEFAULT,
                  enable_surface: bool = False,
                  nitrification_k1: float = NITRIFICATION_K1,
-                 nitrification_k2: float = NITRIFICATION_K2):
+                 nitrification_k2: float = NITRIFICATION_K2,
+                 initial_psi_cm: float = INITIAL_PSI_CM):
         """
         参数:
             database: PHREEQC 热力学数据库
@@ -154,6 +157,8 @@ class PhreeqcEngine:
                 - False: 不生成 SURFACE 块 (回归护栏)
             nitrification_k1: 尿素水解速率 /月 (L4, 默认 1.0=当月全水解)
             nitrification_k2: 硝化速率 /月 (L4, 默认 0.4; config 可配置)
+            initial_psi_cm: v0.5.3: 初始基质势 (cm, 负值, 默认 −100 田间持水量),
+                经 VGM 正算 state.theta 初始值 (D8/Q8)
         """
         self.database = database
         self.mode = mode
@@ -178,6 +183,8 @@ class PhreeqcEngine:
         # 物理值(1e6-1e7 mol)会导致碱性突变(pH~9.9), 需取较小值保留区分度
         # F2 修复: 与 initial_condition.MINERAL_SCALE 统一 (双路径一致)
         self.mineral_scale = MINERAL_SCALE
+        # v0.5.3: 初始基质势 (cm, 负值) — 经 VGM 正算 state.theta (D8/Q8)
+        self.initial_psi_cm = initial_psi_cm
 
         # ---- 初始化后端 (v0.1.3: 仅官方引擎, phreeqpython 已废弃) ----
         if OFFICIAL_PHREEQC_AVAILABLE:
@@ -207,7 +214,8 @@ class PhreeqcEngine:
         """
         from src.initial_condition import InitialConditionBuilder
 
-        builder = InitialConditionBuilder(soil_profile, mineral_db_info, pCO2)
+        builder = InitialConditionBuilder(soil_profile, mineral_db_info, pCO2,
+                                          initial_psi_cm=self.initial_psi_cm)
 
         state = SoilState()
         state.temperature = 25.0
@@ -219,6 +227,9 @@ class PhreeqcEngine:
         state.minerals = builder.build_minerals()
         state.gas_phase = builder.build_gas_phase()
         state.volume = builder.solution_volume_L
+        # v0.5.3: 初始 θ 由 VGM 从初始水势 (田间持水量) 正算 (D8/Q8),
+        # 与化学初始溶液体积严格联动 (同一 θ_init 驱动)
+        state.theta = builder.theta_init
         # WF4: SURFACE 表面络合 (Hfo_s/Hfo_w), 默认关闭
         if self.enable_surface:
             state.surface = builder.build_surface() or {}
