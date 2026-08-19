@@ -89,9 +89,13 @@ climate:
   temp_increase_rate: 0.05       # 情景4: 每年增温幅度 (°C/yr)
   # v0.5.3 PET 通道 (D5): Oudin(2005) 为主 (仅需月均温+纬度), 固定气候态兜底
   latitude: 23.1                 # 站点纬度 (°N, 华南红壤典型; 广州 23.1/鹰潭 28.2)
-  pet_method: oudin              # "oudin" | "fixed" (fixed 需 pet_monthly_climate; hargreaves=v0.6.0 预留)
+  pet_method: oudin              # "oudin" | "fixed" (需 pet_monthly_climate) | "hargreaves" (v0.6.0)
+                                 #   hargreaves_enhanced = v0.7.0 预留 (config 显式报错)
   pet_monthly_climate: null      # 12 值固定气候态月 PET (mm/month); null=Oudin 公式正算
   pet_correction_factor: null    # 12 值月度修正系数; null=[1.0]×12 恒等
+  # v0.6.0 Hargreaves-Samani (Q8/Q9): 日较差 T_max−T_min (°C, 华南典型 6~10, 默认 8.0)
+  #   T_max = T_mean + range/2, T_min = T_mean − range/2; 仅 pet_method=hargreaves 使用
+  diurnal_range_deg: 8.0
   #  华南 Oudin 偏差修正示例 (v0.5.3水分平衡闭合.txt §6.1, 夏季低估/冬季高估):
   #  [0.95, 0.95, 1.0, 1.0, 1.0, 0.90, 0.85, 0.85, 0.90, 1.0, 1.05, 1.05]
 

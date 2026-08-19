@@ -112,3 +112,46 @@ def test_apply_om_pco2_vertical_gradient():
     effs = [apply_om_pco2(base, om) for om in (30.0, 15.0, 8.0, 5.0)]
     assert all(e1 >= e2 for e1, e2 in zip(effs, effs[1:]))
     assert effs[0] - base > effs[3] - base   # 表层增量最大
+
+
+# ==================== v0.6.0 Hargreaves PET (S4, Q8/Q9) ====================
+
+def test_calc_pet_oudin_dispatch_equals_legacy():
+    """Q9: calc_pet('oudin') 与 calc_pet_oudin 数值等价 (回归门禁)"""
+    from src.climate_forcing import calc_pet
+    for m in range(1, 13):
+        assert calc_pet(25.0, 23.1, m, method='oudin') == \
+            pytest.approx(calc_pet_oudin(25.0, 23.1, m))
+
+
+def test_calc_pet_hargreaves_formula_and_diurnal_sensitivity():
+    """Q8/Q9: Hargreaves — 日较差↑ → PET↑, 且 ∝ √range (公式端点)"""
+    from src.climate_forcing import calc_pet
+    pet8 = calc_pet(25.0, 23.1, 6, method='hargreaves', diurnal_range_deg=8.0)
+    pet16 = calc_pet(25.0, 23.1, 6, method='hargreaves', diurnal_range_deg=16.0)
+    assert pet16 > pet8
+    assert pet16 == pytest.approx(pet8 * (16.0 / 8.0) ** 0.5, rel=1e-9)
+
+
+def test_calc_pet_hargreaves_sensible_magnitude():
+    """Hargreaves 量级合理: 与 Oudin 同量级 (0~15 mm/day, 月内各月)"""
+    from src.climate_forcing import calc_pet
+    for m in range(1, 13):
+        pet = calc_pet(25.0, 23.1, m, method='hargreaves',
+                       diurnal_range_deg=8.0)
+        assert 0 <= pet <= 15.0
+
+
+def test_calc_pet_hargreaves_enhanced_raises():
+    """Q9: hargreaves_enhanced 显式报错 (v0.6.0 预留, 数据管线留 v0.7.0)"""
+    from src.climate_forcing import calc_pet
+    with pytest.raises(NotImplementedError):
+        calc_pet(25.0, 23.1, 6, method='hargreaves_enhanced')
+
+
+def test_generate_pet_hargreaves_method():
+    """Q9: pet_method='hargreaves' 走 calc_pet 分派 (n_years×12 数组)"""
+    cf = ClimateForcing(1893.0, 25.0, 0.015, 25.0, 0.05, 1, "natural",
+                        pet_method="hargreaves", diurnal_range_deg=8.0)
+    assert cf.monthly_pet.shape == (1, 12)
+    assert (cf.monthly_pet > 0).all()

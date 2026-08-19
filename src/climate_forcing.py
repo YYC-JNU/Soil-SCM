@@ -16,7 +16,7 @@ import numpy as np
 from typing import Tuple
 from src.utils import estimate_soil_pCO2
 from src.constants import (DAYS_IN_MONTH, DEFAULT_LATITUDE,
-                           K_OM_PCO2, PCO2_MAX)
+                           DEFAULT_DIURNAL_RANGE, K_OM_PCO2, PCO2_MAX)
 
 
 def apply_om_pco2(pco2_base: float, om_gkg: float,
@@ -38,16 +38,33 @@ def apply_om_pco2(pco2_base: float, om_gkg: float,
     return min(pco2_base + k_om * om_gkg, pco2_max)
 
 
+def _calc_extraterrestrial_radiation(latitude_deg: float,
+                                     month: int) -> float:
+    """大气顶层辐射 R_a (MJ/m²/day) — Oudin 公用 (v0.6.0 提取, Q9)
+
+    日地距离修正 d_r / 太阳赤纬 δ / 日落时角 ω_s:
+      d_r  = 1 + 0.033·cos(2πJ/365)
+      δ    = 0.4093·sin(2πJ/365 − 1.39)   (rad)
+      ω_s  = arccos(−tanφ·tanδ)
+      R_a  = (24×60/π)·G_sc·d_r·[ω_s·sinφ·sinδ + cosφ·cosδ·sinω_s]
+             (G_sc=0.0820 MJ m⁻² min⁻¹)
+    """
+    phi = np.radians(latitude_deg)
+    J = 15 + 30 * (month - 1)               # 月中日近似
+    dr = 1.0 + 0.033 * np.cos(2.0 * np.pi * J / 365.0)
+    delta = 0.4093 * np.sin(2.0 * np.pi * J / 365.0 - 1.39)
+    cos_ws = np.clip(-np.tan(phi) * np.tan(delta), -1.0, 1.0)
+    ws = np.arccos(cos_ws)
+    return (24.0 * 60.0 / np.pi) * 0.0820 * dr * (
+        ws * np.sin(phi) * np.sin(delta)
+        + np.cos(phi) * np.cos(delta) * np.sin(ws))
+
+
 def calc_pet_oudin(t_mean_c: float, latitude_deg: float, month: int) -> float:
     """Oudin (2005) 日 PET (mm/day)
 
     仅需月均温与站点纬度 (v0.5.3 PET 主通道, D5):
-      d_r  = 1 + 0.033·cos(2πJ/365)                      (日地距离修正)
-      δ    = 0.4093·sin(2πJ/365 − 1.39)                  (太阳赤纬, rad)
-      ω_s  = arccos(−tanφ·tanδ)                          (日落时角)
-      R_a  = (24×60/π)·G_sc·d_r·[ω_s·sinφ·sinδ + cosφ·cosδ·sinω_s]
-             (G_sc=0.0820 MJ m⁻² min⁻¹, 大气顶层辐射 MJ m⁻² day⁻¹)
-      PET  = R_a×1000/(λ·ρ_w) × max(0, (T+5)/100)
+      PET = R_a×1000/(λ·ρ_w) × max(0, (T+5)/100)
              (λ=2.45 MJ/kg 汽化潜热, ρ_w=1000 kg/m³ → R_a/2.45 mm/day)
 
     参数:
@@ -57,18 +74,51 @@ def calc_pet_oudin(t_mean_c: float, latitude_deg: float, month: int) -> float:
     返回:
         float: 日 PET (mm/day)
     """
-    phi = np.radians(latitude_deg)
-    J = 15 + 30 * (month - 1)               # 月中日近似
-    dr = 1.0 + 0.033 * np.cos(2.0 * np.pi * J / 365.0)
-    delta = 0.4093 * np.sin(2.0 * np.pi * J / 365.0 - 1.39)
-    cos_ws = np.clip(-np.tan(phi) * np.tan(delta), -1.0, 1.0)
-    ws = np.arccos(cos_ws)
-    Ra = (24.0 * 60.0 / np.pi) * 0.0820 * dr * (
-        ws * np.sin(phi) * np.sin(delta)
-        + np.cos(phi) * np.cos(delta) * np.sin(ws))
+    Ra = _calc_extraterrestrial_radiation(latitude_deg, month)
     # R_a (MJ/m²/day) → 蒸散水柱 (mm/day): ×1000/(λ·ρ_w), λ=2.45 MJ/kg,
     # ρ_w=1000 kg/m³ → 0.4082; 温度阈值 (T+5)/100, 冬季休眠自动归零
     return float((Ra * 1000.0 / 2450.0) * max(0.0, (t_mean_c + 5.0) / 100.0))
+
+
+def calc_pet(t_mean_c: float, latitude_deg: float, month: int,
+             method: str = 'oudin',
+             diurnal_range_deg: float = DEFAULT_DIURNAL_RANGE) -> float:
+    """PET 单入口分派 (v0.6.0, Q8/Q9, Oudin 精度增强模式)
+
+    三种方法共享同一入口, 输出均为日 PET (mm/day), 下游 ET 扣除
+    (LayerCascade) 无需知道方法来源:
+
+      - "oudin" (默认): Oudin (2005), 仅需月均温+纬度 (calc_pet_oudin)
+      - "hargreaves": Hargreaves-Samani (1985),
+          PET = 0.0023 × R_a × (T_mean+17.8) × √(T_max−T_min)
+          T_max = T_mean + range/2, T_min = T_mean − range/2 (config 日较差)
+          R_a 复用 Oudin 日地/赤纬/时角计算 (_calc_extraterrestrial_radiation)
+      - "hargreaves_enhanced": v0.6.0 只预留枚举 + 显式报错
+          (12 值日较差 + 外部气候文件内插数据管线留 v0.7.0)
+
+    参数:
+        t_mean_c: 月均温 (°C)
+        latitude_deg: 站点纬度 (°N, 正值)
+        month: 月份 1~12
+        method: pet 方法 ('oudin' | 'hargreaves' | 'hargreaves_enhanced')
+        diurnal_range_deg: 日较差 T_max−T_min (°C, hargreaves 用, 默认 8.0)
+    返回:
+        float: 日 PET (mm/day)
+    """
+    if method == 'oudin':
+        return calc_pet_oudin(t_mean_c, latitude_deg, month)
+    if method == 'hargreaves':
+        # Hargreaves-Samani (1985): 经验系数 0.0023 (含单位换算), PET 单位 mm/day
+        Ra = _calc_extraterrestrial_radiation(latitude_deg, month)
+        t_max = t_mean_c + diurnal_range_deg / 2.0
+        t_min = t_mean_c - diurnal_range_deg / 2.0
+        return float(0.0023 * Ra * (t_mean_c + 17.8)
+                     * (t_max - t_min) ** 0.5)
+    if method == 'hargreaves_enhanced':
+        raise NotImplementedError(
+            "pet_method='hargreaves_enhanced' 为 v0.7.0 预留 "
+            "(12 值日较差 + 外部气候文件内插数据管线); v0.6.0 仅枚举+报错")
+    raise ValueError(f"未知 pet_method: {method}")
 
 
 class ClimateForcing:
@@ -96,7 +146,8 @@ class ClimateForcing:
                  latitude: float = DEFAULT_LATITUDE,
                  pet_method: str = 'oudin',
                  pet_monthly_climate=None,
-                 pet_correction_factor=None):
+                 pet_correction_factor=None,
+                 diurnal_range_deg: float = DEFAULT_DIURNAL_RANGE):
         """
         参数:
             base_annual_precip: 基准年降水量 (mm)
@@ -110,8 +161,11 @@ class ClimateForcing:
             temp_increase_rate: 温度年增加量 (°C)
             latitude: v0.5.3: 站点纬度 (°N, Oudin PET 必需, D5)
             pet_method: v0.5.3: "oudin" (主) | "fixed" (pet_monthly_climate 兜底)
+                       v0.6.0: "hargreaves" | "hargreaves_enhanced" (预留报错)
             pet_monthly_climate: v0.5.3: 12 值固定气候态月 PET (mm/month, 提供时优先)
             pet_correction_factor: v0.5.3: 12 值月度修正系数 (华南夏低冬高偏差, 默认恒等)
+            diurnal_range_deg: v0.6.0: 日较差 T_max−T_min (°C, hargreaves 用,
+                默认 8.0, config 可配)
         """
         self.base_annual_precip = base_annual_precip
         self.base_annual_temp = base_annual_temp
@@ -126,6 +180,7 @@ class ClimateForcing:
         self.pet_method = pet_method
         self.pet_monthly_climate = pet_monthly_climate
         self.pet_correction_factor = pet_correction_factor
+        self.diurnal_range_deg = diurnal_range_deg
 
         # 生成时间序列
         self.monthly_precip = self._generate_precip()
@@ -192,7 +247,9 @@ class ClimateForcing:
     def _generate_pet(self) -> np.ndarray:
         """生成逐月 PET 序列 (n_years × 12, v0.5.3, D5)
 
+        v0.6.0 (Q9): 单入口 calc_pet 分派 (pet_method 决定);
         Oudin 主通道: PET = calc_pet_oudin(T, lat, month) × 当月天数 × 修正系数;
+        Hargreaves: PET = calc_pet(..., method='hargreaves') (日较差驱动);
         固定气候态兜底: pet_monthly_climate (12 值) 提供时优先 (仍乘月度修正)。
         """
         pet = np.zeros((self.n_years, 12))
@@ -204,7 +261,9 @@ class ClimateForcing:
                     pet[year, month] = self.pet_monthly_climate[month] * cf[month]
                 else:
                     T = self.monthly_temp[year, month]
-                    daily = calc_pet_oudin(T, self.latitude, month + 1)
+                    daily = calc_pet(T, self.latitude, month + 1,
+                                     method=self.pet_method,
+                                     diurnal_range_deg=self.diurnal_range_deg)
                     pet[year, month] = daily * DAYS_IN_MONTH[month] * cf[month]
         return pet
 

@@ -589,11 +589,30 @@ def test_climate_pet_parse(tmp_path):
     assert clim.pet_correction_factor[5] == 0.9
 
 
-def test_climate_pet_hargreaves_reserved_raises(tmp_path):
-    """v0.5.3: pet_method=hargreaves → 显式报错 (v0.6.0 预留, 专家★4)"""
+def test_climate_pet_hargreaves_valid_v060(tmp_path):
+    """v0.6.0 (Q9): pet_method=hargreaves 现已有效 (日较差 config 可配)"""
     p = tmp_path / "cfg.yaml"
-    p.write_text("climate:\n  pet_method: hargreaves\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="hargreaves"):
+    p.write_text("climate:\n  pet_method: hargreaves\n"
+                 "  diurnal_range_deg: 9.5\n", encoding="utf-8")
+    clim = ConfigManager(str(p)).config.climate
+    assert clim.pet_method == "hargreaves"
+    assert clim.diurnal_range_deg == 9.5
+
+
+def test_climate_pet_hargreaves_enhanced_reserved_raises(tmp_path):
+    """v0.6.0: pet_method=hargreaves_enhanced → 显式报错 (v0.7.0 预留)"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text("climate:\n  pet_method: hargreaves_enhanced\n",
+                 encoding="utf-8")
+    with pytest.raises(ValueError, match="hargreaves_enhanced"):
+        ConfigManager(str(p))
+
+
+def test_climate_diurnal_range_invalid_raises(tmp_path):
+    """v0.6.0 (Q8): diurnal_range_deg <= 0 → 报错"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text("climate:\n  diurnal_range_deg: -2\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="diurnal_range_deg"):
         ConfigManager(str(p))
 
 
