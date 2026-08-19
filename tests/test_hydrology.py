@@ -54,7 +54,11 @@ def test_monthly_hydrology_conserves_water():
 
 
 def test_cascade_fills_storage_before_drain():
-    """级联: 先填 50%→100% 持水增量, 超出才排水"""
+    """级联: 先填 50%→100% 持水增量, 超出才排水
+
+    v0.5.3/Q6: SoilState.stored_water→theta 状态迁移 (Q1/Q7),
+    断言改为 θ (5.5e5 L/ha ÷ 20cm×1e5 = 0.275 = 0.5×θ_s)。
+    """
     profiles = [
         _surface_profile(porosity=0.55, depth=20, ksat=76.8),
         _surface_profile(porosity=0.47, depth=20, ksat=24.5),
@@ -64,14 +68,17 @@ def test_cascade_fills_storage_before_drain():
     cascade = LayerCascade(profiles)
     drains, runoff, deep = cascade.run(1.0e6, states)
     assert drains[0] == pytest.approx(1.0e6 - 5.5e5)  # 超持水部分排
-    assert states[0].stored_water == pytest.approx(5.5e5)  # 填满至饱和
+    assert states[0].theta == pytest.approx(0.275)    # 填满至 50% 持水增量
     assert drains[1] == 0.0  # 层2来水 4.5e5 < space 4.7e5, 无排水
     assert runoff == 0.0
     assert deep == 0.0
 
 
 def test_cascade_ksat_limits_drain_and_overflow():
-    """Ksat 限制排水 + 超饱和溢出计入径流"""
+    """Ksat 限制排水 + 超饱和溢出计入径流
+
+    v0.5.3/Q6: 断言改 θ (3e5 L/ha ÷ 10cm×1e5 = 0.30 = θ_s 饱和)。
+    """
     profiles = [
         _surface_profile(porosity=0.30, depth=10, ksat=0.1),
         # ksat_cap = 0.1cm/day×30天×1e8cm² = 3e5 L/ha/月
@@ -81,19 +88,23 @@ def test_cascade_ksat_limits_drain_and_overflow():
     cascade = LayerCascade(profiles)
     drains, runoff, deep = cascade.run(1.0e6, states)
     assert drains[0] == pytest.approx(3.0e5)  # Ksat 限制 (cap=3e5)
-    assert states[0].stored_water == pytest.approx(3.0e5)  # 饱和
+    assert states[0].theta == pytest.approx(0.30)  # 饱和
     assert runoff == pytest.approx(1.0e6 - 3.0e5 - 3.0e5)  # 溢出=4e5
 
 
-def test_cascade_stored_water_carries_to_next_month():
-    """跨月滞水: 上月末 stored_water 作为下月初始 (饱和后新来水全排)"""
+def test_cascade_theta_carries_to_next_month():
+    """跨月滞水: 上月末 θ 作为下月初始 (饱和后新来水全排)
+
+    v0.5.3/Q6: 原名 test_cascade_stored_water_carries_to_next_month,
+    SoilState(stored_water=2.5e5)→SoilState(theta=0.25) (2.5e5/(10×1e5))。
+    """
     profiles = [_surface_profile(porosity=0.5, depth=10, ksat=76.8)]
-    state = SoilState(stored_water=2.5e5)  # 上月已填满 50% 增量 (sat=5e5)
+    state = SoilState(theta=0.25)  # 上月已填满 50% 增量 (sat=5e5, θ_s=0.5)
     cascade = LayerCascade(profiles)
     # 新来水 2e5 → avail=4.5e5 > space=2.5e5 → 排水 2e5
     drains, _, _ = cascade.run(2.0e5, [state])
     assert drains[0] == pytest.approx(2.0e5)
-    assert state.stored_water == pytest.approx(2.5e5)
+    assert state.theta == pytest.approx(0.25)
 
 
 # ==================== v0.5.2 Green-Ampt 入渗 (S1 seam) ====================

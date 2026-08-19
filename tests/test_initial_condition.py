@@ -80,3 +80,23 @@ def test_gas_phase_uses_pco2(profile, soil_info):
 def test_validate_passes(profile, soil_info):
     b = _builder(profile, soil_info)
     assert b.validate() is True
+
+
+def test_theta_init_field_capacity(profile, soil_info):
+    """v0.5.3/Q8: 初始 θ 由 VGM 从 initial_psi_cm=-100 (田间持水量) 正算
+
+    θ_r<θ_init<θ_s (含水合理区间); 默认 profile: clay=25, porosity≈0.547
+    → θ_init≈0.41 (实测约 0.75θ_s, 非"50% 饱和"的过湿假设)。
+    """
+    b = _builder(profile, soil_info)
+    assert b.theta_init > 0
+    assert b.theta_init < b.porosity
+    # L1 clay 25% 回归: θ_r=0.06 → θ_init 显著高于 θ_r
+    assert b.theta_init > 0.30
+
+
+def test_solution_volume_theta_coupled(profile, soil_info):
+    """v0.5.3/Q8: 化学初始溶液体积 = θ_init×depth×1e5 (与水文 θ 联动)"""
+    b = _builder(profile, soil_info)
+    assert b.solution_volume_L == pytest.approx(
+        b.theta_init * profile.effective_depth * 1e5)

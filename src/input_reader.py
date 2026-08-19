@@ -53,6 +53,11 @@ class SoilProfile:
     infiltration_initial: float = 0.0   # 初渗率 f0 (mm/min, deprecated: Horton 废弃, v0.5.3 清理)
     infiltration_steady: float = 0.0    # 稳渗率 fc (mm/min, deprecated: Horton 废弃, v0.5.3 清理)
 
+    # v0.5.3 VGM 水分特征参数 (D8 三级优先级: None=未显式 → clay_pct 回归 → 红壤兜底)
+    vgm_theta_r: Optional[float] = None   # 残余含水量 θ_r (m³/m³)
+    vgm_alpha: Optional[float] = None     # 进气值倒数 α (1/cm)
+    vgm_n: Optional[float] = None         # 孔隙分布指数 n (>1)
+
     # 衍生量
     @property
     def base_saturation(self) -> float:
@@ -257,8 +262,9 @@ class InputReader:
                 setattr(prof, fld, v)
         # v0.5.0 水文: 水文字段应用 (clay_pct 已有; ksat/初渗/稳渗)
         # v0.5.2: +ksat_surface (Green-Ampt 基质导水率)
+        # v0.5.3: +vgm_theta_r/vgm_alpha/vgm_n (VGM 显式参数, D8 最高优先级)
         for fld in ('clay_pct', 'ksat', 'ksat_surface', 'infiltration_initial',
-                    'infiltration_steady'):
+                    'infiltration_steady', 'vgm_theta_r', 'vgm_alpha', 'vgm_n'):
             v = getattr(override, fld, None)
             if v is not None:
                 setattr(prof, fld, v)

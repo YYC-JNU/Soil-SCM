@@ -37,8 +37,10 @@ from src.constants import (MINERAL_SCALE, HFO_STRONG_SITE_DENSITY,
                            SOLUTION_TOTAL_CATION_CONC,
                            AMORPHOUS_ALOH3_MASS_FRACTION,
                            AMORPHOUS_ALOH3_MOLAR_MASS,
-                           GAP_AL_FRACTION)
+                           GAP_AL_FRACTION,
+                           INITIAL_PSI_CM)
 from src.utils import cmol_to_mol_per_kg
+from src.vgm import vgm_theta_from_psi, get_vgm_params
 
 logger = get_logger("initial_condition")
 
@@ -67,22 +69,30 @@ class InitialConditionBuilder:
     # FE_OXIDE_SITE_DENSITY 由 HFO_SITE_DENSITY 取代; OM_SITE_DENSITY 因
     # phreeqc.dat 无有机质表面物种而废弃 (见 WF3/WF4)。
 
-    def __init__(self, soil_profile, mineral_db_info, pCO2: float):
+    def __init__(self, soil_profile, mineral_db_info, pCO2: float,
+                 initial_psi_cm: float = INITIAL_PSI_CM):
         """
         参数:
             soil_profile: SoilProfile 对象 (来自 input_reader.py)
             mineral_db_info: SoilTypeInfo 对象 (来自 soil_database.py)
             pCO2: 初始 CO2 分压 (atm)
+            initial_psi_cm: v0.5.3: 初始基质势 (cm, 负值, 默认 −100 田间持水量,
+                经 VGM 正算 θ_init 驱动初始溶液体积, D8/Q8)
         """
         self.profile = soil_profile
         self.mineral_info = mineral_db_info
         self.pCO2 = pCO2
+        self.initial_psi_cm = initial_psi_cm
 
         # 计算衍生量 (复用 SoilProfile 已有属性, 消除重复实现, T04)
         # 注意: porosity 必须先于 solution_volume 计算
         # ( _calc_solution_volume 内部引用 self.porosity )
         self.soil_mass_kg = self.profile.soil_mass_per_ha
         self.porosity = self.profile.porosity
+        # v0.5.3: 初始 θ 由 VGM 从初始水势 (田间持水量) 正算 (D8, 废弃 50% 饱和)
+        theta_r, alpha, n = get_vgm_params(self.profile)
+        self.theta_init = vgm_theta_from_psi(
+            self.initial_psi_cm, self.porosity, theta_r, alpha, n)
         self.solution_volume_L = self._calc_solution_volume()
         self.cec_total_mol = self._calc_cec_total()
 
@@ -91,19 +101,16 @@ class InitialConditionBuilder:
     # ============================================================
 
     def _calc_solution_volume(self) -> float:
-        """估算土壤溶液体积 (L/ha)
+        """估算土壤溶液体积 (L/ha) — v0.5.3: θ_init×depth×1e5 (D8/Q8)
 
-        假设土壤含水量为田间持水量的 50%
-        公式: volume = depth × area × porosity × saturation
+        化学初始溶液体积与水文初始 θ (VGM 田间持水量正算) 严格联动,
+        废弃"50% 饱和度"假设 (同一层不再出现化学 50% 饱和 vs 水文
+        VGM 田间持水的矛盾态; 决策 D8, spec 49 Q8)。
 
         返回:
             溶液体积 (L/ha)
         """
-        saturation = 0.5  # 假设 50% 饱和度
-        depth_m = self.profile.effective_depth / 100.0
-        volume_m3 = depth_m * 10000.0 * self.porosity * saturation
-        volume_L = volume_m3 * 1000.0  # m³ → L
-        return volume_L
+        return self.theta_init * self.profile.effective_depth * 1e5
 
     def _calc_cec_total(self) -> float:
         """将 CEC 从 cmol(+)/kg 转换为 mol (对于整个土柱)

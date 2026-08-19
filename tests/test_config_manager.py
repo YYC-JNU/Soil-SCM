@@ -508,3 +508,60 @@ def test_surface_infiltration_coeff_removed_raises(tmp_path):
                  encoding="utf-8")
     with pytest.raises(ValueError, match="surface_infiltration_coeff"):
         ConfigManager(str(p))
+
+
+# ==================== v0.5.3: 初始水势 + VGM 显式参数 ====================
+
+def test_initial_psi_cm_default(cfg):
+    """默认 config: initial_psi_cm=-100 (田间持水量, VGM 正算 θ_init)"""
+    assert cfg.config.simulation.initial_psi_cm == -100.0
+
+
+def test_initial_psi_cm_parse(tmp_path):
+    """YAML 覆盖 initial_psi_cm → 解析生效"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text("simulation:\n  n_years: 2\n  initial_psi_cm: -330.0\n",
+                 encoding="utf-8")
+    assert ConfigManager(str(p)).config.simulation.initial_psi_cm == -330.0
+
+
+def test_initial_psi_cm_invalid_raises(tmp_path):
+    """v0.5.3: initial_psi_cm ≥ 0 → 显式报错 (必须为负吸力水头)"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text("simulation:\n  n_years: 2\n  initial_psi_cm: 100.0\n",
+                 encoding="utf-8")
+    with pytest.raises(ValueError, match="initial_psi_cm"):
+        ConfigManager(str(p))
+
+
+def test_layer_override_vgm_fields_parse(tmp_path):
+    """v0.5.3/T1: layer_overrides 显式 vgm_theta_r/vgm_alpha/vgm_n → 解析映射"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text(
+        "simulation:\n  n_years: 2\n  n_layers: 2\n  layer_overrides:\n"
+        "    - vgm_theta_r: 0.10\n      vgm_alpha: 0.02\n      vgm_n: 1.40\n"
+        "    - {}\n", encoding="utf-8")
+    lo0 = ConfigManager(str(p)).config.simulation.layer_overrides[0]
+    assert lo0.vgm_theta_r == 0.10
+    assert lo0.vgm_alpha == 0.02
+    assert lo0.vgm_n == 1.40
+    lo1 = ConfigManager(str(p)).config.simulation.layer_overrides[1]
+    assert lo1.vgm_theta_r is None
+    assert lo1.vgm_n is None
+
+
+def test_layer_override_vgm_invalid_raises(tmp_path):
+    """v0.5.3: vgm_n≤1 / vgm_alpha≤0 → 显式报错 (值域校验)"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text(
+        "simulation:\n  n_years: 2\n  n_layers: 2\n  layer_overrides:\n"
+        "    - vgm_n: 1.0\n    - {}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="vgm_n"):
+        ConfigManager(str(p))
+    p2 = tmp_path / "cfg2.yaml"
+    p2.write_text(
+        "simulation:\n  n_years: 2\n  n_layers: 2\n  layer_overrides:\n"
+        "    - vgm_alpha: 0.0\n    - {}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="vgm_alpha"):
+        ConfigManager(str(p2))
+
