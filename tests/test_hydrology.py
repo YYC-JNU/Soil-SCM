@@ -237,3 +237,36 @@ def test_apply_feddes_et_root_weights_4layer():
     assert deficit == pytest.approx(0.0)
     # L4 根权重 0: θ 不变
     assert states[3].theta == pytest.approx(0.40)
+
+
+# ==================== v0.6.0 事件生成 (S3, Q1/Q11) ====================
+
+def test_generate_events_reproducible_with_seed():
+    """v0.6.0 (Q11): 同 seed 同事件序列, 不同 seed 不同"""
+    from src.hydrology import generate_events
+    a1 = generate_events(150.0, 0, 0, seed=42)
+    a2 = generate_events(150.0, 0, 0, seed=42)
+    b = generate_events(150.0, 0, 0, seed=7)
+    assert [e.precip_mm for e in a1] == [e.precip_mm for e in a2]
+    assert [e.precip_mm for e in a1] != [e.precip_mm for e in b]
+
+
+def test_generate_events_total_conserved_and_range():
+    """v0.6.0: Σ 事件降水 = 月总量 (质量守恒不变量), 场次数 ∈ [4,12]"""
+    from src.hydrology import generate_events
+    for m in range(12):
+        events = generate_events(158.0, 0, m, seed=42)
+        assert 4 <= len(events) <= 12
+        assert sum(e.precip_mm for e in events) == pytest.approx(158.0, rel=1e-6)
+        assert all(e.precip_mm > 0 for e in events)
+
+
+def test_rainevent_defaults():
+    """v0.6.0 (Q1): RainEvent 默认历时 2.0h, date_hint 记录年/月/场序"""
+    from src.hydrology import RainEvent, generate_events
+    ev = RainEvent(precip_mm=10.0)
+    assert ev.duration_h == 2.0
+    assert ev.precip_chem is None
+    assert ev.date_hint is None
+    events = generate_events(158.0, 2, 5, seed=42)   # year=2, month=5 (0-indexed)
+    assert all(e.date_hint is not None for e in events)
