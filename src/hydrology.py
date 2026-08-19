@@ -15,6 +15,7 @@
 """
 
 import numpy as np
+from dataclasses import dataclass
 from src.logging_config import get_logger
 from src.constants import (GREEN_AMPT_PSI_F_MM, GREEN_AMPT_NEWTON_TOL,
                            GREEN_AMPT_NEWTON_MAX_ITER,
@@ -49,6 +50,40 @@ def generate_rainfall(monthly_precip_mm: float, year: int, month: int,
     weights = rng.exponential(size=n)
     events = monthly_precip_mm * weights / weights.sum()
     return [float(e) for e in events]
+
+
+@dataclass
+class RainEvent:
+    """单场降雨事件 (v0.6.0, Q1/Q11)
+
+    事件驱动化学的数据载体: 每场事件承载降水/历时/化学/诊断标记。
+    月内事件列表由 generate_events 生成 (seed 可复现, Σ 降水 = 月总量)。
+    """
+    precip_mm: float                        # 单场降水量 (mm)
+    duration_h: float = EVENT_HOURS         # 场次历时 (h, 默认 2.0)
+    date_hint: tuple = None                 # (year, month, 场序), 诊断用
+    precip_chem: object = None              # 事件级降水化学 (None=继承引擎级)
+
+
+def generate_events(monthly_precip_mm: float, year: int, month: int,
+                    seed: int = DEFAULT_SEED,
+                    n_events_range=(N_EVENTS_MIN, N_EVENTS_MAX)) -> list:
+    """生成当月场次降雨事件列表 (v0.6.0, Q11)
+
+    与 generate_rainfall 共享 seed 派生逻辑 (rng = default_rng(seed + year*12
+    + month)) → 同 seed 事件序列与 generate_rainfall 完全一致 (可复现)。
+    事件数量 ~ U(min, max); 每场降水按指数权重分配月总量 (Σ = 月降水)。
+
+    返回:
+        list[RainEvent]: 每场事件 (含 date_hint 年/月/场序诊断)
+    """
+    rng = np.random.default_rng(seed + year * 12 + month)
+    n = int(rng.integers(n_events_range[0], n_events_range[1] + 1))
+    weights = rng.exponential(size=n)
+    events = monthly_precip_mm * weights / weights.sum()
+    return [RainEvent(precip_mm=float(e), duration_h=EVENT_HOURS,
+                      date_hint=(year, month, i + 1))
+            for i, e in enumerate(events)]
 
 
 def solve_green_ampt_F(Ks_mm_h: float, psi_f_dtheta_mm: float,
