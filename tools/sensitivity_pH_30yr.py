@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""敏感性实验 (v0.5.2): 不同情景下表层土壤 pH 未来 30 年演变对比
+"""敏感性实验 (v0.6.0): 不同情景下表层土壤 pH 未来 30 年演变对比 (事件驱动)
 
 8 情景 (管理措施敏感性 + 气候敏感性):
   natural          仅降水 (基线, 无干预)
@@ -11,9 +11,14 @@
   precip_increase  降水 +2%/年 (30 年累计 +80%, 气候强迫)
   temp_increase    增温 +0.05°C/年 (30 年 +1.5°C, 气候强迫)
 
-模型: n_layers=4 (内置红壤物理剖面) + Green-Ampt 水文 (seed 固定, 各情景
-降雨分配一致, 差异纯来自干预/气候) + 初始状态预平衡 (与 main.py 默认一致)。
-输出: output/sensitivity_pH_30yr.csv (断点续跑) + output/sensitivity_pH_30yr.png
+模型 (v0.6.0): n_layers=4 (内置红壤物理剖面 + OM 调制 pCO₂) + 事件驱动化学
+(_apply_hydrology_events: 逐场 Green-Ampt + 级联 + Feddes ET, seed 固定各情景
+一致) + 体积-θ 耦合 (SOLUTION -water = θ×depth×1e5, 浓缩酸化自然产生)
++ 初始状态预平衡 (initial_psi_cm=-100 田间持水量)。对比 v0.5.2 月度路径:
+v0.6.0 修正了表层 pH 恒 6.9 的平台化, 酸化方向 (末月 L1≈3.9) 更接近红壤。
+
+输出: output/sensitivity_pH_30yr_v060.csv (断点续跑)
+     + output/sensitivity_pH_30yr_v060.png
 
 用法:
   python tools/sensitivity_pH_30yr.py --all               # 全部情景 (断点续跑)
@@ -38,14 +43,15 @@ from src.climate_forcing import ClimateForcing
 from src.scenario_controller import MonthlyAction
 
 # ---- 实验常量 (与 config/config.yaml 默认值一致) ----
-CSV_PATH = 'output/sensitivity_pH_30yr.csv'
-PLOT_PATH = 'output/sensitivity_pH_30yr.png'
+CSV_PATH = 'output/sensitivity_pH_30yr_v060.csv'
+PLOT_PATH = 'output/sensitivity_pH_30yr_v060.png'
 SEED = 42                      # 随机降雨种子 (各情景一致, 公平对比)
 BASE_PRECIP = 1893.0           # 基准年降水 (mm)
 BASE_TEMP = 25.0               # 基准年均温 (°C)
 PCO2_REF = 0.015
 T_REF = 25.0
 BETA = 0.05
+LATITUDE = 23.1                # 站点纬度 (广东, Oudin PET)
 PRECIP_INC_RATE = 0.02         # 降水年增加比例 (precip_increase)
 TEMP_INC_RATE = 0.05           # 温度年增加 (°C, temp_increase)
 FERT_MONTHS = (3, 6, 9)        # 施肥/施石灰月份 (与 config 一致)
@@ -69,7 +75,8 @@ SCENARIOS = [
 COLORS = ['#333333', '#d62728', '#2ca02c', '#1f77b4', '#ff7f0e',
           '#9467bd', '#17becf', '#8c564b']
 LSTYLES = ['-', '--', '-.', ':', '-', '--', '-.', ':']
-CSV_FIELDS = ['scenario', 'label', 'year', 'L1_pH_mean', 'L1_pH_dec']
+CSV_FIELDS = ['scenario', 'label', 'year', 'L1_pH_mean', 'L1_pH_dec',
+              'phreeqc_ok']
 
 
 def make_action(key, month, lime_amount):
@@ -114,7 +121,7 @@ def append_rows(path, rows):
 def build_base_states(engine, reader, profile, info, pco2, pre_steps,
                       skip_pre=False):
     """构建 4 层初始状态并预平衡 (一次性, 各情景 deepcopy 复用)"""
-    cfg = SimulationConfig(n_layers=4)
+    cfg = SimulationConfig(n_layers=4, hydrology_seed=SEED)
     _, states, pco2s, profiles = sim_main._build_initial_layer_states(
         engine, reader, profile, info, pco2, cfg)
     if not skip_pre:
@@ -128,31 +135,45 @@ def build_base_states(engine, reader, profile, info, pco2, pre_steps,
 def run_scenario(engine, reader, profile, states0, pco2s, profiles,
                  key, label, lime_amount, fertilize, climate_scenario,
                  n_years, seed=SEED, verbose=True):
-    """运行单个情景, 返回 (years, mean_ph, dec_ph) 三个列表"""
+    """运行单个情景, 返回 (years, mean_ph, dec_ph) 三个列表
+
+    v0.6.0: 事件驱动化学 — _apply_hydrology_events 逐场水文 + run_monthly_
+    multi_layer 内部逐场 run_event_step (体积-θ 耦合)。L1 pH = 每月最后
+    一场事件后的表层状态。
+    """
     states = copy.deepcopy(states0)
     climate = ClimateForcing(BASE_PRECIP, BASE_TEMP, PCO2_REF, T_REF,
                              BETA, n_years, climate_scenario,
                              precip_increase_rate=PRECIP_INC_RATE,
-                             temp_increase_rate=TEMP_INC_RATE)
-    theta_s = profiles[0].porosity
-    theta_i = 0.5 * theta_s   # L1 初始含水量 50% 饱和 (与 main.py 一致)
-    years, mean_ph, dec_ph = [], [], []
+                             temp_increase_rate=TEMP_INC_RATE,
+                             latitude=LATITUDE)
+    years, mean_ph, dec_ph, phreeqc_ok = [], [], [], []
+    fallback = False
     for y in range(n_years):
         yearly = []
         for m in range(12):
             f = climate.get_monthly_forcing(y, m)
             a = make_action(key, m + 1, lime_amount)
-            h, _runoff, _extra = sim_main._apply_hydrology_month(
-                states, profiles, f, y, m, seed, theta_i=theta_i)
+            h, _runoff, _extra = sim_main._apply_hydrology_events(
+                states, profiles, f, y, m, seed, bypass_fraction=0.2)
             states, _ = engine.run_monthly_multi_layer(
                 states, f, a, profile, layer_pco2s=pco2s, hydrology=h)
+            # v0.6.0 数值边界: PHREEQC 失败后引擎永久降级简化模式 (pH 钳制)
+            if getattr(engine, '_permanent_fallback', False):
+                fallback = True
             yearly.append(states[0].ph)   # L1 = 表层 (0-20cm)
         years.append(y + 1)
         mean_ph.append(float(np.mean(yearly)))
         dec_ph.append(yearly[-1])
+        phreeqc_ok.append(0 if fallback else 1)
         if verbose and ((y + 1) % 5 == 0 or y == 0):
-            print(f"    {key:<18} 第 {y+1:2d} 年 | L1 pH 年均 = {mean_ph[-1]:.3f}")
-    return years, mean_ph, dec_ph
+            print(f"    {key:<18} 第 {y+1:2d} 年 | L1 pH 年均 = {mean_ph[-1]:.3f}"
+                  f"{'' if not fallback else '  [已降级简化]'}")
+    if fallback:
+        fb_year = next(i + 1 for i, ok in enumerate(phreeqc_ok) if not ok)
+        print(f"    [!] 第 {fb_year} 年起 PHREEQC 永久降级简化模式 "
+              f"(深层盐分累积数值边界, v0.6.1 调校项), 其后 pH 为钳制伪影")
+    return years, mean_ph, dec_ph, phreeqc_ok
 
 def plot(path=CSV_PATH, out=PLOT_PATH):
     """读 CSV 生成 30 年表层 pH 对比图 (全部情景同图)"""
@@ -179,31 +200,53 @@ def plot(path=CSV_PATH, out=PLOT_PATH):
 
     fig, ax = plt.subplots(figsize=(12.5, 8))
     complete = 0
+    min_fb_year = None
     for i, (key, label, *_rest) in enumerate(SCENARIOS):
         rows = data.get(key)
         if not rows:
             continue
         years = [int(r['year']) for r in rows]
         phs = [float(r['L1_pH_mean']) for r in rows]
+        p_ok = [int(r.get('phreeqc_ok', 1)) for r in rows]
         dph = phs[-1] - phs[0]
         if len(rows) >= n_years:
             complete += 1
-        ax.plot(years, phs, color=COLORS[i], linestyle=LSTYLES[i],
-                lw=2.2, marker='o', ms=4,
-                label=f'{label}   (ΔpH={dph:+.2f})')
+        ok_count = sum(p_ok)
+        if ok_count == len(p_ok):
+            # PHREEQC 全程正常: 实线
+            ax.plot(years, phs, color=COLORS[i], linestyle=LSTYLES[i],
+                    lw=2.2, marker='o', ms=4,
+                    label=f'{label}   (ΔpH={dph:+.2f})')
+        else:
+            # 降级点之后: 虚线淡化 (简化模式 pH 钳制伪影)
+            fb_year = years[ok_count]
+            min_fb_year = (fb_year if min_fb_year is None
+                           else min(min_fb_year, fb_year))
+            ax.plot(years[:ok_count + 1], phs[:ok_count + 1],
+                    color=COLORS[i], linestyle=LSTYLES[i], lw=2.2,
+                    marker='o', ms=4,
+                    label=f'{label}   (ΔpH={dph:+.2f})')
+            ax.plot(years[ok_count:], phs[ok_count:], color=COLORS[i],
+                    linestyle=':', lw=1.5, alpha=0.55, marker='o', ms=3)
+            ax.axvline(x=fb_year, color=COLORS[i], lw=0.9, ls=':', alpha=0.5)
+
+    if min_fb_year is not None:
+        ax.axvspan(min_fb_year - 0.5, n_years + 0.5, color='red', alpha=0.06,
+                   label=f'简化模式区域 (PHREEQC 数值边界, ≥y{min_fb_year})')
 
     ax.set_xlabel('年份 (Year)', fontsize=12)
     ax.set_ylabel('表层土壤 pH (L1, 年均值)', fontsize=12)
     ax.set_title(f'不同情景下表层土壤 pH 未来 {n_years} 年演变对比 '
-                 f'(敏感性实验, 4 层模型, seed={SEED})', fontsize=13)
-    ax.legend(loc='best', fontsize=10, framealpha=0.9)
+                 f'(敏感性实验 v0.6.0, 4 层事件驱动, seed={SEED})', fontsize=13)
+    ax.legend(loc='best', fontsize=9, framealpha=0.9)
     ax.grid(True, alpha=0.3)
     all_ph = [float(r['L1_pH_mean']) for rows in data.values() for r in rows]
     ax.set_ylim(bottom=min(all_ph) - 0.5)
     ax.set_xlim(0.5, n_years + 0.5)
     ax.annotate(
-        '模型局限 (v0.5.2): 单层 Al 淋洗脱酸使 natural 情景 pH 上行;\n'
-        '多层模型含垂直 Al 累积, 结果更接近红壤酸化物理认知。\n'
+        'v0.6.0 事件驱动 + 体积-θ 耦合: 表层 pH 呈酸化方向 (修正 v0.5.x\n'
+        '恒 ~6.9 平台); 长期深层盐分累积极端触发 PHREEQC 数值边界, 引擎\n'
+        '自动降级简化模式 (pH 钳制 2.0~12.0, 红色阴影区为伪影, v0.6.1 调校项)。\n'
         f'已完成情景: {complete}/{len(SCENARIOS)}',
         xy=(0.02, 0.02), xycoords='axes fraction', ha='left', va='bottom',
         fontsize=8.5, color='dimgray',
@@ -232,10 +275,15 @@ def main():
                         help='预平衡最大步数 (默认 60)')
     parser.add_argument('--skip-pre', action='store_true',
                         help='跳过预平衡 (调试)')
+    parser.add_argument('--tag', type=str, default='v060',
+                        help='输出文件名标签 (并行分情景运行用, 默认 v060)')
     args = parser.parse_args()
 
+    csv_path = f'output/sensitivity_pH_30yr_{args.tag}.csv'
+    png_path = f'output/sensitivity_pH_30yr_{args.tag}.png'
+
     if args.plot:
-        plot()
+        plot(csv_path, png_path)
         return
 
     valid_keys = [s[0] for s in SCENARIOS]
@@ -254,31 +302,36 @@ def main():
                       tbl_path='config/soil_mineral.tbl')
     info = db.get_soil_info('red_soil')
     pco2 = db.get_pCO2('red_soil')
-    engine = PhreeqcEngine(database='phreeqc.dat', mode='phreeqc')
-    states0, pco2s, profiles = build_base_states(
-        engine, reader, profile, info, pco2, args.pre_steps, args.skip_pre)
 
-    existing = load_existing()
+    existing = load_existing(csv_path)
     for key in targets:
         rows = existing.get(key, [])
         if len(rows) >= args.years:
             print(f'{key}: 已有完整 {len(rows)} 年数据, 跳过')
             continue
         meta = next(s for s in SCENARIOS if s[0] == key)
+        # 每个情景独立引擎 + 独立初始状态/预平衡: 避免 PHREEQC 永久降级
+        # (_permanent_fallback 为引擎实例级) 污染后续情景
+        engine = PhreeqcEngine(database='phreeqc.dat', mode='phreeqc',
+                               initial_psi_cm=-100.0)
+        states0, pco2s, profiles = build_base_states(
+            engine, reader, profile, info, pco2, args.pre_steps,
+            args.skip_pre)
         print(f'\n=== 运行情景 {key} ({meta[1]}, {args.years} 年, 4 层) ===')
-        years, means, decs = run_scenario(
+        years, means, decs, p_ok = run_scenario(
             engine, reader, profile, states0, pco2s, profiles,
             key, meta[1], meta[2], meta[3], meta[4],
             args.years, seed=args.seed)
         new_rows = [{'scenario': key, 'label': meta[1], 'year': y,
-                     'L1_pH_mean': f'{mp:.3f}', 'L1_pH_dec': f'{dp:.3f}'}
-                    for y, mp, dp in zip(years, means, decs)]
-        append_rows(CSV_PATH, new_rows)
+                     'L1_pH_mean': f'{mp:.3f}', 'L1_pH_dec': f'{dp:.3f}',
+                     'phreeqc_ok': str(ok)}
+                    for y, mp, dp, ok in zip(years, means, decs, p_ok)]
+        append_rows(csv_path, new_rows)
         existing[key] = rows + new_rows
         print(f'  {key}: L1 pH {means[0]:.3f} -> {means[-1]:.3f} '
               f'(Δ = {means[-1]-means[0]:+.3f})')
 
-    print(f'\n[DONE] 全部目标情景完成, 结果: {CSV_PATH} '
+    print(f'\n[DONE] 全部目标情景完成, 结果: {csv_path} '
           f'(累计 {sum(len(v) for v in existing.values())} 行)')
 
 

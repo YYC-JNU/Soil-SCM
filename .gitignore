@@ -11,6 +11,8 @@ dist/
 output/*
 !output/sensitivity_pH_30yr.csv
 !output/sensitivity_pH_30yr.png
+!output/sensitivity_pH_30yr_v060.csv
+!output/sensitivity_pH_30yr_v060.png
 *.log
 error.inp
 error.log
