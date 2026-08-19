@@ -1,7 +1,7 @@
 # Soil-SCM 工单汇总表（TICKETS_SUMMARY）
 
 > **生成日期**：2026-08-17（项目文件整理）
-> **覆盖范围**：`.scratch/soil-scm-overview/` 下全部工单——开发工单（issues/01~48）+ 架构决策工单（wayfinder/tickets/WF1~5）+ 遗留规划工单（backlog/L1~L9）
+> **覆盖范围**：`.scratch/soil-scm-overview/` 下全部工单——开发工单（issues/01~54）+ 架构决策工单（wayfinder/tickets/WF1~5）+ 遗留规划工单（backlog/L1~L9）
 > **成立时间**：工单文件在 git 中的**首次提交日期**（`git log --diff-filter=A`）
 > **状态口径**：以工单文件内 `**Status:**` 字段为权威标记；spec 类工单（01/05/11/15/20）按其对应子工单的落地情况标注为"已落地（经子工单）"；25~28 号工单文件状态为 `ready-for-agent`，但对应功能已由 2026-08-17 提交（f7f92bf / 7d19f9d）落地，故标注"已落地"
 
@@ -59,6 +59,12 @@
 | 46 | v0.5.2 大孔隙优先流 bypass | 2026-08-18 | ✅ 已完成 | v0.5.2：bypass_fraction=0.2 注入 L2 + 原始降水化学 + 质量守恒（spec 43 S4/S5） |
 | 47 | v0.5.2 硝化产酸限 L1 | 2026-08-18 | ✅ 已完成 | v0.5.2：仅 L1 执行 advance_nitrification，L2~L4 跳过（spec 43 S4） |
 | 48 | v0.5.2 集成、运行验证与发布 | 2026-08-18 | ✅ 已完成 | v0.5.2：main 集成 + surface_coeff 移除报错 + 基线对比（入渗66%/径流34%/优先流20%）+ 发布 |
+| 49 | v0.5.3 水文物理化阶段② spec（VGM + Feddes ET + 级联重构 + OM 产 CO₂） | 2026-08-19 | 🟡 ready-for-agent | spec 已发布（/grilling Q1~Q13 + 专家接缝审查）；经工单 50~54 实施 |
+| 50 | v0.5.3 VGM 模块 + θ 状态迁移（T1） | 2026-08-19 | 🟡 ready-for-agent | src/vgm.py 纯函数 + SoilState.theta 迁移 + 初始 θ/体积联动 + config（spec 49 S1/S4/S5） |
+| 51 | v0.5.3 Feddes ET / Oudin PET（T2） | 2026-08-19 | 🟡 ready-for-agent | Oudin 逐月 PET + feddes_alpha(ψ) + apply_feddes_et（spec 49 S3/S2） |
+| 52 | v0.5.3 LayerCascade 重构 + ET 集成（T3） | 2026-08-19 | 🟡 ready-for-agent | θ_FC/K(θ) 通量 + calc_interface_flux 纯向下 + run() 最前端 ET（spec 49 S2/S5） |
+| 53 | v0.5.3 OM 矿化产 CO₂（T4） | 2026-08-19 | 🟡 ready-for-agent | apply_om_pco2 加性+钳制 + OM 剖面 [30,15,8,5] + pCO2_eff 列（spec 49 S3/S4/S6） |
+| 54 | v0.5.3 集成、验收 E1~E3 与发布（T5） | 2026-08-19 | 🟡 ready-for-agent | main 编排 + 验收 E1/E2/E3 + 文档同步 + 发布 v0.5.3（spec 49 S6） |
 
 ---
 

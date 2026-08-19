@@ -174,28 +174,35 @@ Q10 子时间步、Q11 输出变量、Q14 anatase、Q17 包结构、Q19 魔法�
       （实测：入渗 66%、径流 34%、优先流 20%、初始表层 pH 4.63）
 
 #### v0.5.3 — VGM + Feddes ET + 级联重构（状态迁移）
+> **spec #49 已就绪**（2026-08-19，`ready-for-agent`；来源 /grilling Q1~Q13 + 专家接缝审查，详见 `.scratch/soil-scm-overview/issues/49-v0_5_3-hydro-physics-2-spec.md`）
 - [ ] **van Genuchten-Mualem**：`LayerCascade` 状态从 `stored_water`（L/ha）迁移至
-      **θ（体积含水量）+ ψ（基质势）**；θ_s≡porosity 数学自洽；层间达西通量（可上可下，
-      对接 WRF 陆面水势）
+      **θ（体积含水量）规范状态**（L/ha 由 `theta_to_water_L` 纯函数派生，收于 `src/vgm.py`）；
+      θ_s≡porosity 数学自洽；层间达西通量**纯向下** K(θ)（界面 max = min(上下层 ksat_drainage)，
+      θ→θ_s 自然退化）；双向/毛细上升 `mode="bidirectional"` 接口预留（v0.6.0+，对接 WRF 陆面水势）
 - [ ] **VGM 参数三级优先级**：①`layer_overrides` 显式配置（`vgm_theta_r`/`vgm_alpha`/`vgm_n`）
       ②基于 `clay_pct` 连续回归（θ_r=0.01+0.002×clay；α=0.04−0.0006×clay；
       n=1.5−0.008×clay，Saxton & Rawls 2006 + 红壤修正，避免 Carsel & Parrish 离散查表突变）
       ③全局红壤兜底（0.08/0.015/1.25）；`l=0.5` 固定
 - [ ] **初始 θ 田间持水量校准**：废弃"50% 饱和"硬编码（物理审查：50% 饱和度反解 ψ≈-280cm 近
       萎蔫点，过湿不符合农业土壤）；新增 `initial_psi_cm=-100`（config 默认），经
-      `vgm_theta_from_psi` 正算 θ（L1≈0.81θ_s / L4≈0.88θ_s，下层更湿合理）
+      `vgm_theta_from_psi` 正算 θ（L1≈0.81θ_s / L4≈0.88θ_s，下层更湿合理）；
+      化学初始溶液体积同步联动 `θ_init×depth×1e5`（预平衡收敛需复验，E1）
 - [ ] **Feddes ET**：Oudin (2005) 公式为主 + 固定气候态兜底（`latitude`/`pet_method`/
       `pet_monthly_climate`/`pet_correction_factor` 配置）；`LayerCascade.run()` **最前端**
-      执行 ET 扣除（AET_i = PET×f_root,i×α(θ_i)）；根系权重 L1 60%/L2 30%/L3 10%/L4 0；
+      执行 ET 扣除（AET_i = PET×f_root,i×α(ψ_i)，**ψ 版 Feddes** 四阈值 h1=−25/h2=−100/h3=−800/h4=−15000）；
+      根系权重 L1 60%/L2 30%/L3 10%/L4 0；逐层独立、亏缺丢弃计 `et_deficit_mm`；
       雨季滞水→旱季 ET 抽干，闭合水量 + 干湿交替驱动气体交换/硝化触发
-- [ ] **LayerCascade 重构（下游接收能力）**：可排水量 = 当前总水量 − 有效持水空间；
-      界面最大导水通量 = min(上层, 下层 `ksat_drainage`)（木桶短板原理）；实际排水
-      = min(可排水量, 界面通量×Δt×面积)
-- [ ] **OM 矿化产 CO₂ 模块**：温度驱动有机质分解 → 增加层内 CO₂/H₂CO₃，强化表层酸性
-      （与 θ/ψ 联动：含水量影响分解速率）
-- [ ] **输出扩展**：新增 `AET_mm`、`soil_moisture_L1~L4` 列（验证水分平衡闭合）
-- [ ] **PET 敏感性扫描**（年 PET 600~1400 mm 扫描，固定其他参数）：验证 L1/L2 干湿交替
-      与 pH 回落至 4.5~5.5
+- [ ] **LayerCascade 重构（下游接收能力）**：可排水量 = max(0, θ−θ_FC)×depth（θ_FC=θ(ψ=−100)
+      与初始 θ 同源）；界面最大导水通量 = min(上下层 `ksat_drainage`)（木桶短板原理）；实际排水
+      = min(可排水量, min(K_r(θ)·ksat_i, ksat_{i+1})×Δt×面积)；底部 L4 = 深层排水
+- [ ] **OM 矿化产 CO₂ 模块**：**加性**调制每层 GAS_PHASE pCO₂（`pCO₂_eff = base(T) + k_om×OM_i`，
+      钳制 `≤pCO₂_max`，k_om=0.0005/pCO₂_max=0.05 → constants.py）；温度独立性（T 响应仅归 base 项）；
+      4 层默认 OM 剖面 [30,15,8,5] 强化**表层**酸性；输出 `pCO2_eff` 诊断列
+- [ ] **输出扩展**：新增 `AET_mm`、`et_deficit_mm`、`soil_moisture_L1~L4`、`pCO2_eff` 列
+      （验证水分平衡闭合）；`stored_water_Li` 列 L/ha 语义向后兼容
+- [ ] **验收实验集（E1~E3）**：E1 基线（4 层 15 年 natural）+ 预平衡收敛复验；E2 PET 敏感性扫描
+      （年 PET 600~1400 mm）；E3 OM 敏感性扫描（k_om 0.0003/0.0005/0.0008）——验证 L1/L2 干湿交替
+      与 pH 回落 4.5~5.5 的**方向**（不承诺具体值）
 
 #### v0.6.0 — 化学子步长拆分（物理-化学范式转变）
 - [ ] **逐场化学平衡**：`phreeqc_engine` 接口从 `run_monthly` 改为 `run_event`
