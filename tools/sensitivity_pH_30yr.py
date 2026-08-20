@@ -181,6 +181,62 @@ def run_scenario(engine, reader, profile, states0, pco2s, profiles,
               f"(深层盐分累积数值边界, v0.6.1 调校项), 其后 pH 为钳制伪影")
     return years, mean_ph, dec_ph, phreeqc_ok
 
+
+def _run_scenario_worker(q, engine_cfg, reader_paths, profile, states0, pco2s,
+                         profiles, key, label, lime_amount, fertilize,
+                         climate_scenario, n_years, seed):
+    """子进程 worker: 独立引擎执行 run_scenario (超时隔离, v0.6.1)
+
+    PHREEQC 偶发卡顿 (RunString 不返回, 非确定) 时主进程无法中断同步调用;
+    本 worker 在子进程执行, 超时由主进程 terminate 兜底 (v0.6.1 修复建议)。
+    """
+    try:
+        from src.input_reader import InputReader
+        from src.phreeqc_engine import PhreeqcEngine
+        reader = InputReader(*reader_paths)
+        engine = PhreeqcEngine(**engine_cfg)
+        years, means, decs, p_ok = run_scenario(
+            engine, reader, profile, states0, pco2s, profiles,
+            key, label, lime_amount, fertilize, climate_scenario,
+            n_years, seed=seed, verbose=False)
+        q.put(('ok', years, means, decs, p_ok))
+    except Exception as e:
+        q.put(('error', str(e)))
+
+
+def run_scenario_with_timeout(reader_paths, engine_cfg, profile, states0,
+                              pco2s, profiles, key, label, lime_amount,
+                              fertilize, climate_scenario, n_years, seed,
+                              timeout=120.0):
+    """子进程超时运行单情景 (v0.6.1: 卡顿终止不挂死)
+
+    返回:
+        (years, means, decs, p_ok) 或 None (超时/失败, 记录并跳过)
+    """
+    import multiprocessing
+    ctx = multiprocessing.get_context('spawn')
+    q = ctx.Queue()
+    p = ctx.Process(target=_run_scenario_worker,
+                    args=(q, engine_cfg, reader_paths, profile, states0,
+                          pco2s, profiles, key, label, lime_amount, fertilize,
+                          climate_scenario, n_years, seed))
+    p.start()
+    p.join(timeout)
+    if p.is_alive():
+        p.terminate()
+        p.join()
+        print(f'  [!] 情景 {key} 超时 (>{timeout:.0f}s), PHREEQC 卡顿 — '
+              f'已终止, 断点续跑可重试', flush=True)
+        return None
+    try:
+        result = q.get(timeout=2)
+    except Exception:
+        return None
+    if isinstance(result, tuple) and result and result[0] == 'error':
+        print(f'  [!] 情景 {key} 子进程失败: {result[1]}', flush=True)
+        return None
+    return result[1:] if result else None
+
 def plot(path=CSV_PATH, out=PLOT_PATH):
     """读 CSV 生成 30 年表层 pH 对比图 (全部情景同图)"""
     import matplotlib
@@ -283,6 +339,9 @@ def main():
                         help='跳过预平衡 (调试)')
     parser.add_argument('--tag', type=str, default='v060',
                         help='输出文件名标签 (并行分情景运行用, 默认 v060)')
+    parser.add_argument('--timeout', type=float, default=120.0,
+                        help='单情景子进程超时秒数 (v0.6.1: PHREEQC 卡顿防护, '
+                             '默认 120s, 实测 30 年约 65s)')
     args = parser.parse_args()
 
     csv_path = f'output/sensitivity_pH_30yr_{args.tag}.csv'
@@ -310,6 +369,10 @@ def main():
     pco2 = db.get_pCO2('red_soil')
 
     existing = load_existing(csv_path)
+    # v0.6.1: 每个情景独立引擎 (避免降级污染) + 子进程超时护栏
+    engine_cfg = dict(database='phreeqc.dat', mode='phreeqc',
+                      initial_psi_cm=-100.0)
+    reader_paths = ('data/soil_survey.csv', 'data/exchangeable_ions.csv')
     for key in targets:
         rows = existing.get(key, [])
         if len(rows) >= args.years:
@@ -318,16 +381,19 @@ def main():
         meta = next(s for s in SCENARIOS if s[0] == key)
         # 每个情景独立引擎 + 独立初始状态/预平衡: 避免 PHREEQC 永久降级
         # (_permanent_fallback 为引擎实例级) 污染后续情景
-        engine = PhreeqcEngine(database='phreeqc.dat', mode='phreeqc',
-                               initial_psi_cm=-100.0)
+        engine = PhreeqcEngine(**engine_cfg)
         states0, pco2s, profiles = build_base_states(
             engine, reader, profile, info, pco2, args.pre_steps,
             args.skip_pre)
         print(f'\n=== 运行情景 {key} ({meta[1]}, {args.years} 年, 4 层) ===')
-        years, means, decs, p_ok = run_scenario(
-            engine, reader, profile, states0, pco2s, profiles,
+        result = run_scenario_with_timeout(
+            reader_paths, engine_cfg, profile, states0, pco2s, profiles,
             key, meta[1], meta[2], meta[3], meta[4],
-            args.years, seed=args.seed)
+            args.years, seed=args.seed, timeout=args.timeout)
+        if result is None:
+            print(f'  {key}: 超时/失败, 跳过 (断点续跑可重试)')
+            continue
+        years, means, decs, p_ok = result
         new_rows = [{'scenario': key, 'label': meta[1], 'year': y,
                      'L1_pH_mean': f'{mp:.3f}', 'L1_pH_dec': f'{dp:.3f}',
                      'phreeqc_ok': str(ok)}
