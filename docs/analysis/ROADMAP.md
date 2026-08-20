@@ -227,6 +227,31 @@ Q10 子时间步、Q11 输出变量、Q14 anatase、Q17 包结构、Q19 魔法�
   产酸源强化的联合作用，需结合研究区实测（Ksat/降雨强度/PET）验证
 - 详细方案与决策记录见 `docs/analysis/OPTIMIZATION_PLAN.md` §7
 
+#### v0.6.1 — 数值稳定性根治 + HX 交换酸注入（工单 63~68，spec 62）
+- [ ] **VIC 深层基流**（L4 底部）：`Q_base = D_max·[D_s·S + (1−D_s)·Sⁿ]`，`S=(θ−θ_r)/(θ_s−θ_r)`，
+      `D_max=100 mm/month / D_s=0.10 / n_base=2.5 / θ_c=θ_r`（裂隙基流基线），防抽干 `min(公式, (θ−θ_r)·d·10)`
+- [ ] **Darcy 侧向排水**（各层）：`Q_lat=k_lat·f_slope·max(0, θ−θ_FC)·d·10`，
+      `k_lat=[0.04/0.025/0.015/0.008] /day / f_slope=0.10`，严格 FC 闸门，防抽干 min()
+- [ ] **事件粒度调度**：逐场用事件后 θ 算 Q_base/Q_lat，溶质随场移出记入 event_details
+- [ ] **溶质随水移出**：`run_event_step` 平衡后按 `Q_out/V` 比例扣溶液
+      （`n_new=max(n_old×(1−Q_out/V), C_min×V)`），交换相靠 Gapon 自动补偿
+- [ ] **fallback 事件级局部降级**：单场失败保留前一状态跳过，连续 N=3 才永久降级（事件/月级分开计数）
+- [ ] **浓度冲洗**：C_warn=0.5 mol/L 超限 → 基流/侧向激增 Q_flush（`flush_L` 列）+ 同比例溶质扣除
+- [ ] **HX 交换酸注入**：`EXCHANGE_SPECIES H+ + X- = HX`（log_k=1.0）+ `exch_h→HX`（从 Na 剥离）
+      + 缺口 `GAP_H_FRACTION=0.3` 三通道重分配（HX/AlX3/NaX）
+- [ ] **water_salt_balance 闭合审计**：`tools/water_salt_balance.py` 逐月水量闭合 <1% / 盐分对账 <5%
+- [ ] **验收**：30 年 8 情景全 `phreeqc_ok=True` + L4 max 浓度 <1 mol/L；E1 预平衡收敛复验（HX 基线）；
+      pH 具体值不在本版承诺范围（留 v0.7.0）
+
+**工程要点**：
+- 纯函数 `calc_baseflow`/`calc_lateral_drainage` + `LayerCascade.run()` 返回扩展
+  `(drains, runoff_extra, baseflow, lateral, theta_out)`；config 顶层节点
+  `simulation.baseflow/lateral`；`n_layers=1` 自动禁用（回退护栏）
+- expand-contract：现有 259 测试不破（fallback 契约测试按 Q5 明确修订）；事件/月路径共用
+- 版本纪律：v0.6.1 独立 spec+tag；决策记录 `V0_6_1_REPLAN` 决策表 Q1~Q10（2026-08-20）
+- 详细方案见 `.scratch/soil-scm-overview/issues/62-v0_6_1-numerical-hx-spec.md` + 工单 63~68
+
+
 ---
 
 ### 长期（功能扩展）
@@ -258,4 +283,4 @@ Q10 子时间步、Q11 输出变量、Q14 anatase、Q17 包结构、Q19 魔法�
 | **v0.5.2** | 规划 | Green-Ampt 表层入渗（废弃 surface_coeff）+ Ksat_surface/ksat_drainage 字段拆分 + β=0.2 优先流注入 L2 + 硝化产酸限 L1 |
 | **v0.5.3** | 2026-08-19 | **VGM 水分特征 + Feddes ET/Oudin PET + LayerCascade 重构 + OM 矿化产 CO₂**（θ 状态迁移）；**234 测试全绿** |
 | **v0.6.0** | 2026-08-19 | **化学子步长拆分**（事件驱动 PHREEQC + 体积-θ 耦合 Q8b + First-Flush 峰值列/事件明细 + Hargreaves calc_pet 分派）；**259 测试全绿** |
-| **v0.6.1** | 规划 | 数值稳定性调校（E2 PET 非单调 + 深层盐分累积 PHREEQC 边界）+ β 动态调整 |
+| **v0.6.1** | 规划 | **数值稳定性根治 + HX 交换酸注入**（VIC 深层基流 D_max=100 + Darcy 侧向排水 k_lat 分层 + fallback 连续 N=3 局部降级 + 浓度冲洗 C_warn=0.5 + HX log_k=1.0/GAP_H=0.3 + water_salt_balance 闭合审计；30 年 8 情景全 phreeqc_ok 验收）；spec 62 + 工单 63~68（/grilling Q1~Q10 定案）|
