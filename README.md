@@ -339,6 +339,19 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 
 ## 十一、版本更新记录
 
+### v0.6.1（2026-08-20）
+
+> - **数值稳定性根治**：VIC 深层基流（L4 底部，`D_max=100/D_s=0.10/n_base=2.5/θ_c=θ_r`，防抽干 min()）+ Darcy 侧向排水（各层 `k_lat=[0.04/0.025/0.015/0.008]/f_slope=0.10`，严格 FC 闸门）——Na⁺/Cl⁻ 不再在 L4 "死胡同"累积（对治 30 年敏感性实验全部情景 4~8 年崩溃的根因）
+> - **溶质随水移出 + 浓度冲洗**：侧向/基流排水按 `Q_out/V` 比例扣除溶液溶质（`n_new=max(n_old×(1−Q_out/V), C_min×V)`），交换相靠 Gapon 自动补偿；C_warn=0.5 mol/L 超限触发基流/侧向激增冲洗（`flush_L` 列）；出口记账入 event_details + 月度诊断列
+> - **HX 交换酸注入**：`EXCHANGE_SPECIES H+ + X- = HX`（log_k=3.0 扫描标定，平衡 pH 4.99 收敛观测）+ `exch_h→HX`（从 Na 剥离）+ CEC 缺口 GAP_H/GAP_AL/NaX 三通道重分配——表层交换性酸库真实存在（对治 Natural pH 暴降 2.0 极端）
+> - **fallback 事件级局部降级**：单场失败保留前一状态跳过，连续 N=3 次才永久降级（事件/月级分开计数，成功后重置）
+> - **闭合审计**：`tools/water_salt_balance.py` 逐月水量闭合 <1% / 盐分对账 <5%
+> - **验收**：`verify_v0_6_1_numerical.py`（30 年 natural 全程无降级 + L4 max 浓度 <1 mol/L + E1 预平衡 5.0 复验）；`sensitivity_pH_30yr.py --tag v061` 重跑 8 情景
+> - **科学诚实**：pH 具体值不在 v0.6.1 承诺范围（数值稳定性为本版承诺）；natural 首年 pH 5.40（HX 酸库使自然回归合理范围）；E2 PET 判别留 v0.7.0
+> - **grilling Q1~Q10 定案**：决策记录见 spec 62（`.scratch/soil-scm-overview/issues/62-v0_6_1-numerical-hx-spec.md`）+ 工单 63~68
+
+### v0.6.0（2026-08-19）
+
 ### v0.6.0（2026-08-19）
 
 > - **事件驱动化学（子步长拆分）**：`RainEvent` dataclass + `generate_events`（seed 可复现，Σ 事件=月降水）+ `run_event_step` 事件级 PHREEQC（每场全量平衡）+ 主循环嵌套（for month → for event: 水文步→化学步→月末聚合）；`run_monthly_step` 保持签名（`event_driven` 标记激活，expand-contract 门禁，既有测试零改动）
