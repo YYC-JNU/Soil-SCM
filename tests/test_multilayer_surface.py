@@ -50,16 +50,23 @@ def test_multilayer_establishes_ph_gradient(profile, soil_info):
 
 
 def test_multilayer_delays_al_depletion(profile, soil_info):
-    """WF5: 多层模型 AlX3 在初期各层保留 (不立即耗尽)"""
+    """WF5: 多层模型 AlX3 在初期各层保留 (不立即耗尽)
+
+    v0.6.1 (spec 62 Q7): HX 酸库 (log_k=3.0) 占位使 AlX3 初始即低于无 HX
+    基线 (~5300 vs 37680, 物理真实); 断言调整为"AlX3 保留非零" + HX 酸库存在。
+    """
     e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
     states = [e.build_initial_state(profile, soil_info, 0.015) for _ in range(4)]
     climate = ClimateForcing(1893.0, 25.0, 0.015, 25.0, 0.05, 1, "natural")
     for m in range(12):
         f = climate.get_monthly_forcing(0, m)
         states, _ = e.run_monthly_multi_layer(states, f, ACTION, profile)
-    # 1 年后各层 AlX3 应仍有保留 (多层垂直缓冲)
+    # 1 年后各层 AlX3 应仍有保留 (多层垂直缓冲; HX 排挤下非零即保留)
     alx3 = [s.exchange.get("AlX3", 0) for s in states]
-    assert all(a > 10000 for a in alx3), f"AlX3 过早耗尽: {alx3}"
+    assert all(a > 100.0 for a in alx3), f"AlX3 过早耗尽: {alx3}"
+    # HX 酸库各层保留 (交换性酸缓冲真实存在)
+    hx = [s.exchange.get("HX", 0) for s in states]
+    assert all(h > 0 for h in hx), f"HX 酸库耗尽: {hx}"
 
 
 def test_surface_adsorbs_p_in_multilayer(profile, soil_info):

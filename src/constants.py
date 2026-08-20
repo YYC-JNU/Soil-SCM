@@ -214,9 +214,11 @@ C_MIN = 1e-10               # 溶质比例扣除的下限保护 (mol/L, 防 PHRE
 
 # ---- HX 交换酸注入 (Q7, P-E2-1 A 类) ----
 # phreeqc.dat 的 "H+ + X- = HX" 被注释禁用 (第 1362 行), 需引擎层 EXCHANGE_SPECIES 自定义注入
-#   - log_k=1.0: phreeqc.dat 注释区基准值 (弱配位缓冲), 可扫描标定
+#   - log_k=3.0: 扫描标定 (2026-08-20 实测): log_k=1.0 → 平衡 pH 3.74 (酸解离过强,
+#     预平衡无法锚定观测 5.0); log_k=3.0 → 平衡 pH 4.99 (自然收敛观测, HX 保留为
+#     真实酸库); log_k≥5.0 → pH 过高 (≥6.9) 且 HX 膨胀超 CEC。见 spec 62 风险注记。
 #   - GAP_H_FRACTION: CEC 缺口三通道重分配 (HX/AlX3/NaX), 与 GAP_AL_FRACTION 并列
-HX_LOGK = 1.0               # HX 交换物种 log_k
+HX_LOGK = 3.0               # HX 交换物种 log_k (扫描标定值, 2026-08-20)
 GAP_H_FRACTION = 0.3        # 缺口 → HX 比例 (与 GAP_AL_FRACTION 并列, 余量 NaX)
 
 
