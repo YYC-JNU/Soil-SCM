@@ -46,6 +46,11 @@ from src.scenario_controller import MonthlyAction
 CSV_PATH = 'output/sensitivity_pH_30yr_v060.csv'
 PLOT_PATH = 'output/sensitivity_pH_30yr_v060.png'
 SEED = 42                      # 随机降雨种子 (各情景一致, 公平对比)
+# v0.6.1 (spec 62 Q1/Q10): 基流/侧向出口 (VIC/Darcy), 默认启用
+# (对治 30 年深层盐分累积 → PHREEQC 数值边界)
+BASEFLOW_CFG = {'D_max': 100.0, 'D_s': 0.10, 'n_base': 2.5}
+LATERAL_CFG = {'f_slope': 0.10,
+               'k_lat': [0.04, 0.025, 0.015, 0.008]}
 BASE_PRECIP = 1893.0           # 基准年降水 (mm)
 BASE_TEMP = 25.0               # 基准年均温 (°C)
 PCO2_REF = 0.015
@@ -155,7 +160,8 @@ def run_scenario(engine, reader, profile, states0, pco2s, profiles,
             f = climate.get_monthly_forcing(y, m)
             a = make_action(key, m + 1, lime_amount)
             h, _runoff, _extra = sim_main._apply_hydrology_events(
-                states, profiles, f, y, m, seed, bypass_fraction=0.2)
+                states, profiles, f, y, m, seed, bypass_fraction=0.2,
+                baseflow_cfg=BASEFLOW_CFG, lateral_cfg=LATERAL_CFG)
             states, _ = engine.run_monthly_multi_layer(
                 states, f, a, profile, layer_pco2s=pco2s, hydrology=h)
             # v0.6.0 数值边界: PHREEQC 失败后引擎永久降级简化模式 (pH 钳制)
