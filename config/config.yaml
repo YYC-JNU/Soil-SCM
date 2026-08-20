@@ -29,6 +29,28 @@ simulation:
   event_driven: false                # v0.6.0: 事件驱动化学 (子步长拆分: 逐场 Green-Ampt+PHREEQC+体积-θ耦合
                                      #   +First-Flush 峰值列); 默认关 (月级路径护栏); 开启后计算量 4~12 倍
 
+  # ---- v0.6.1: VIC 深层基流 (L4 底部, spec 62 Q1/Q10) ----
+  # Q_base = D_max·[D_s·S + (1−D_s)·Sⁿ], S=(θ−θ_r)/(θ_s−θ_r)
+  #   - θ_c="auto" → 自动取 VGM 残余含水量 θ_r (旱季裂隙基流基线)
+  #   - D_max 对应饱和态 (华南红壤年渗漏 ~500-800mm/yr 工程出口, 可扫描标定)
+  #   - 节点缺省 (None) → 不启用基流 (L4 保留原 ksat 排水)
+  baseflow: null
+  # baseflow:
+  #   D_max: 100.0          # 最大基流速率 (mm/month)
+  #   D_s: 0.10             # 线性排水比例 (裂隙流基线, 低含水量小流量)
+  #   n_base: 2.5           # 非线性指数 (红壤粘重排水非线性较强)
+  #   theta_c: auto         # 基流启动阈值 (仅支持 auto=θ_r)
+
+  # ---- v0.6.1: Darcy 侧向排水 (各层, spec 62 Q1/Q10) ----
+  # Q_lat = k_lat·f_slope·max(0, θ−θ_FC)·d·10, 严格 FC 闸门 (θ≤θ_FC 零侧向)
+  #   - f_slope = tan(β): β≈6° 华南红壤农田典型坡度
+  #   - k_lat 长度必须 = n_layers (L1 快 → L4 慢)
+  #   - 节点缺省 (None) → 不启用侧向
+  lateral: null
+  # lateral:
+  #   f_slope: 0.10         # 地形坡度因子 (tan 6°)
+  #   k_lat: [0.04, 0.025, 0.015, 0.008]   # 各层侧向系数 (1/day)
+
   # ---- L6 (v0.4.0): 逐层参数覆盖 (真实剖面约束, 仅 n_layers>1 时生效) ----
   layer_depths: null                 # 每层厚度 (cm), 长度必须 = n_layers; null=等分兜底; 每层 effective_depth 由此派生
   layer_overrides: []                # 逐层覆盖密集列表, 长度必须 = n_layers; [] = 无覆盖 (各层默认相同)

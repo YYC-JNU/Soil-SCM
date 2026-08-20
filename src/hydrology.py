@@ -20,7 +20,9 @@ from src.logging_config import get_logger
 from src.constants import (GREEN_AMPT_PSI_F_MM, GREEN_AMPT_NEWTON_TOL,
                            GREEN_AMPT_NEWTON_MAX_ITER,
                            FEDDES_H1, FEDDES_H2, FEDDES_H3, FEDDES_H4,
-                           ROOT_FRACTION_4LAYER, INITIAL_PSI_CM)
+                           ROOT_FRACTION_4LAYER, INITIAL_PSI_CM,
+                           BASE_D_MAX, BASE_DS, BASE_N, BASE_THETA_C_MODE,
+                           LAT_F_SLOPE, LAT_K)
 from src.vgm import (theta_to_water_L, water_L_to_theta, get_vgm_params,
                      calc_Kr, vgm_theta_from_psi)
 
@@ -182,9 +184,20 @@ class LayerCascade:
     (顺序 ET→入渗→级联, v0.5.3水分平衡闭合.txt §4.3; Q3)。
     """
 
-    def __init__(self, profiles: list, n_days: int = 30):
+    def __init__(self, profiles: list, n_days: int = 30,
+                 baseflow_cfg: dict = None, lateral_cfg: dict = None):
+        """v0.6.1 (spec 62): 基流/侧向出口配置 (None=不启用, 兼容旧调用)
+
+        参数:
+            profiles: List[SoilProfile]
+            n_days: 月天数 (层间界面通量窗口)
+            baseflow_cfg: config dict {D_max, D_s, n_base} (None=禁用基流)
+            lateral_cfg: config dict {f_slope, k_lat} (None=禁用侧向)
+        """
         self.profiles = profiles
         self.n_days = n_days
+        self.baseflow_cfg = baseflow_cfg
+        self.lateral_cfg = lateral_cfg
 
     def field_capacity_theta(self, i: int) -> float:
         """第 i 层田间持水量 θ_FC = VGM(ψ=-100) (与初始 θ 同源, spec 49 §4)"""
@@ -205,8 +218,29 @@ class LayerCascade:
             - runoff_extra: 超饱和溢出总量 (L/ha)
             - deep_drainage: 最底层排水 (L/ha)
         """
+        drains, runoff_extra, baseflow, lateral, theta_out = \
+            self.run_extended(inflow_L, states)
+        return drains, runoff_extra, (drains[-1] if drains else 0.0)
+
+    def run_extended(self, inflow_L: float, states: list):
+        """级联渗漏扩展版 (v0.6.1, spec 62 Q4): 垂直→侧向→基流, 返回 5 元组
+
+        新增出口:
+          - baseflow: 各层基流出口 (L/ha; 仅 L4 底部配置 baseflow_cfg 时非零)
+          - lateral: 各层侧向出口 (L/ha; 配置 lateral_cfg 时非零)
+          - theta_out: 排水后各层 θ 快照 (供事件路径逐场记录)
+        返回:
+            (drains, runoff_extra, baseflow, lateral, theta_out)
+            - drains: 各层垂直排水 (L/ha, 进下层, v0.5.3 语义不变)
+            - runoff_extra: 超饱和溢出总量 (L/ha)
+            - baseflow: 各层基流出口 (L/ha, 出系统)
+            - lateral: 各层侧向出口 (L/ha, 出系统)
+            - theta_out: 排水后各层 θ (List[float])
+        """
         drains = []
         runoff_extra = 0.0
+        baseflow = [0.0] * len(states)
+        lateral = [0.0] * len(states)
         inflow = inflow_L
         for i, state in enumerate(states):
             p = self.profiles[i]
@@ -232,7 +266,24 @@ class LayerCascade:
             state.theta -= drain / (depth * 1e5)
             drains.append(drain)
             inflow = drain
-        return drains, runoff_extra, drains[-1]
+            # v0.6.1 (Q1/Q2/Q4): 垂直排水后执行侧向出口 (出系统) —
+            # 顺序 = 垂直→侧向→基流 (专家 §5.2), 侧向/基流从本层扣水出系统
+            if self.lateral_cfg is not None:
+                q_lat_mm = calc_lateral_drainage(
+                    state.theta, p, self.lateral_cfg, theta_fc, layer_index=i)
+                q_lat_L = q_lat_mm * 10000.0
+                # 侧向出口不进入下层: 从 θ 中扣减 (防抽干在纯函数内保证)
+                state.theta -= q_lat_L / (depth * 1e5)
+                lateral[i] = q_lat_L
+            # L4 底部: 垂直排水 (drain) 已执行, 基流作为 L4 底部主出口替换
+            # 原 deep_drainage 的 ksat 限制 → VIC 基流 (仅配置时启用)
+            if i == len(states) - 1 and self.baseflow_cfg is not None:
+                q_base_mm = calc_baseflow(state.theta, p, self.baseflow_cfg)
+                q_base_L = q_base_mm * 10000.0
+                state.theta -= q_base_L / (depth * 1e5)
+                baseflow[i] = q_base_L
+        theta_out = [s.theta for s in states]
+        return drains, runoff_extra, baseflow, lateral, theta_out
 
 
 def calc_interface_flux(profile_up, theta_up, profile_dn, theta_dn,
@@ -263,6 +314,78 @@ def calc_interface_flux(profile_up, theta_up, profile_dn, theta_dn,
         return max(0.0, k_eff * 1e5 * n_days)
     raise NotImplementedError(
         "calc_interface_flux(mode='bidirectional') 毛细上升为 v0.6.0 预留")
+
+
+def calc_baseflow(theta: float, profile, baseflow_cfg: dict = None) -> float:
+    """VIC 非线性深层基流 (mm/month, L4 底部, Q1/Q2/Q4, spec 62)
+
+    Q_base = D_max·[D_s·S + (1−D_s)·Sⁿ],  S = (θ−θ_r)/(θ_s−θ_r)
+
+      - θ_c = θ_r (残余含水量): 旱季 θ_r<θ<θ_FC 有 D_s 线性项裂隙基流基线
+      - θ ≤ θ_r → 0 (毛管束缚, 不排水); θ → θ_s → D_max (饱和全排)
+      - 防抽干: Q_base = min(公式, (θ−θ_r)·depth·10), 不抽到 θ_r 以下
+        ((θ−θ_r)×depth×10 = 可降至 θ_r 的可用水量 mm, 专家 Q1 防抽干约束)
+
+    参数:
+        theta: L4 当前体积含水量 (m³/m³)
+        profile: SoilProfile (含 porosity/effective_depth/vgm_*)
+        baseflow_cfg: config dict {D_max, D_s, n_base} (None=常量默认)
+    返回:
+        Q_base (mm/month, ≥0)
+    """
+    d_max = (baseflow_cfg or {}).get('D_max', BASE_D_MAX)
+    d_s = (baseflow_cfg or {}).get('D_s', BASE_DS)
+    n_base = (baseflow_cfg or {}).get('n_base', BASE_N)
+    theta_r, alpha, n = get_vgm_params(profile)
+    theta_s = profile.porosity
+    depth = profile.effective_depth
+    if theta <= theta_r:
+        return 0.0
+    s = min(max((theta - theta_r) / (theta_s - theta_r), 0.0), 1.0)
+    q_formula = d_max * (d_s * s + (1.0 - d_s) * s ** n_base)
+    q_cap = (theta - theta_r) * depth * 10.0   # 可降至 θ_r 的可用水量 (mm)
+    return max(0.0, min(q_formula, q_cap))
+
+
+def calc_lateral_drainage(theta: float, profile, lateral_cfg: dict = None,
+                          theta_fc: float = None,
+                          layer_index: int = 0) -> float:
+    """Darcy 集总侧向排水 (mm/month, 各层, Q1/Q2/Q4, spec 62)
+
+    Q_lat = k_lat·f_slope·max(0, θ−θ_FC)·depth·10
+
+      - 严格 FC 闸门: θ≤θ_FC 零侧向 (毛管力束缚, 华南红壤"侧向需饱和")
+      - k_lat 分层 (1/day): L1 快 (根系通道) → L4 慢 (母质粘重)
+      - f_slope = tan(β): β≈6° 华南红壤农田典型坡度
+      - 防抽干: Q_lat = min(公式, (θ−θ_FC)·depth·10), 不抽到 θ_FC 以下
+
+    参数:
+        theta: 当前层体积含水量 (m³/m³)
+        profile: SoilProfile (含 porosity/effective_depth/vgm_*)
+        lateral_cfg: config dict {f_slope, k_lat} (None=常量默认;
+            k_lat 可为标量或按层列表)
+        theta_fc: 该层田间持水量 (None=由 profile 正算 VGM(ψ=-100))
+        layer_index: 层索引 (0-based, 分层 k_lat 列表按此索引取该层系数)
+    返回:
+        Q_lat (mm/month, ≥0)
+    """
+    f_slope = (lateral_cfg or {}).get('f_slope', LAT_F_SLOPE)
+    k_lat_raw = (lateral_cfg or {}).get('k_lat', LAT_K)
+    if isinstance(k_lat_raw, (list, tuple)):
+        k_lat = k_lat_raw[layer_index] if layer_index < len(k_lat_raw) \
+            else k_lat_raw[-1]
+    else:
+        k_lat = k_lat_raw
+    if theta_fc is None:
+        theta_r, alpha, n = get_vgm_params(profile)
+        theta_fc = vgm_theta_from_psi(INITIAL_PSI_CM, profile.porosity,
+                                      theta_r, alpha, n)
+    depth = profile.effective_depth
+    if theta <= theta_fc:
+        return 0.0
+    q_formula = k_lat * f_slope * (theta - theta_fc) * depth * 10.0
+    q_cap = (theta - theta_fc) * depth * 10.0   # 可降至 θ_FC 的可用水量 (mm)
+    return max(0.0, min(q_formula, q_cap))
 
 
 # ---- v0.5.3 Feddes ET (Q3/Q9, spec 49 §3) ----
