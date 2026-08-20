@@ -27,6 +27,7 @@ from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
                            PRE_EQUIL_PH_TOL, PRE_EQUIL_ION_TOL,
                            PRE_EQUIL_PH_GAIN, PRE_EQUIL_ION_GAIN,
                            ALX3_DEFAULT_LOGK, ALX3_SELECTIVITY_LOGK,
+                           HX_LOGK,
                            INITIAL_PSI_CM, GREEN_AMPT_PSI_F_MM,
                            DEFAULT_KSAT_SURFACE, MAX_CONCENTRATION_RATIO)
 from src.vgm import theta_to_water_L
@@ -538,7 +539,7 @@ class PhreeqcEngine:
 
         # 工单 17: 偏离度诊断快照 (初始 vs 稳态)
         init_snapshot = {'pH': state.ph}
-        for ion in ('CaX2', 'MgX2', 'KX', 'NaX', 'AlX3'):
+        for ion in ('CaX2', 'MgX2', 'KX', 'NaX', 'AlX3', 'HX'):
             init_snapshot[ion] = state.exchange.get(ion, 0.0)
 
         action = MonthlyAction()
@@ -564,7 +565,7 @@ class PhreeqcEngine:
         self.last_pre_equilibration_diagnostics = {
             'pH': (init_snapshot['pH'], current.ph),
         }
-        for ion in ('CaX2', 'MgX2', 'KX', 'NaX', 'AlX3'):
+        for ion in ('CaX2', 'MgX2', 'KX', 'NaX', 'AlX3', 'HX'):
             self.last_pre_equilibration_diagnostics[ion] = (
                 init_snapshot[ion], current.exchange.get(ion, 0.0))
         self._log_pre_equilibration_diagnostics()
@@ -581,6 +582,12 @@ class PhreeqcEngine:
         返回空 dict 表示全部交换离子观测偏差已收敛 (<10%)。
         """
         injection = {}
+        # v0.6.1 (spec 62 Q7): HX 为标定酸库 (log_k=3.0 扫描标定, 平衡量由
+        # 热力学决定, 非观测锚定输入) — 不纳入观测锚定; 盐基阳离子
+        # (Ca/Mg/K/Na/Al) 为观测交换离子, 锚定保持 <10% 偏差。
+        # v0.6.1 防冲垮: 偏差 >50% 的离子跳过锚定 — 明显非物理偏差 (如 HX
+        # 酸库占位排挤 AlX3 至 -86%) 强行拉回会使注入量级过大冲垮交换相
+        # (实测注入 -1.6e4 Al 后交换相全归零), 温和校正 + 诊断记录更稳。
         sp_map = {'CaX2': 'Ca+2', 'MgX2': 'Mg+2', 'KX': 'K+',
                   'NaX': 'Na+', 'AlX3': 'Al+3'}
         for ion, target in targets.items():
@@ -588,7 +595,7 @@ class PhreeqcEngine:
                 continue
             cur = state.exchange.get(ion, 0.0)
             dev = (cur - target) / target
-            if abs(dev) > PRE_EQUIL_ION_TOL:
+            if abs(dev) > PRE_EQUIL_ION_TOL and abs(dev) <= 0.5:
                 injection[sp_map[ion]] = (
                     injection.get(sp_map[ion], 0.0)
                     + dev * target * PRE_EQUIL_ION_GAIN)
@@ -608,7 +615,7 @@ class PhreeqcEngine:
         lines.append('  pH: %.3f -> %.3f (Δ=%.3f)' % (
             diag['pH'][0], diag['pH'][1], d_ph))
         warn = d_ph > 0.5
-        for ion in ('CaX2', 'MgX2', 'KX', 'NaX', 'AlX3'):
+        for ion in ('CaX2', 'MgX2', 'KX', 'NaX', 'AlX3', 'HX'):
             init_v, eq_v = diag[ion]
             rel = (abs(eq_v - init_v) / max(abs(init_v), 1e-6)) * 100.0
             lines.append('  %s: %.3e -> %.3e (相对变化 %.1f%%)' % (
@@ -930,7 +937,7 @@ class PhreeqcEngine:
         water_mass = get('mass_H2O') if 'mass_H2O' in idx \
             else new_state.volume
         exchange = {}
-        for sp in ['CaX2', 'MgX2', 'KX', 'NaX', 'AlX3']:
+        for sp in ['CaX2', 'MgX2', 'KX', 'NaX', 'AlX3', 'HX']:
             col = f"m_{sp}(mol/kgw)"
             if col in idx:
                 exchange[sp] = get(col) * water_mass
@@ -999,6 +1006,15 @@ class PhreeqcEngine:
             lines.append("Al+3 + 3 X- = AlX3")
             lines.append(f"    -log_k {ALX3_SELECTIVITY_LOGK}")
             lines.append("")
+
+        # v0.6.1 (spec 62 Q7): 注入 HX 交换物种 — phreeqc.dat 的
+        # "H+ + X- = HX" 被注释禁用 (第 1362 行), 必须自定义注入使模型可识别
+        # 交换性 H 酸库 (exch_h→HX, initial_condition.build_exchange)。
+        # log_k=HX_LOGK (默认 1.0, phreeqc.dat 注释区基准值, 可标定)
+        lines.append("EXCHANGE_SPECIES")
+        lines.append("H+ + X- = HX")
+        lines.append(f"    -log_k {HX_LOGK}")
+        lines.append("")
 
         # SOLUTION 块
         # -water 指定土柱溶液体积 (L), 使溶液与交换/矿物摩尔量量级匹配
@@ -1178,7 +1194,7 @@ class PhreeqcEngine:
         # L4 (Q1=A): 氮库存为模型状态 (不注入溶液), 无需 N(-3)/N(5) 回填;
         # 总 N 保留供层间平流 (inflow_ions)
         lines.append("  -totals Ca Mg K Na Al P Zn Cl C S N Si F")
-        lines.append("  -molalities CaX2 MgX2 KX NaX AlX3 X-")
+        lines.append("  -molalities CaX2 MgX2 KX NaX AlX3 HX X-")
         # L2: 输出矿物相摩尔量 (供矿物演化回填, 修复 Al 耗尽根因)
         # 只列出非零矿物; 矿物名须与 phreeqc.dat PHASES 段一致
         # L2: 输出矿物相摩尔量 (供矿物演化回填, 修复 Al 耗尽根因)

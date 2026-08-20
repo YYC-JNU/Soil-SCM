@@ -38,6 +38,7 @@ from src.constants import (MINERAL_SCALE, HFO_STRONG_SITE_DENSITY,
                            AMORPHOUS_ALOH3_MASS_FRACTION,
                            AMORPHOUS_ALOH3_MOLAR_MASS,
                            GAP_AL_FRACTION,
+                           GAP_H_FRACTION,
                            INITIAL_PSI_CM)
 from src.utils import cmol_to_mol_per_kg
 from src.vgm import vgm_theta_from_psi, get_vgm_params
@@ -313,39 +314,45 @@ class InitialConditionBuilder:
         k_ion_mol_per_kg = self.profile.exch_k / 1.0 / 100.0    # K⁺
         na_ion_mol_per_kg = self.profile.exch_na / 1.0 / 100.0  # Na⁺
         al_ion_mol_per_kg = self.profile.exch_al / 3.0 / 100.0  # Al³⁺
-        # 注意: phreeqc.dat 未定义 HX 交换物种(见 EXCHANGE_SPECIES 段,
-        #       "H+ + X- = HX" 已被注释禁用)。交换性 H+ 的酸度效应
-        #       由溶液 pH 与 Al 缓冲体现，此处将交换性 H 位点并入 Na。
+        # v0.6.1 (spec 62 Q7): 交换性 H 直接映射 HX 交换物种 (不再并入 Na)。
+        # phreeqc.dat 的 "H+ + X- = HX" 被注释禁用, 由引擎层 EXCHANGE_SPECIES
+        # 自定义注入 (log_k=HX_LOGK, phreeqc_engine._build_phreeqc_input)。
         h_ion_mol_per_kg = self.profile.exch_h / 1.0 / 100.0    # H⁺
 
         # 转换为整个土柱的摩尔数
         ca_mol = ca_ion_mol_per_kg * self.soil_mass_kg
         mg_mol = mg_ion_mol_per_kg * self.soil_mass_kg
         k_mol = k_ion_mol_per_kg * self.soil_mass_kg
-        na_mol = (na_ion_mol_per_kg + h_ion_mol_per_kg) * self.soil_mass_kg
+        na_mol = na_ion_mol_per_kg * self.soil_mass_kg
         al_mol = al_ion_mol_per_kg * self.soil_mass_kg
+        h_mol = h_ion_mol_per_kg * self.soil_mass_kg
 
-        # 用 AlX3/NaX 按比例补齐 CEC 未覆盖的位点 (v0.5.0, B 诊断落地)
-        # 历史: Q12 修复曾全用 Al³⁺ 填充缺口 (酸性红壤交换性酸主导),
-        # 但 B 诊断 (2026-08-14) 实测: 缺口全 Al 使自然平衡 pH 4.36 偏离
-        # 观测 5.0; 全 Na 使 pH 5.1 自洽但盐基饱和度偏高。参数化折中:
-        #   缺口 × GAP_AL_FRACTION → AlX3 (三价), 缺口 × (1-比例) → NaX (一价)
+        # 用 HX/AlX3/NaX 三通道按比例补齐 CEC 未覆盖的位点 (v0.6.1 Q7)
+        # 历史: v0.5.0 B 诊断用 GAP_AL_FRACTION 折中 (全 Al pH 偏低 4.36 /
+        # 全 Na 盐基偏高); v0.6.1 引入 GAP_H_FRACTION 提供交换性酸真实缓冲:
+        #   缺口 × GAP_H_FRACTION → HX (一价酸), 缺口 × GAP_AL_FRACTION → AlX3 (三价),
+        #   缺口 × (1−GAP_H−GAP_AL) → NaX (一价盐基)
         covered_charge_cmol = (
             self.profile.exch_ca + self.profile.exch_mg +
             self.profile.exch_k + self.profile.exch_na +
             self.profile.exch_al + self.profile.exch_h
         )
         gap_cmol = max(0.0, self.profile.cec - covered_charge_cmol)
-        al_mol += (gap_cmol * GAP_AL_FRACTION) / 3.0 / 100.0 * self.soil_mass_kg
-        na_mol += (gap_cmol * (1.0 - GAP_AL_FRACTION)) / 1.0 / 100.0 * self.soil_mass_kg
+        gap_h_cmol = gap_cmol * GAP_H_FRACTION
+        gap_al_cmol = gap_cmol * GAP_AL_FRACTION
+        gap_na_cmol = gap_cmol * (1.0 - GAP_H_FRACTION - GAP_AL_FRACTION)
+        h_mol += gap_h_cmol / 1.0 / 100.0 * self.soil_mass_kg
+        al_mol += gap_al_cmol / 3.0 / 100.0 * self.soil_mass_kg
+        na_mol += gap_na_cmol / 1.0 / 100.0 * self.soil_mass_kg
 
-        # PHREEQC EXCHANGE 写法 (仅使用 phreeqc.dat 已定义的物种)
+        # PHREEQC EXCHANGE 写法 (HX 由引擎 EXCHANGE_SPECIES 注入定义)
         exchange = {
             'CaX2': ca_mol,
             'MgX2': mg_mol,
             'KX': k_mol,
             'NaX': na_mol,
             'AlX3': al_mol,
+            'HX': h_mol,
         }
 
         return exchange
@@ -364,7 +371,8 @@ class InitialConditionBuilder:
             exchange.get('MgX2', 0) * 2.0 +
             exchange.get('KX', 0) * 1.0 +
             exchange.get('NaX', 0) * 1.0 +
-            exchange.get('AlX3', 0) * 3.0
+            exchange.get('AlX3', 0) * 3.0 +
+            exchange.get('HX', 0) * 1.0
         )
         return total
 

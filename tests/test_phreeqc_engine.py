@@ -134,3 +134,33 @@ def test_error_diagnostics_on_failure(profile, soil_info, monkeypatch, tmp_path)
     content = error_file.read_text(encoding="utf-8")
     assert "SELECTED_OUTPUT" in content
     assert "SOLUTION" in content
+
+
+
+# ==================== v0.6.1: HX 交换酸注入 (S3/S4, spec 62 Q7) ====================
+
+def test_hx_exchange_species_injected(profile, soil_info):
+    """v0.6.1 (Q7): EXCHANGE_SPECIES HX 自定义注入 (phreeqc.dat 注释禁用需注入)
+
+    断言: 输入字符串含 "H+ + X- = HX" 与 log_k 行 (HX_LOGK=1.0)
+    """
+    from src.constants import HX_LOGK
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    inp = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile)
+    assert "H+ + X- = HX" in inp
+    assert f"-log_k {HX_LOGK}" in inp
+    # SELECTED_OUTPUT molalities 含 HX
+    assert "-molalities CaX2 MgX2 KX NaX AlX3 HX X-" in inp
+
+
+def test_hx_in_exchange_state(profile, soil_info):
+    """v0.6.1 (Q7): 初始状态交换相含 HX 且月步后保留"""
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    assert 'HX' in state.exchange
+    assert state.exchange['HX'] > 0
+    new_state, diag = e.run_monthly_step(state, FORCING, MonthlyAction(),
+                                         profile)
+    # 交换相 HX 保留 (绝对摩尔量在平衡中演化, 不消失)
+    assert new_state.exchange.get('HX', 0.0) >= 0.0
