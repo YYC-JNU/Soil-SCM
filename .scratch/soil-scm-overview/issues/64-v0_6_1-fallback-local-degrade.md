@@ -4,10 +4,10 @@
 
 **Blocked by:** None — can start immediately（依赖 spec 62 决策表 Q5，2026-08-20 定案）。
 
-**Status:** ready-for-agent
+**Status:** ✅ 已完成 (2026-08-20, v0.6.1)
 
-- [ ] `_run_official_step` 失败处理改为连续计数：`_consecutive_failures_event` / `_consecutive_failures_monthly` 两个计数器（事件/月级路径分开）
-- [ ] 失败场行为：保留前一正常状态（不调 `_run_simplified_step`）跳过该场化学 + error.inp 每次落盘 + 计数 +1
-- [ ] 连续失败数 ≥ FALLBACK_MAX_CONSECUTIVE=3（`constants.py` 新增）→ 永久降级（既有 `_permanent_fallback=True` 语义）
-- [ ] 单次成功重置对应路径的失败计数（滑动窗口语义）
-- [ ] 测试（S3）：前 1~2 次失败保留状态跳过不降级、第 3 次永久降级、失败计数事件/月级分离、成功后计数重置、`test_error_diagnostics_on_failure` 等契约测试按 Q5 修订
+- [x] `_run_official_step` 失败处理改为连续计数：`_consecutive_failures_event` / `_consecutive_failures_monthly`（事件/月级路径分开，`path` 参数）
+- [x] 失败场行为：保留前一正常状态（不调 `_run_simplified_step`）跳过该场化学 + error.inp 每次落盘 + 计数 +1；返回 `(state, None)`
+- [x] 连续失败数 ≥ FALLBACK_MAX_CONSECUTIVE=3（`constants.py`）→ 永久降级（既有 `_permanent_fallback=True` 语义）
+- [x] 单次成功重置对应路径的失败计数（滑动窗口语义）
+- [x] 测试（S3）：前 2 次失败保留状态跳过不降级（`test_error_diagnostics_on_failure` 修订）、第 3 次永久降级、事件/月级计数分离（`test_fallback_event_path_counts_separately`）、成功后重置（`test_fallback_reset_on_success`）、error.inp 写入失败不影响流程（`test_error_write_failure_does_not_break_flow` 修订）；**281 passed 全绿**

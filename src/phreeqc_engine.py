@@ -29,7 +29,8 @@ from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
                            ALX3_DEFAULT_LOGK, ALX3_SELECTIVITY_LOGK,
                            HX_LOGK,
                            INITIAL_PSI_CM, GREEN_AMPT_PSI_F_MM,
-                           DEFAULT_KSAT_SURFACE, MAX_CONCENTRATION_RATIO)
+                           DEFAULT_KSAT_SURFACE, MAX_CONCENTRATION_RATIO,
+                           FALLBACK_MAX_CONSECUTIVE)
 from src.vgm import theta_to_water_L
 from src.logging_config import get_logger
 from src.scenario_controller import MonthlyAction
@@ -181,6 +182,9 @@ class PhreeqcEngine:
         self.nitrification_k2 = nitrification_k2  # 硝化速率 /月
         self._fallback_warned = False
         self._permanent_fallback = False
+        # v0.6.1 (spec 62 Q5): 事件级局部降级 — 连续失败计数 (事件/月级分开)
+        self._consecutive_failures_event = 0
+        self._consecutive_failures_monthly = 0
         self.last_error_message = None    # Q18: 最近一次引擎失败信息
         self.last_error_input = None     # Q18: 最近一次失败输入字符串
         # 降水入渗系数 (0~1): 实际进入土壤溶液的比例, 其余径流/排水 (T3 参数化)
@@ -389,7 +393,7 @@ class PhreeqcEngine:
         if use_phreeqc:
             return self._run_official_step(state, eff, action, soil_profile,
                                            solution_water_L=water_target_L,
-                                           inject_water=False)
+                                           inject_water=False, path='event')
         return self._run_simplified_step(state, eff, action, soil_profile)
 
     def apply_concentration_equilibrium(self, state: SoilState, theta: float,
@@ -824,7 +828,8 @@ class PhreeqcEngine:
         return new_states, diags_out
 
     def _run_official_step(self, state, forcing, action, profile,
-                           solution_water_L=None, inject_water=True):
+                           solution_water_L=None, inject_water=True,
+                           path='monthly'):
         """使用官方 phreeqc (IPhreeqc 3.8.6) 引擎执行计算步
 
         参数:
@@ -853,6 +858,11 @@ class PhreeqcEngine:
             self.official.RunString(input_string)
             new_state, diag = self._parse_official_output(
                 state, solution_water_L=solution_water_L)
+            # v0.6.1 (Q5): 单次成功重置对应路径的连续失败计数 (滑动窗口)
+            if path == 'event':
+                self._consecutive_failures_event = 0
+            else:
+                self._consecutive_failures_monthly = 0
             return new_state, diag
         except Exception as e:
             # Q18 修复: 记录完整诊断 (错误详情 + 输入字符串落盘可复现)
@@ -868,13 +878,32 @@ class PhreeqcEngine:
             except Exception as write_err:
                 logger.warning("无法写入 PHREEQC 失败输入复现文件 %s: %s",
                                ERROR_INP_PATH, write_err)
+            # v0.6.1 (spec 62 Q5): 事件级局部降级 — 连续 N 次失败才永久降级
+            # 失败场保留前一正常状态跳过 (不调 simplified, 化学连续性最好);
+            # 事件/月级路径分开计数 (Q5 决策)
+            if path == 'event':
+                self._consecutive_failures_event += 1
+                n_fails = self._consecutive_failures_event
+            else:
+                self._consecutive_failures_monthly += 1
+                n_fails = self._consecutive_failures_monthly
+            if n_fails >= FALLBACK_MAX_CONSECUTIVE:
+                if not getattr(self, '_fallback_warned', False):
+                    logger.error("PHREEQC 连续 %d 次计算失败: %s",
+                                 n_fails, e, exc_info=True)
+                    logger.debug("失败输入:\n%s", input_string)
+                    logger.warning("已永久降级到简化模式继续模拟")
+                    self._fallback_warned = True
+                self._permanent_fallback = True
+                return self._run_simplified_step(state, forcing, action,
+                                                 profile)
+            # 未达阈值: 保留前一正常状态跳过该场 (事件级局部降级, Q5)
             if not getattr(self, '_fallback_warned', False):
-                logger.error("PHREEQC 计算失败: %s", e, exc_info=True)
-                logger.debug("失败输入:\n%s", input_string)
-                logger.warning("已永久降级到简化模式继续模拟")
+                logger.warning("PHREEQC 单场计算失败 (%s): %s — 保留前状态跳过, "
+                               "连续失败 %d/%d 后永久降级", path, e, n_fails,
+                               FALLBACK_MAX_CONSECUTIVE)
                 self._fallback_warned = True
-            self._permanent_fallback = True
-            return self._run_simplified_step(state, forcing, action, profile)
+            return state, None
 
     def _parse_official_output(self, old_state, solution_water_L=None):
         """从官方 PHREEQC SELECTED_OUTPUT 提取平衡状态并回填 (Q1 核心)

@@ -77,7 +77,11 @@ def test_mineral_scale_consistent(profile, soil_info):
 
 
 def test_error_write_failure_does_not_break_flow(profile, soil_info, monkeypatch, tmp_path):
-    """T01: error.inp 写入失败时不中断主流程, 降级路径正常完成"""
+    """T01: error.inp 写入失败时不中断主流程, 降级路径正常完成
+
+    v0.6.1 (Q5): fallback 改为连续 N=3 次失败才永久降级; 本测试跑 3 次
+    失败验证降级路径 + error.inp 写入失败不影响主流程。
+    """
     e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
     state = e.build_initial_state(profile, soil_info, 0.015)
 
@@ -91,12 +95,14 @@ def test_error_write_failure_does_not_break_flow(profile, soil_info, monkeypatch
     monkeypatch.setattr("src.phreeqc_engine.ERROR_INP_PATH",
                         str(blocker / "error.inp"))
     monkeypatch.chdir(tmp_path)
-    new_state, _ = e.run_monthly_step(state, FORCING, MonthlyAction(), profile)
+    cur = state
+    for _ in range(3):   # 连续 3 次失败 (Q5)
+        cur, _ = e.run_monthly_step(cur, FORCING, MonthlyAction(), profile)
 
     # 降级路径正常完成, 状态仍有意义
     assert e._permanent_fallback
     assert e.last_error_message == "simulated phreeqc failure"
-    assert new_state.ph > 0
+    assert cur.ph > 0
 
 
 def test_simplified_with_fertilizer_no_crash(profile, soil_info):
@@ -109,12 +115,17 @@ def test_simplified_with_fertilizer_no_crash(profile, soil_info):
 
 
 def test_error_diagnostics_on_failure(profile, soil_info, monkeypatch, tmp_path):
-    """T3/Q18/T01: 引擎失败时记录 last_error_message / last_error_input, 并写入 error.inp"""
+    """T3/Q18/T01: 引擎失败时记录 last_error_message / last_error_input, 并写入 error.inp
+
+    v0.6.1 (Q5): fallback 改为连续 N=3 次失败才永久降级; 前 1~2 次失败
+    保留前一状态跳过 (不调 simplified), 第 3 次才永久降级。
+    """
     e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
     assert e.last_error_message is None
     assert e.last_error_input is None
 
     state = e.build_initial_state(profile, soil_info, 0.015)
+    ph0 = state.ph
 
     def boom(*args, **kwargs):
         raise RuntimeError("simulated phreeqc failure")
@@ -122,11 +133,22 @@ def test_error_diagnostics_on_failure(profile, soil_info, monkeypatch, tmp_path)
     monkeypatch.setattr(e.official, "RunString", boom)
     # T01: 隔离测试, 切换工作目录使 error.inp 写入 tmp_path, 不污染项目根
     monkeypatch.chdir(tmp_path)
-    new_state, _ = e.run_monthly_step(state, FORCING, MonthlyAction(), profile)
+    # 前 2 次失败: 保留前一状态跳过 (不永久降级, 不调 simplified)
+    cur = state
+    for _ in range(2):
+        new_state, diag = e.run_monthly_step(
+            cur, FORCING, MonthlyAction(), profile)
+        assert not e._permanent_fallback
+        assert new_state.ph == pytest.approx(ph0, rel=1e-6)  # 状态保留
+        assert diag is None                                   # 无诊断 (跳过)
+        cur = new_state
+    # 第 3 次失败: 永久降级
+    new_state, _ = e.run_monthly_step(cur, FORCING, MonthlyAction(), profile)
 
     assert e._permanent_fallback
     assert e.last_error_message == "simulated phreeqc failure"
     assert "SELECTED_OUTPUT" in e.last_error_input  # 内存属性保留
+    assert new_state.ph > 0
 
     # T01: 磁盘复现文件自动生成且内容为完整输入 (写入 output/ 运行产物目录)
     error_file = tmp_path / "output" / "error.inp"
@@ -136,6 +158,49 @@ def test_error_diagnostics_on_failure(profile, soil_info, monkeypatch, tmp_path)
     assert "SOLUTION" in content
 
 
+
+
+
+# ==================== v0.6.1: fallback 事件级局部降级 (S3, spec 62 Q5) ====================
+
+def test_fallback_event_path_counts_separately(profile, soil_info, monkeypatch):
+    """v0.6.1 (Q5): 事件/月级路径失败计数分开 — 事件失败不触发月级降级"""
+    from src.hydrology import RainEvent
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    state = e.build_initial_state(profile, soil_info, 0.015)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated failure")
+
+    monkeypatch.setattr(e.official, "RunString", boom)
+    # 事件路径连续失败 2 次 (未达 N=3): 不降级, 计数递增
+    for _ in range(2):
+        ev = RainEvent(precip_mm=10.0)
+        new_state, diag = e.run_event_step(state, ev, MonthlyAction(), profile)
+        assert not e._permanent_fallback
+        state = new_state
+    assert e._consecutive_failures_event == 2  # 事件路径失败计数
+    # 事件失败不影响月级计数
+    assert e._consecutive_failures_monthly == 0
+
+
+def test_fallback_reset_on_success(profile, soil_info, monkeypatch):
+    """v0.6.1 (Q5): 成功后重置连续失败计数 (滑动窗口)"""
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    state = e.build_initial_state(profile, soil_info, 0.015)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated failure")
+
+    monkeypatch.setattr(e.official, "RunString", boom)
+    # 1 次失败
+    e.run_monthly_step(state, FORCING, MonthlyAction(), profile)
+    assert e._consecutive_failures_monthly == 1
+    # 恢复 RunString → 成功 → 计数重置
+    monkeypatch.undo()
+    e.run_monthly_step(state, FORCING, MonthlyAction(), profile)
+    assert e._consecutive_failures_monthly == 0
+    assert not e._permanent_fallback
 
 # ==================== v0.6.1: HX 交换酸注入 (S3/S4, spec 62 Q7) ====================
 
