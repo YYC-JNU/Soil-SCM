@@ -30,7 +30,8 @@ from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
                            HX_LOGK,
                            INITIAL_PSI_CM, GREEN_AMPT_PSI_F_MM,
                            DEFAULT_KSAT_SURFACE, MAX_CONCENTRATION_RATIO,
-                           FALLBACK_MAX_CONSECUTIVE)
+                           FALLBACK_MAX_CONSECUTIVE,
+                           C_MIN, CONC_WARN)
 from src.vgm import theta_to_water_L
 from src.logging_config import get_logger
 from src.scenario_controller import MonthlyAction
@@ -787,6 +788,46 @@ class PhreeqcEngine:
                     forcing=layer_forcing, theta_after=theta_ev)
                 layer_states.append(new_state)
                 last_diags[i] = diag
+                # ---- v0.6.1 (spec 62 Q3/Q6): 溶质随水移出系统 + 浓度冲洗 ----
+                # 侧向/基流排水带走溶质: n_new = max(n_old×(1−Q_out/V), C_min×V)
+                # (工单 63 已提供逐场 lateral/baseflow 水量出口, ev['lateral']/
+                # ev['baseflow']); 交换相不动靠后续平衡 Gapon 自动补偿。
+                lat_out_L = (ev.get('lateral') or [0.0] * n)[i]
+                base_out_L = (ev.get('baseflow') or [0.0] * n)[i]
+                q_out_L = lat_out_L + base_out_L
+                total_lateral_i = 0.0
+                total_base_i = 0.0
+                flush_L = 0.0
+                vol_L = max(new_state.volume, 1.0)
+                # ① 比例扣除侧向/基流携出溶质 (Q3: 只排水不排盐等于没修)
+                if q_out_L > 0:
+                    frac_out = min(q_out_L / vol_L, 1.0)
+                    for ion, conc in list(new_state.solution.items()):
+                        if ion in ('temp', 'pH', 'pe', 'units'):
+                            continue
+                        n_new = conc * (1.0 - frac_out)
+                        new_state.solution[ion] = max(n_new, C_MIN)
+                    total_lateral_i = lat_out_L
+                    total_base_i = base_out_L
+                # ② 浓度冲洗 (Q6: C_warn 超限 → 折算额外水量出口 + 同比例扣溶质)
+                sol_conc = {k: v for k, v in new_state.solution.items()
+                            if k not in ('temp', 'pH', 'pe', 'units')}
+                max_c = max(sol_conc.values()) if sol_conc else 0.0
+                if max_c > CONC_WARN:
+                    excess = max_c - CONC_WARN
+                    # 折算冲洗水量: 使 max 浓度降到 C_warn 所需稀释水量
+                    flush_L = vol_L * (excess / max_c)
+                    if flush_L > 0:
+                        frac_flush = min(flush_L / vol_L, 1.0)
+                        for ion, conc in list(new_state.solution.items()):
+                            if ion in ('temp', 'pH', 'pe', 'units'):
+                                continue
+                            n_new = conc * (1.0 - frac_flush)
+                            new_state.solution[ion] = max(n_new, C_MIN)
+                # 出口记账 → event_details + 月度诊断列
+                row[f'lateral_L{i+1}_L'] = total_lateral_i
+                row[f'baseflow_L{i+1}_L'] = total_base_i
+                row[f'flush_L{i+1}_L'] = flush_L
                 # 该场该层淋失明细 (Q14, mmol/ha = conc(mol/L)×drain(L)×1000)
                 drain_i = ev['drains'][i]
                 row[f'leach_N_L{i+1}_mmol'] = \
