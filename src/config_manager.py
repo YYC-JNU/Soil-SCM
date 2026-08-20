@@ -52,6 +52,32 @@ class LayerOverrideConfig:
 
 
 @dataclass
+class BaseflowConfig:
+    """v0.6.1 VIC 深层基流配置 (spec 62, Q1/Q10)
+
+    Q_base = D_max·[D_s·S + (1−D_s)·Sⁿ], S=(θ−θ_r)/(θ_s−θ_r)
+      - theta_c="auto" → 用 VGM 残余含水量 θ_r (专家参数表: 旱季裂隙基流基线)
+      - None 字段回退 constants 默认; 整个节点缺省 → 不启用基流
+    """
+    D_max: Optional[float] = None      # 最大基流速率 (mm/month), 默认 BASE_D_MAX
+    D_s: Optional[float] = None        # 线性排水比例 (裂隙流基线)
+    n_base: Optional[float] = None     # 非线性指数
+    theta_c: str = "auto"              # "auto" → θ_r (仅支持 auto, 暂不开放自定义)
+
+
+@dataclass
+class LateralConfig:
+    """v0.6.1 Darcy 侧向排水配置 (spec 62, Q1/Q10)
+
+    Q_lat = k_lat·f_slope·max(0, θ−θ_FC)·d·10, 严格 FC 闸门
+      - k_lat: 各层侧向系数 (1/day), 长度=n_layers 或标量 (广播)
+      - 整个节点缺省 → 不启用侧向
+    """
+    f_slope: Optional[float] = None    # 地形坡度因子 (tan β, 默认 LAT_F_SLOPE)
+    k_lat: Optional[list] = None       # 各层侧向系数 (默认 LAT_K)
+
+
+@dataclass
 class SimulationConfig:
     """模拟控制参数"""
     n_years: int = 50
@@ -72,6 +98,8 @@ class SimulationConfig:
     bypass_fraction: float = 0.2                # v0.5.2: 大孔隙优先流比例 (0~1, 超基质 Ks 积水直通 L2)
     initial_psi_cm: float = INITIAL_PSI_CM      # v0.5.3: 初始基质势 (cm, 负值, 田间持水量, VGM 正算 θ_init)
     event_driven: bool = False                  # v0.6.0: 事件驱动化学 (子步长拆分, 逐场 PHREEQC), 默认关
+    baseflow: Optional[BaseflowConfig] = None   # v0.6.1: VIC 深层基流 (None=禁用)
+    lateral: Optional[LateralConfig] = None     # v0.6.1: Darcy 侧向排水 (None=禁用)
 
 
 @dataclass
@@ -229,6 +257,29 @@ class Config:
     output: OutputConfig = field(default_factory=OutputConfig)
 
 
+def _parse_baseflow(raw):
+    """v0.6.1: 解析 simulation.baseflow 节点 (None/空 → None=禁用)"""
+    if not isinstance(raw, dict) or not raw:
+        return None
+    return BaseflowConfig(
+        D_max=raw.get('D_max'),
+        D_s=raw.get('D_s'),
+        n_base=raw.get('n_base'),
+        theta_c=raw.get('theta_c', 'auto'))
+
+
+def _parse_lateral(raw):
+    """v0.6.1: 解析 simulation.lateral 节点 (None/空 → None=禁用)"""
+    if not isinstance(raw, dict) or not raw:
+        return None
+    k_lat = raw.get('k_lat')
+    if isinstance(k_lat, list):
+        k_lat = list(k_lat)
+    return LateralConfig(
+        f_slope=raw.get('f_slope'),
+        k_lat=k_lat)
+
+
 class ConfigManager:
     """配置管理器: 加载、验证、提供配置参数"""
 
@@ -304,7 +355,9 @@ class ConfigManager:
                 hydrology_seed=s.get('hydrology_seed', 42),
                 bypass_fraction=s.get('bypass_fraction', 0.2),
                 initial_psi_cm=s.get('initial_psi_cm', INITIAL_PSI_CM),
-                event_driven=s.get('event_driven', False)
+                event_driven=s.get('event_driven', False),
+                baseflow=_parse_baseflow(s.get('baseflow')),
+                lateral=_parse_lateral(s.get('lateral'))
             )
             # v0.5.2: surface_infiltration_coeff 已废弃 (Green-Ampt 入渗替代
             # Horton), 残留配置显式报错 (breaking change 明示, 不静默忽略)
@@ -518,6 +571,51 @@ class ConfigManager:
             raise ValueError(
                 f"['simulation.bypass_fraction' 参数存在问题: "
                 f"比例 {bypass} 超出范围 (0~1), 请确认后再输入]")
+
+        # ---- v0.6.1: VIC 深层基流校验 (spec 62 Q1/Q10) ----
+        bf = self.config.simulation.baseflow
+        if bf is not None:
+            if bf.theta_c != 'auto':
+                raise ValueError(
+                    "['simulation.baseflow.theta_c' 参数存在问题: "
+                    "仅支持 \"auto\" (自动取 VGM 残余含水量 θ_r), "
+                    f"当前为 {bf.theta_c}, 请确认后再输入]")
+            if bf.D_max is not None and bf.D_max <= 0:
+                raise ValueError(
+                    f"['simulation.baseflow.D_max' 参数存在问题: "
+                    f"最大基流速率 {bf.D_max} 必须 >0, 请确认后再输入]")
+            if bf.D_s is not None and not (0.0 < bf.D_s <= 1.0):
+                raise ValueError(
+                    f"['simulation.baseflow.D_s' 参数存在问题: "
+                    f"线性比例 {bf.D_s} 超出范围 (0,1], 请确认后再输入]")
+            if bf.n_base is not None and bf.n_base <= 1.0:
+                raise ValueError(
+                    f"['simulation.baseflow.n_base' 参数存在问题: "
+                    f"非线性指数 {bf.n_base} 必须 >1, 请确认后再输入]")
+
+        # ---- v0.6.1: Darcy 侧向排水校验 (spec 62 Q1/Q10) ----
+        lat = self.config.simulation.lateral
+        if lat is not None:
+            if lat.f_slope is not None and not (0.0 < lat.f_slope < 1.0):
+                raise ValueError(
+                    f"['simulation.lateral.f_slope' 参数存在问题: "
+                    f"坡度因子 {lat.f_slope} 超出范围 (0,1), 请确认后再输入]")
+            if lat.k_lat is not None:
+                if isinstance(lat.k_lat, list):
+                    if not all(k > 0 for k in lat.k_lat):
+                        raise ValueError(
+                            "['simulation.lateral.k_lat' 参数存在问题: "
+                            "各层侧向系数必须 >0, 请确认后再输入]")
+                    n = self.config.simulation.n_layers
+                    if len(lat.k_lat) != n:
+                        raise ValueError(
+                            f"['simulation.lateral.k_lat' 参数存在问题: "
+                            f"长度 {len(lat.k_lat)} != n_layers({n}), "
+                            f"请确认后再输入]")
+                elif lat.k_lat <= 0:
+                    raise ValueError(
+                        f"['simulation.lateral.k_lat' 参数存在问题: "
+                        f"系数 {lat.k_lat} 必须 >0, 请确认后再输入]")
 
         # ---- v0.5.3: 初始基质势校验 (负值吸力) ----
         psi = self.config.simulation.initial_psi_cm

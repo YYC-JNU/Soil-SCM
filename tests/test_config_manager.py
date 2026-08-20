@@ -648,3 +648,68 @@ def test_climate_latitude_invalid_raises(tmp_path):
     with pytest.raises(ValueError, match="latitude"):
         ConfigManager(str(p))
 
+
+
+# ==================== v0.6.1: VIC 基流 + 侧向排水 config (S5, spec 62 Q10) ====================
+
+def test_baseflow_default_none(cfg):
+    """v0.6.1 (Q10): 默认无 baseflow/lateral 节点 → 禁用 (None)"""
+    assert cfg.config.simulation.baseflow is None
+    assert cfg.config.simulation.lateral is None
+
+
+def test_baseflow_parse(tmp_path):
+    """v0.6.1 (Q10): simulation.baseflow 节点解析"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text("simulation:\n  n_years: 2\n  baseflow:\n"
+                 "    D_max: 120.0\n    D_s: 0.15\n    n_base: 2.0\n"
+                 "    theta_c: auto\n", encoding="utf-8")
+    bf = ConfigManager(str(p)).config.simulation.baseflow
+    assert bf is not None
+    assert bf.D_max == 120.0
+    assert bf.D_s == 0.15
+    assert bf.n_base == 2.0
+    assert bf.theta_c == "auto"
+
+
+def test_baseflow_invalid_raises(tmp_path):
+    """v0.6.1 (Q10): baseflow 值域校验 (D_max≤0 / D_s 越界 / n_base≤1 / theta_c≠auto)"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text("simulation:\n  n_years: 2\n  baseflow:\n    D_max: -5.0\n",
+                 encoding="utf-8")
+    with pytest.raises(ValueError, match="D_max"):
+        ConfigManager(str(p))
+    p2 = tmp_path / "cfg2.yaml"
+    p2.write_text("simulation:\n  n_years: 2\n  baseflow:\n    D_s: 1.5\n",
+                  encoding="utf-8")
+    with pytest.raises(ValueError, match="D_s"):
+        ConfigManager(str(p2))
+    p3 = tmp_path / "cfg3.yaml"
+    p3.write_text("simulation:\n  n_years: 2\n  baseflow:\n    theta_c: manual\n",
+                  encoding="utf-8")
+    with pytest.raises(ValueError, match="theta_c"):
+        ConfigManager(str(p3))
+
+
+def test_lateral_parse_and_validate(tmp_path):
+    """v0.6.1 (Q10): simulation.lateral 节点解析 + k_lat 长度校验"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text("simulation:\n  n_years: 2\n  n_layers: 4\n  lateral:\n"
+                 "    f_slope: 0.10\n    k_lat: [0.04, 0.025, 0.015, 0.008]\n",
+                 encoding="utf-8")
+    lat = ConfigManager(str(p)).config.simulation.lateral
+    assert lat is not None
+    assert lat.f_slope == 0.10
+    assert lat.k_lat == [0.04, 0.025, 0.015, 0.008]
+    # k_lat 长度 ≠ n_layers → 报错
+    p2 = tmp_path / "cfg2.yaml"
+    p2.write_text("simulation:\n  n_years: 2\n  n_layers: 4\n  lateral:\n"
+                  "    k_lat: [0.04, 0.025]\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="k_lat"):
+        ConfigManager(str(p2))
+    # f_slope 越界 → 报错
+    p3 = tmp_path / "cfg3.yaml"
+    p3.write_text("simulation:\n  n_years: 2\n  lateral:\n    f_slope: 1.5\n",
+                  encoding="utf-8")
+    with pytest.raises(ValueError, match="f_slope"):
+        ConfigManager(str(p3))

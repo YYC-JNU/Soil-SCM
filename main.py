@@ -148,9 +148,31 @@ def _build_initial_layer_states(engine, reader, soil_profile, soil_info,
     return soil_states[0], soil_states, None, None
 
 
+def _baseflow_dict(baseflow_cfg):
+    """v0.6.1: BaseflowConfig → LayerCascade dict (None=禁用)"""
+    if baseflow_cfg is None:
+        return None
+    return {k: v for k, v in {
+        'D_max': baseflow_cfg.D_max,
+        'D_s': baseflow_cfg.D_s,
+        'n_base': baseflow_cfg.n_base,
+    }.items() if v is not None}
+
+
+def _lateral_dict(lateral_cfg):
+    """v0.6.1: LateralConfig → LayerCascade dict (None=禁用)"""
+    if lateral_cfg is None:
+        return None
+    return {k: v for k, v in {
+        'f_slope': lateral_cfg.f_slope,
+        'k_lat': lateral_cfg.k_lat,
+    }.items() if v is not None}
+
+
 def _apply_hydrology_month(soil_states, layer_profiles, forcing,
                            year, month, seed=42,
-                           bypass_fraction=0.2):
+                           bypass_fraction=0.2,
+                           baseflow_cfg=None, lateral_cfg=None):
     """v0.5.3: 月度水文 (ET → 入渗 → 级联, 时序 v0.5.3水分平衡闭合.txt §4.3)
 
     就地更新各层 theta (跨月滞水); 返回引擎需要的各层入渗/排水量。
@@ -184,19 +206,24 @@ def _apply_hydrology_month(soil_states, layer_profiles, forcing,
         theta_i=soil_states[0].theta)
     inf_L = inf_mm * 10000.0
     # ③ 层间级联 (θ_FC 可排水量 + K(θ) 界面通量, D3/Q2/Q11)
-    cascade = LayerCascade(layer_profiles)
-    drains, runoff_extra, _ = cascade.run(inf_L, soil_states)
+    # v0.6.1: 基流/侧向出口 (spec 62 Q1/Q2/Q4), 配置为 None 时行为与旧版一致
+    cascade = LayerCascade(layer_profiles, baseflow_cfg=baseflow_cfg,
+                           lateral_cfg=lateral_cfg)
+    drains, runoff_extra, baseflow, lateral, theta_out = \
+        cascade.run_extended(inf_L, soil_states)
     inflows = [inf_L] + drains[:-1]  # 层1=入渗, 下层=上层排水
     # v0.5.2: 大孔隙优先流 — 径流水中 β 绕过表层直通 L2 (携带原始降水化学)
     bypass_water_L = runoff_mm * 10000.0 * bypass_fraction
     return {'inflows': inflows, 'drains': drains,
+            'baseflow': baseflow, 'lateral': lateral,
             'bypass_water_L': bypass_water_L,
             'aet_mm': sum(aet_mm_list),
             'et_deficit_mm': et_deficit_mm}, runoff_mm, runoff_extra
 
 
 def _apply_hydrology_events(soil_states, layer_profiles, forcing, year, month,
-                            seed=42, bypass_fraction=0.2):
+                            seed=42, bypass_fraction=0.2,
+                            baseflow_cfg=None, lateral_cfg=None):
     """v0.6.0 事件级水文编排 (Q3/Q15, spec 55 §4)
 
     月首 ET 一次 (Feddes, 与月级一致) → 逐场:
@@ -225,11 +252,14 @@ def _apply_hydrology_events(soil_states, layer_profiles, forcing, year, month,
     events = generate_events(forcing.get('precip', 0.0), year, month, seed)
     n_ev = max(len(events), 1)
     interval_days = DAYS_IN_MONTH[month] / n_ev
-    cascade = LayerCascade(layer_profiles, n_days=interval_days)
+    cascade = LayerCascade(layer_profiles, n_days=interval_days,
+                           baseflow_cfg=baseflow_cfg, lateral_cfg=lateral_cfg)
     n = len(layer_profiles)
     ev_entries = []
     month_inflows = [0.0] * n
     month_drains = [0.0] * n
+    month_baseflow = [0.0] * n
+    month_lateral = [0.0] * n
     month_bypass = 0.0
     total_inf_mm = 0.0
     total_runoff_extra = 0.0
@@ -239,24 +269,30 @@ def _apply_hydrology_events(soil_states, layer_profiles, forcing, year, month,
             theta_s=layer_profiles[0].porosity,
             theta_i=soil_states[0].theta)
         inf_L = inf_mm * 10000.0
-        drains, runoff_extra, _ = cascade.run(inf_L, soil_states)
+        drains, runoff_extra, baseflow, lateral, theta_out = \
+            cascade.run_extended(inf_L, soil_states)
         inflows = [inf_L] + drains[:-1]
         bypass_water_L = runoff_mm * 10000.0 * bypass_fraction
         # v0.6.0: 记录每场事件后各层 θ (引擎逐场 rescale 用, 避免用月末 θ
         # 一次性浓缩 — 事件化水文/化学精确耦合)
+        # v0.6.1: 逐场记录 baseflow/lateral 出口 (Q2: 事件粒度水量出口)
         ev_entries.append({'inflows': inflows, 'drains': drains,
+                           'baseflow': baseflow, 'lateral': lateral,
                            'bypass_water_L': bypass_water_L,
                            'precip_mm': ev.precip_mm,
-                           'theta': [s.theta for s in soil_states]})
+                           'theta': theta_out})
         total_inf_mm += inf_mm
         total_runoff_extra += runoff_extra
         for i in range(n):
             month_inflows[i] += inflows[i]
             month_drains[i] += drains[i]
+            month_baseflow[i] += baseflow[i]
+            month_lateral[i] += lateral[i]
         month_bypass += bypass_water_L
     runoff_mm = forcing.get('precip', 0.0) - total_inf_mm
     hydrology = {'events': ev_entries,
                  'inflows': month_inflows, 'drains': month_drains,
+                 'baseflow': month_baseflow, 'lateral': month_lateral,
                  'bypass_water_L': month_bypass,
                  'aet_mm': sum(aet_mm_list),
                  'et_deficit_mm': et_deficit_mm}
@@ -522,12 +558,16 @@ def run_simulation(config_path: str = "config/config.yaml"):
                         hydrology, runoff_mm, runoff_extra = _apply_hydrology_events(
                             soil_states, layer_profiles, forcing, year, month,
                             cfg.simulation.hydrology_seed,
-                            bypass_fraction=cfg.simulation.bypass_fraction)
+                            bypass_fraction=cfg.simulation.bypass_fraction,
+                            baseflow_cfg=_baseflow_dict(cfg.simulation.baseflow),
+                            lateral_cfg=_lateral_dict(cfg.simulation.lateral))
                     else:
                         hydrology, runoff_mm, runoff_extra = _apply_hydrology_month(
                             soil_states, layer_profiles, forcing, year, month,
                             cfg.simulation.hydrology_seed,
-                            bypass_fraction=cfg.simulation.bypass_fraction)
+                            bypass_fraction=cfg.simulation.bypass_fraction,
+                            baseflow_cfg=_baseflow_dict(cfg.simulation.baseflow),
+                            lateral_cfg=_lateral_dict(cfg.simulation.lateral))
                     soil_states, diags = engine.run_monthly_multi_layer(
                         soil_states, forcing, action, soil_profile,
                         layer_pco2s=layer_pco2s, hydrology=hydrology)

@@ -179,4 +179,45 @@ K_OM_PCO2 = 0.0005          # OM → ΔpCO₂ 系数 (atm per g/kg): L1 30g/kg �
 PCO2_MAX = 0.05             # 层内 pCO₂ 上限钳制 (atm)
 OM_PROFILE_4LAYER = [30.0, 15.0, 8.0, 5.0]   # 4 层内置默认有机质 (g/kg, 表层富集)
 
+# ============================================================
+# v0.6.1 数值稳定性根治 (spec 62, /grilling Q1~Q10 定案, 2026-08-20)
+# ============================================================
+
+# ---- VIC 深层基流 (Q1/Q2/Q4, L4 底部替换 min(drainable, ksat_cap)) ----
+# Q_base = D_max·[D_s·S + (1−D_s)·Sⁿ], S=(θ−θ_r)/(θ_s−θ_r)
+#   - θ_c = θ_r (残余含水量): 旱季 θ_r<θ<θ_FC 有 D_s 线性项裂隙基流基线 (专家参数表)
+#   - D_max 对应完全饱和态: 华南红壤年深层渗漏 500~800 mm/yr ×35% ≈ 665/12 ≈ 55;
+#     考虑 D_max 为饱和上限取 100 mm/month (裂隙/风化壳基流工程出口, 可扫描标定)
+#   - 防抽干: Q_base = min(公式, (θ−θ_r)·d·10), 不抽到 θ_r 以下
+BASE_D_MAX = 100.0          # 最大基流速率 (mm/month)
+BASE_DS = 0.10              # 线性排水比例 (裂隙流基线, 低含水量小流量)
+BASE_N = 2.5                # 非线性指数 (红壤粘重排水非线性较强)
+BASE_THETA_C_MODE = "theta_r"   # 基流启动阈值来源: "theta_r" (专家参数表)
+
+# ---- Darcy 侧向排水 (Q1/Q2/Q4, 各层) ----
+# Q_lat = k_lat·f_slope·max(0, θ−θ_FC)·d·10 (mm/month)
+#   - 严格 FC 闸门: θ≤θ_FC 零侧向 (毛管力束缚, 华南红壤"垂直有裂隙、侧向需饱和")
+#   - f_slope = tan(β): β≈6° 华南红壤农田典型坡度 (3°~15°)
+#   - k_lat 反映各层水平导水率/裂隙/根系通道: 表层快、母质层慢
+#   - 防抽干: Q_lat = min(公式, (θ−θ_FC)·d·10)
+LAT_F_SLOPE = 0.10          # 地形坡度因子 (tan 6°, 无单位)
+LAT_K = [0.04, 0.025, 0.015, 0.008]   # 各层侧向排水系数 (1/day): L1~L4
+
+# ---- fallback 事件级局部降级 (Q5, P-NUM-3) ----
+# 单场失败保留前一正常状态跳过; 连续 N 次失败才永久降级 (事件/月级路径分开计数)
+FALLBACK_MAX_CONSECUTIVE = 3
+
+# ---- 浓度硬上限冲洗 (Q6) ----
+# 事件后某层 max 离子浓度 > C_warn → 触发基流/侧向激增 Q_flush (物理式加速出口)
+CONC_WARN = 0.5             # 离子浓度预警阈值 (mol/L)
+C_MIN = 1e-10               # 溶质比例扣除的下限保护 (mol/L, 防 PHREEQC negative activity)
+
+# ---- HX 交换酸注入 (Q7, P-E2-1 A 类) ----
+# phreeqc.dat 的 "H+ + X- = HX" 被注释禁用 (第 1362 行), 需引擎层 EXCHANGE_SPECIES 自定义注入
+#   - log_k=1.0: phreeqc.dat 注释区基准值 (弱配位缓冲), 可扫描标定
+#   - GAP_H_FRACTION: CEC 缺口三通道重分配 (HX/AlX3/NaX), 与 GAP_AL_FRACTION 并列
+HX_LOGK = 1.0               # HX 交换物种 log_k
+GAP_H_FRACTION = 0.3        # 缺口 → HX 比例 (与 GAP_AL_FRACTION 并列, 余量 NaX)
+
+
 

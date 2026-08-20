@@ -270,3 +270,158 @@ def test_rainevent_defaults():
     assert ev.date_hint is None
     events = generate_events(158.0, 2, 5, seed=42)   # year=2, month=5 (0-indexed)
     assert all(e.date_hint is not None for e in events)
+
+
+# ==================== v0.6.1 基流/侧向排水 (S1/S5, spec 62 Q1/Q2/Q4/Q10) ====================
+
+def _vgm_params(prof):
+    from src.vgm import get_vgm_params
+    return get_vgm_params(prof)
+
+
+def test_calc_baseflow_endpoints():
+    """v0.6.1 (Q1): VIC 基流纯函数端点 — θ≤θ_r→0、θ→θ_s→D_max、防抽干 min"""
+    from src.hydrology import calc_baseflow
+    prof = _surface_profile(porosity=0.55, depth=40, ksat=0.05)
+    theta_r, alpha, n = _vgm_params(prof)
+    # θ ≤ θ_r → 0
+    assert calc_baseflow(theta_r, prof) == 0.0
+    assert calc_baseflow(0.0, prof) == 0.0
+    # θ → θ_s (饱和): Q → D_max (默认 100 mm/month)
+    q_sat = calc_baseflow(prof.porosity, prof)
+    assert q_sat == pytest.approx(100.0, rel=1e-3)
+    # 防抽干: 极小 (θ−θ_r) 时 cap 限制公式值
+    q_near = calc_baseflow(theta_r + 0.001, prof)
+    assert q_near <= 0.001 * 40.0 * 10.0  # cap = 0.4 mm
+
+
+def test_calc_baseflow_config_override():
+    """v0.6.1 (Q1): baseflow_cfg 覆盖 D_max/D_s/n_base + 防抽干 cap"""
+    from src.hydrology import calc_baseflow
+    from src.vgm import get_vgm_params
+    prof = _surface_profile(porosity=0.55, depth=40, ksat=0.05)
+    theta_r, alpha, n = get_vgm_params(prof)
+    cfg = {'D_max': 200.0, 'D_s': 0.2, 'n_base': 2.0}
+    q = calc_baseflow(prof.porosity, prof, cfg)
+    # 饱和时公式=D_max=200, 但防抽干 cap=(θ_s−θ_r)·d·10 钳制 (物理上限:
+    # 一次排水不可能超过"可降至 θ_r"的水量)
+    cap = (prof.porosity - theta_r) * 40.0 * 10.0
+    assert q == pytest.approx(min(200.0, cap), rel=1e-6)
+    # 中段含水量: 公式值 < 饱和 (单调)
+    mid = 0.5 * (0.55 + 0.08)
+    q_mid = calc_baseflow(mid, prof, cfg)
+    assert 0.0 < q_mid < q
+
+
+def test_calc_baseflow_theta_r_c_theta_r():
+    """v0.6.1 (Q1): θ_c=θ_r — 旱季 θ_r<θ<θ_FC 有裂隙基流 (D_s 线性项 > 0)"""
+    from src.hydrology import calc_baseflow
+    from src.vgm import vgm_theta_from_psi
+    prof = _surface_profile(porosity=0.55, depth=40, ksat=0.05)
+    theta_r, alpha, n = _vgm_params(prof)
+    theta_fc = vgm_theta_from_psi(-100.0, prof.porosity, theta_r, alpha, n)
+    mid = 0.5 * (theta_r + theta_fc)
+    q = calc_baseflow(mid, prof)
+    assert q > 0.0
+    assert q < 100.0
+    q_fc = calc_baseflow(theta_fc, prof)
+    assert q_fc > q
+
+
+def test_calc_lateral_drainage_fc_gate_and_antidrain():
+    """v0.6.1 (Q1): 侧向严格 FC 闸门 (θ≤θ_FC→0) + 防抽干 min"""
+    from src.hydrology import calc_lateral_drainage
+    prof = _surface_profile(porosity=0.55, depth=20, ksat=76.8)
+    theta_fc = 0.4101  # 该 profile θ_FC
+    assert calc_lateral_drainage(theta_fc, prof, theta_fc=theta_fc) == 0.0
+    assert calc_lateral_drainage(0.30, prof, theta_fc=theta_fc) == 0.0
+    q = calc_lateral_drainage(0.50, prof, theta_fc=theta_fc, layer_index=0)
+    expect = 0.04 * 0.10 * (0.50 - 0.4101) * 20.0 * 10.0
+    assert q == pytest.approx(expect, rel=1e-6)
+    assert q <= (0.50 - 0.4101) * 20.0 * 10.0
+
+
+def test_cascade_run_extended_backward_compat():
+    """v0.6.1 (Q4): run() 保持 3 元组 (向后兼容), run_extended() 返回 5 元组"""
+    prof = _surface_profile(porosity=0.55, depth=20, ksat=76.8)
+    state = SoilState(theta=0.50)
+    drains, runoff, deep = LayerCascade([prof]).run(0.0, [state])
+    assert drains[0] == pytest.approx((0.50 - 0.4101) * 20.0 * 1e5, rel=1e-3)
+    assert deep == drains[0]
+    state2 = SoilState(theta=0.50)
+    d, r, b, lat, theta_out = LayerCascade([prof]).run_extended(0.0, [state2])
+    assert d[0] == pytest.approx((0.50 - 0.4101) * 20.0 * 1e5, rel=1e-3)
+    assert b == [0.0]
+    assert lat == [0.0]
+    assert theta_out == [pytest.approx(0.4101, rel=1e-3)]
+
+
+def test_cascade_run_extended_with_exports():
+    """v0.6.1 (Q1/Q2/Q4): 配置 baseflow/lateral 后出口非零 + θ 更新含出口"""
+    prof = _surface_profile(porosity=0.55, depth=20, ksat=76.8)
+    state = SoilState(theta=0.50)
+    cascade = LayerCascade(
+        [prof],
+        baseflow_cfg={'D_max': 100.0, 'D_s': 0.10, 'n_base': 2.5},
+        lateral_cfg={'f_slope': 0.10, 'k_lat': [0.04]})
+    drains, runoff, baseflow, lateral, theta_out = cascade.run_extended(0.0, [state])
+    assert drains[0] > 0.0
+    # 垂直排水后 θ=θ_FC → 侧向闸门关闭 → 0
+    assert lateral[0] == 0.0
+    # 基流: θ_c=θ_r → θ_FC>θ_r 有裂隙基流
+    assert baseflow[0] > 0.0
+    # 水量守恒: 垂直 + 基流 + 剩余水量 = 初始可排量 + θ_r 以下束缚水
+    init_water = 0.50 * 20.0 * 1e5
+    final_water = theta_out[0] * 20.0 * 1e5
+    assert init_water - final_water == pytest.approx(drains[0] + baseflow[0], rel=1e-6)
+
+
+def test_cascade_4layer_baseflow_lateral_exports():
+    """v0.6.1 (Q1/Q2): 4 层 L4 基流 + 各层侧向出口 (逐层出系统)"""
+    depths = [20.0, 20.0, 20.0, 40.0]
+    profs = [_surface_profile(porosity=0.55, depth=d, ksat=k)
+             for d, k in zip(depths, [12.0, 1.9, 0.48, 0.05])]
+    states = [SoilState(theta=0.50) for _ in range(4)]
+    init_thetas = [s.theta for s in states]  # run 前快照 (states 就地修改)
+    cascade = LayerCascade(
+        profs,
+        baseflow_cfg={'D_max': 100.0, 'D_s': 0.10, 'n_base': 2.5},
+        lateral_cfg={'f_slope': 0.10, 'k_lat': [0.04, 0.025, 0.015, 0.008]})
+    drains, runoff, baseflow, lateral, theta_out = cascade.run_extended(0.0, states)
+    assert len(drains) == 4
+    assert all(l >= 0.0 for l in lateral)
+    # 物理行为: 表层 L1 垂直排水快 → 侧向闸门关闭 (θ→θ_FC); 深层 L4 ksat 慢
+    # → θ 仍高 → 侧向/基流成为深层主出口 (正是缓解"深层盐分累积"的核心价值)
+    assert lateral[0] == 0.0
+    assert lateral[3] > 0.0
+    assert baseflow[0] == 0.0 and baseflow[1] == 0.0 and baseflow[2] == 0.0
+    assert baseflow[3] > 0.0
+    # 出口总量守恒: 系统总水量减少 = Σ侧向 + Σ基流 + L4 垂直出口 + 超饱和溢出
+    # (层间 drains 只是层间转移, 不减少系统总量; 溢出计入 runoff_extra)
+    total_out = sum(lateral) + sum(baseflow) + drains[-1] + runoff
+    init_water = sum(t0 * p.effective_depth * 1e5
+                     for t0, p in zip(init_thetas, profs))
+    final_water = sum(t * p.effective_depth * 1e5
+                      for t, p in zip(theta_out, profs))
+    assert init_water - final_water == pytest.approx(total_out, rel=1e-4)
+
+
+def test_cascade_single_layer_baseflow_works():
+    """v0.6.1 (Q10): 单层 + baseflow_cfg → 基流生效 (n_layers=1 护栏由 config 层禁用)"""
+    prof = _surface_profile(porosity=0.55, depth=20, ksat=76.8)
+    state = SoilState(theta=0.50)
+    cascade = LayerCascade(
+        [prof], baseflow_cfg={'D_max': 100.0, 'D_s': 0.10, 'n_base': 2.5})
+    d, r, b, lat, theta_out = cascade.run_extended(0.0, [state])
+    assert b[0] > 0.0
+
+
+def test_calc_lateral_drainage_layer_index():
+    """v0.6.1 (Q1): 分层 k_lat 索引 (L1 快 / L4 慢)"""
+    from src.hydrology import calc_lateral_drainage
+    prof = _surface_profile(porosity=0.55, depth=20, ksat=76.8)
+    q_l1 = calc_lateral_drainage(0.50, prof, theta_fc=0.4101, layer_index=0)
+    q_l4 = calc_lateral_drainage(0.50, prof, theta_fc=0.4101, layer_index=3)
+    assert q_l1 > q_l4
+    assert q_l1 == pytest.approx(0.04 * 0.10 * (0.50 - 0.4101) * 20.0 * 10.0)
+    assert q_l4 == pytest.approx(0.008 * 0.10 * (0.50 - 0.4101) * 20.0 * 10.0)
