@@ -339,10 +339,10 @@ def main():
                         help='跳过预平衡 (调试)')
     parser.add_argument('--tag', type=str, default='v060',
                         help='输出文件名标签 (并行分情景运行用, 默认 v060)')
-    parser.add_argument('--timeout', type=float, default=600.0,
+    parser.add_argument('--timeout', type=float, default=1800.0,
                         help='单情景子进程超时秒数 (v0.6.1: PHREEQC 卡顿防护, '
-                             '默认 600s=10min/情景; natural 30y 约 65s, '
-                             'lime 高 Ca/OH 平衡慢可达 2-3min)')
+                             '默认 1800s=30min/情景; natural 30y 约 65s, '
+                             'lime 高 Ca/OH 平衡慢实测 >10min)')
     args = parser.parse_args()
 
     csv_path = f'output/sensitivity_pH_30yr_{args.tag}.csv'
