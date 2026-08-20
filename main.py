@@ -337,6 +337,11 @@ def _extract_diagnostics_with_hydrology(soil_states, hydrology, runoff_mm,
     # v0.5.2: 大孔隙优先流 (绕过表层直通 L2) 诊断列, 可选输出
     if n > 1 and hydrology.get('bypass_water_L', 0.0) > 0:
         layer_diags[1]['bypass_drainage'] = hydrology['bypass_water_L']
+    # v0.6.1 (spec 62 Q3/Q6): 基流/侧向出口诊断列 (逐层, L/ha; 非事件/未配置
+    # 时恒 0, 列保持存在) — 侧向/基流溶质移出系统 (质量守恒记账)
+    for i in range(n):
+        layer_diags[i]['baseflow'] = hydrology.get('baseflow', [0.0] * n)[i]
+        layer_diags[i]['lateral'] = hydrology.get('lateral', [0.0] * n)[i]
     # v0.6.0 (Q14): First-Flush 峰值列 (L1 当月最大单场淋失, mmol/ha;
     # 非事件驱动路径恒 0, 列保持存在)
     if diag_objs and diag_objs[0] is not None:

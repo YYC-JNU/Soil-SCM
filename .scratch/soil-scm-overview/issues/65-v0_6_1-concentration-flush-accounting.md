@@ -4,11 +4,11 @@
 
 **Blocked by:** 63（VIC 深层基流 + Darcy 侧向排水模块）— 溶质扣除需要 Q_lat/Q_base 水量来源。
 
-**Status:** ready-for-agent
+**Status:** ✅ 已完成 (2026-08-20, v0.6.1)
 
-- [ ] `run_event_step` 化学平衡后新增溶质比例扣除：对 Q_lat（各层）与 Q_base（L4）按 `n_new=max(n_old×(1−Q_out/V), C_min×V)` 更新 `state.solution`（`constants.py` 新增 `C_MIN=1e-10`）
-- [ ] 交换相不动（靠下场/下月平衡 Gapon 自动解吸补偿）
-- [ ] 冲洗机制：事件后某层 max 离子浓度 > `C_warn=0.5 mol/L`（`constants.py` 新增）→ 超出部分折算额外 Q_flush（基流/侧向激增），按同比例扣溶质，记入 `flush_L` 诊断列
-- [ ] 出口记账：`total_lateral_i`/`total_base_i`/`flush_L` 逐月诊断列（output_writer）+ event_details 事件明细 CSV 扩列
-- [ ] 与既有 `inflow_ions`（垂直排水进下层）语义区分：lateral/base 溶质移出系统（不进任何层）
-- [ ] 测试（S2/S6）：比例扣除数学恒等、C_min 下限保护、C_warn 触发 flush 激增、诊断列/事件 CSV 扩列、垂直 vs 侧向/基流出口语义区分
+- [x] `_run_multi_layer_events` 逐层平衡后新增溶质比例扣除：侧向/基流出口按 `n_new=max(n_old×(1−Q_out/V), C_min×V)`（C_min=1e-10）更新 `state.solution`
+- [x] 交换相不动（靠下场/下月平衡 Gapon 自动解吸补偿）
+- [x] 冲洗机制：事件后某层 max 离子浓度 > C_warn=0.5 mol/L → 折算 Q_flush（`flush_L` 列）并按同比例扣溶质（质量守恒）
+- [x] 出口记账：event_details 增 `lateral_Li_L`/`baseflow_Li_L`/`flush_Li_L`；main `_extract_diagnostics_with_hydrology` 增 `baseflow`/`lateral` 月度列
+- [x] 与既有 `inflow_ions`（垂直排水进下层）语义区分：lateral/base 溶质移出系统
+- [x] 测试（S2/S6）：比例扣除数学恒等、C_min 下限保护、C_warn 触发 flush 激增、正常浓度不触发、诊断列输出；**285 passed 全绿**

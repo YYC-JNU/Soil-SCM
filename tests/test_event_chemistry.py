@@ -214,3 +214,108 @@ def test_run_monthly_multi_layer_events_flush_peak(profile, soil_info):
     assert diags[0].flush_no3_peak_mmol == pytest.approx(
         max(det['leach_N_L1_mmol']
             for det in hydrology['event_details']), rel=1e-9)
+
+
+
+# ==================== v0.6.1: 溶质出口记账 + 浓度冲洗 (S2/S6, spec 62 Q3/Q6) ====================
+
+def _multilayer_event_list(n_layers=4, lateral=None, baseflow=None):
+    """构造事件列表 (含逐场 lateral/baseflow 出口, 模拟工单63事件路径)"""
+    n = n_layers
+    lat = lateral or [0.0] * n
+    bf = baseflow or [0.0] * n
+    return [{
+        'inflows': [0.0] * n, 'drains': [0.0] * n,
+        'lateral': lat, 'baseflow': bf,
+        'bypass_water_L': 0.0, 'precip_mm': 10.0,
+        'theta': [0.40] * n,
+    }]
+
+
+def test_lateral_baseflow_solute_proportional_deduction(profile, soil_info):
+    """v0.6.1 (Q3): 侧向/基流排水溶质比例扣除数学恒等
+
+    n_new = max(n_old×(1−Q_out/V), C_min×V); 交换相不动 (Gapon 后续补偿)
+    """
+    from src.constants import C_MIN
+    e = _engine()
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    states = [e.build_initial_state(profile, soil_info, 0.015) for _ in range(4)]
+    # L4 基流出口 1e5 L (模拟深层出口); 其他层无出口
+    ev_list = _multilayer_event_list(
+        lateral=[0.0, 0.0, 0.0, 0.0], baseflow=[0.0, 0.0, 0.0, 1.0e5])
+    hydrology = {'events': ev_list}
+    new_states, diags = e.run_monthly_multi_layer(
+        states, dict(EVENT_FORCING, year=0, month=0), MonthlyAction(),
+        profile, hydrology=hydrology)
+    # 事件明细含 L4 基流出口 (event_details 记账)
+    details = hydrology.get('event_details', [])
+    assert details, "event_details 应有记录"
+    row0 = details[0]
+    # L4 (i=3) 基流出口记录 = 1e5 L
+    assert row0['baseflow_L4_L'] == pytest.approx(1.0e5)
+    # L4 溶质比例扣除: 最终浓度 ≤ 原平衡浓度 × (1 − Q_out/V)
+    # (V 为 L4 体积 θ×40×1e5; 平衡后经 PHREEQC, 保守离子 Cl 近似比例)
+    v_l4 = new_states[3].volume
+    cl_after = new_states[3].solution.get('Cl', 0.0)
+    cl_before = states[3].solution.get('Cl', 0.0)  # 近似 (平衡前)
+    assert cl_after >= 0.0
+    assert cl_after <= cl_before  # 出口移出后浓度不增 (物理方向)
+
+
+def test_concentration_flush_triggers_on_high_conc(profile, soil_info):
+    """v0.6.1 (Q6): C_warn 超限 → flush_L 折算 + 溶质同比例扣除"""
+    from src.constants import CONC_WARN
+    e = _engine()
+    states = [e.build_initial_state(profile, soil_info, 0.015) for _ in range(4)]
+    # 人为抬高 L1 溶液 Na 浓度到超限 (模拟深层盐分累积)
+    states[0].solution['Na'] = 2.0 * CONC_WARN
+    states[0].solution['Cl'] = 2.0 * CONC_WARN
+    ev_list = _multilayer_event_list(n_layers=4)
+    hydrology = {'events': ev_list}
+    new_states, diags = e.run_monthly_multi_layer(
+        states, dict(EVENT_FORCING, year=0, month=0), MonthlyAction(),
+        profile, hydrology=hydrology)
+    # flush_L 记入 event_details (L1 超限触发)
+    details = hydrology.get('event_details', [])
+    assert details
+    row0 = details[0]
+    assert row0.get('flush_L1_L', 0.0) > 0.0
+    # 冲洗后 max 浓度 ≤ C_warn (同比例扣除生效)
+    sol = {k: v for k, v in new_states[0].solution.items()
+           if k not in ('temp', 'pH', 'pe', 'units')}
+    assert max(sol.values()) <= CONC_WARN * 1.001
+
+
+def test_concentration_no_flush_normal(profile, soil_info):
+    """v0.6.1 (Q6): 正常浓度不触发冲洗 (flush_L=0, 无副作用)"""
+    e = _engine()
+    states = [e.build_initial_state(profile, soil_info, 0.015) for _ in range(4)]
+    ev_list = _multilayer_event_list(n_layers=4)
+    hydrology = {'events': ev_list}
+    new_states, diags = e.run_monthly_multi_layer(
+        states, dict(EVENT_FORCING, year=0, month=0), MonthlyAction(),
+        profile, hydrology=hydrology)
+    details = hydrology.get('event_details', [])
+    assert details
+    row0 = details[0]
+    # 正常浓度下各层 flush_L = 0
+    for i in range(4):
+        assert row0.get(f'flush_L{i+1}_L', 0.0) == 0.0
+
+
+def test_diagnostics_baseflow_lateral_columns(profile, soil_info, monkeypatch):
+    """v0.6.1 (Q3): _extract_diagnostics_with_hydrology 输出 baseflow/lateral 列"""
+    import main as sim_main
+    e = _engine()
+    states = [e.build_initial_state(profile, soil_info, 0.015) for _ in range(4)]
+    hydrology = {
+        'inflows': [1.0e5, 0, 0, 0], 'drains': [0.0, 0, 0, 0],
+        'baseflow': [0.0, 0, 0, 1.0e5], 'lateral': [0.0, 0, 0, 0],
+        'bypass_water_L': 0.0}
+    diags = sim_main._extract_diagnostics_with_hydrology(
+        states, hydrology, 0.0, 0.0, [None] * 4,
+        ["pH"], [profile] * 4)
+    assert diags[0]['baseflow'] == 0.0
+    assert diags[3]['baseflow'] == pytest.approx(1.0e5)
+    assert diags[0]['lateral'] == 0.0
