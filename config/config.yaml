@@ -67,6 +67,19 @@ simulation:
     inert_anion: An
     nh4_exchange: true
 
+  # ---- v0.7.x (工单77): REACTION 电荷平衡修复 (charge pairing) ----
+  # 2026-08-21 探针实测: PHREEQC REACTION 注入裸阳离子 (NH4+ 置换 Ca+2/
+  # 钾肥 K+/镁肥 Mg+2) 因电荷平衡被迫产生 OH- → 伪碱化 (Ca+2 343 → pH 9.28,
+  # 复现 v0.7.0 fertilizer 8~11); 裸 H+ 注入 (硝化产酸/companion acid)
+  # 不酸化。修复: 净电荷注入按等当量伴随保守惰性阴离子 (默认 An-, 复用
+  # companion inert_anion 机制) — 电中性盐进入, 盐基/酸效应由化学平衡产生。
+  #   enable: 总开关 (默认 true; false=回退裸注入, 对照实验)
+  #   anion: 保守惰性阴离子元素名 (默认 An; 物种=名+'-'; 不碰 phreeqc.dat;
+  #      companion 启用时与其 inert_anion 共享)
+  charge_pairing:
+    enable: true
+    anion: An
+
   # ---- v0.7.0: 原生矿物风化集总注入 (D2, spec 69 工单73) ----
   # 集总风化碱度 REACTION 注入 (不用 KINETICS, v0.3.0 证伪 KINETICS 冻结矿物
   # 切断 L2 回补→加速 AlX3 耗尽):

@@ -121,6 +121,7 @@ python main.py --config /path/to/your_config.yaml   # 任意自定义配置文�
 | `pre_equilibration_max_steps` | `60` | 预平衡最大迭代步数 |
 | `nitrification_k1` | `1.0` | 尿素水解速率（/月，`0~1`；1.0=当月全水解） |
 | `nitrification_k2` | `0.4` | 硝化速率（/月，`0~1`；NH₄⁺→NO₃⁻ 每月比例，酸性红壤硝化受抑取保守量级） |
+| `charge_pairing` | 启用 | **REACTION 电荷平衡**（v0.7.x）：净电荷注入（硝化产酸/置换盐基/钾镁肥/companion acid）按等当量伴随保守惰性阴离子 `An⁻`，消除裸注入的电荷伪碱化；`enable: false` 回退裸注入（对照） |
 
 ### 4.2 `soil_data`：土壤数据
 
