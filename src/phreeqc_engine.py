@@ -224,7 +224,8 @@ class PhreeqcEngine:
                  nitrification_k2: float = NITRIFICATION_K2,
                  initial_psi_cm: float = INITIAL_PSI_CM,
                  companion_cfg=None,
-                 weathering_cfg=None):
+                 weathering_cfg=None,
+                 charge_pairing_cfg=None):
         """
         参数:
             database: PHREEQC 热力学数据库
@@ -284,6 +285,24 @@ class PhreeqcEngine:
         self.weathering_cfg = weathering_cfg
         self.weathering_enabled = bool(weathering_cfg is not None
                                        and weathering_cfg.enable)
+        # v0.7.x (工单77): REACTION 电荷平衡修复 — 裸阳离子/酸注入在 PHREEQC
+        # 中因电荷平衡产生伪碱化/不酸化 (2026-08-21 探针实测, Ca+2 343 →
+        # pH 9.28 复现 v0.7.0 fertilizer 8~11)。默认启用 (None → 默认配置);
+        # 显式 enable=False 回退裸注入 (对照)。
+        self.charge_pairing_cfg = charge_pairing_cfg
+        self.charge_pairing_enabled = bool(
+            charge_pairing_cfg is None or charge_pairing_cfg.enable)
+        # 配对阴离子名: companion 启用时与其 inert_anion 共享 (单一定义);
+        # 否则用 charge_pairing.anion (默认 An)
+        if companion_cfg is not None and companion_cfg.enable:
+            self.pair_anion = companion_cfg.inert_anion
+        elif charge_pairing_cfg is not None:
+            self.pair_anion = charge_pairing_cfg.anion
+        else:
+            self.pair_anion = "An"
+        # An- 物种定义条件: companion 或 charge pairing 任一启用
+        self.anion_defined = bool(self.companion_enabled
+                                  or self.charge_pairing_enabled)
 
         # ---- 初始化后端 (v0.1.3: 仅官方引擎, phreeqpython 已废弃) ----
         if OFFICIAL_PHREEQC_AVAILABLE:
@@ -1249,8 +1268,10 @@ class PhreeqcEngine:
         #  进平衡前 REACTION 注入 → 电荷平衡驱动交换相盐基解吸, Gapon 自洽)
         # 元素名 = companion.inert_anion (PHREEQC 要求单元素名, 默认 An),
         # 物种 = 元素名 + '-'; gfW 取 Cl 原子量 (保守示踪)
-        if self.companion_enabled:
-            an_name = self.companion_cfg.inert_anion
+        # v0.7.x (工单77): 条件从 companion_enabled 解耦 — charge pairing
+        # (电荷平衡修复) 独立启用时同样需要该保守阴离子定义
+        if self.anion_defined:
+            an_name = self.pair_anion
             an_species = f"{an_name}-"
             lines.append("SOLUTION_MASTER_SPECIES")
             lines.append(
@@ -1426,6 +1447,12 @@ class PhreeqcEngine:
         h_mol = n_reaction.get('H+', 0.0)
         if h_mol > 0:
             reaction_lines.append(f"  H+     {h_mol:.6e}  # 硝化产酸")
+            # v0.7.x (工单77): 电荷配对 — 裸 H+ 注入在 PHREEQC 中因电荷
+            # 平衡不酸化 (2026-08-21 实测); 伴随等当量保守惰性阴离子后
+            # 真实酸化 (模拟 HNO3 的伴随阴离子, N 不进溶液故用 An- 替代)
+            if self.charge_pairing_enabled:
+                reaction_lines.append(
+                    f"  {self.pair_anion}- {h_mol:.6e}  # 电荷配对")
 
         # v0.7.0 (工单72, spec 69): NH4+ 等效置换 — 施肥月尿素水解后, NH4+
         # 假想占据交换位点并置换等当量盐基到溶液 (按交换相电荷占比注入),
@@ -1443,8 +1470,17 @@ class PhreeqcEngine:
             ratios = exchange_base_ratios(state.exchange)
             if ratios:
                 for ion, frac in ratios.items():
+                    eq = nh4_eq * frac
                     reaction_lines.append(
-                        f"  {ion} {nh4_eq * frac:.6e}  # NH4+ 置换")
+                        f"  {ion} {eq:.6e}  # NH4+ 置换")
+                    # v0.7.x (工单77): 电荷配对 — 裸阳离子注入在 PHREEQC 中
+                    # 因电荷平衡产生 OH- 伪碱化 (Ca+2 343 → pH 9.28, 复现
+                    # v0.7.0 fertilizer 碱化); 伴随等当量 An- 使置换盐基以
+                    # 电中性盐形式进入 (盐基效应由化学平衡/淋失决定)
+                    if self.charge_pairing_enabled:
+                        charge = 2 if ion in ('Ca+2', 'Mg+2') else 1
+                        reaction_lines.append(
+                            f"  {self.pair_anion}- {charge * eq:.6e}  # 电荷配对")
 
         # v0.7.0 (工单71, spec 69): 伴随淋失注入 — 随 NO3- 移出的盐基当量
         # E_loss (工单70 事件循环计算, 经 forcing 传入; 进平衡前注)
@@ -1459,6 +1495,10 @@ class PhreeqcEngine:
         if companion_acid_eq > 0:
             reaction_lines.append(
                 f"  H+     {companion_acid_eq:.6e}  # 伴随淋失酸化")
+            # v0.7.x (工单77): 电荷配对 (同硝化产酸)
+            if self.charge_pairing_enabled:
+                reaction_lines.append(
+                    f"  {self.pair_anion}- {companion_acid_eq:.6e}  # 电荷配对")
 
         # v0.7.0 (工单73, spec 69): 矿物风化集总碱度注入 (D2, 不用 KINETICS)
         # 逐月注入风化碱度: Ca:Mg:K 按电荷占比 (默认 5:3:2) + HCO3- 等当量;
@@ -1492,6 +1532,13 @@ class PhreeqcEngine:
                 if abs(mol) > 1e-12:
                     reaction_lines.append(
                         f"  {sp:<8} {mol:.6e}  # 预平衡锚定")
+                    # v0.7.x (工单77): 电荷配对 — 锚定注入为阳离子 (Ca/Mg/K/
+                    # Na/Al), 裸注入会使预平衡 pH 伪碱化; 正注入伴随等当量 An-
+                    if (self.charge_pairing_enabled and mol > 0.0):
+                        charge = 3 if sp == 'Al+3' else (
+                            2 if sp in ('Ca+2', 'Mg+2') else 1)
+                        reaction_lines.append(
+                            f"  {self.pair_anion}- {charge * mol:.6e}  # 电荷配对")
 
         if action.apply_fertilizer:
             # 磷肥 (P2O5 → 2 H2PO4-)
@@ -1502,10 +1549,18 @@ class PhreeqcEngine:
             k_mol = action.k2o_amount * 1000.0 / 94.20 * 2.0
             if k_mol > 0:
                 reaction_lines.append(f"  K+     {k_mol:.6e}  # 钾肥")
+                # v0.7.x (工单77): 电荷配对 (裸 K+ 轻度碱化, K+191 → pH 6.03)
+                if self.charge_pairing_enabled:
+                    reaction_lines.append(
+                        f"  {self.pair_anion}- {k_mol:.6e}  # 电荷配对")
             # 镁肥 (MgO → Mg+2)
             mg_mol = action.mgo_amount * 1000.0 / 40.30
             if mg_mol > 0:
                 reaction_lines.append(f"  Mg+2   {mg_mol:.6e}  # 镁肥")
+                # v0.7.x (工单77): 电荷配对 (裸 Mg+2 轻度碱化)
+                if self.charge_pairing_enabled:
+                    reaction_lines.append(
+                        f"  {self.pair_anion}- {2.0 * mg_mol:.6e}  # 电荷配对")
             # 硫酸锌 (ZnSO4 → Zn+2 + SO4-2)
             zn_mol = action.znso4_amount * 1000.0 / 161.47
             if zn_mol > 0:
@@ -1534,9 +1589,11 @@ class PhreeqcEngine:
         # L4 (Q1=A): 氮库存为模型状态 (不注入溶液), 无需 N(-3)/N(5) 回填;
         # 总 N 保留供层间平流 (inflow_ions)
         # v0.7.0 (工单71): companion 启用时 totals 追加惰性阴离子元素 (审计)
+        # v0.7.x (工单77): 条件扩展 — charge pairing 启用时同样需要 (配对
+        # 注入的 An- 进入溶液成分/淋失循环, 需在 totals 输出供回填审计)
         totals_line = "  -totals Ca Mg K Na Al P Zn Cl C S N Si F"
-        if self.companion_enabled:
-            totals_line += f" {self.companion_cfg.inert_anion}"
+        if self.anion_defined:
+            totals_line += f" {self.pair_anion}"
         lines.append(totals_line)
         lines.append("  -molalities CaX2 MgX2 KX NaX AlX3 HX X-")
         # L2: 输出矿物相摩尔量 (供矿物演化回填, 修复 Al 耗尽根因)

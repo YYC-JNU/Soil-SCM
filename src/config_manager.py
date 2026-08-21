@@ -122,6 +122,24 @@ class WeatheringConfig:
 
 
 @dataclass
+class ChargePairingConfig:
+    """v0.7.x (工单77): REACTION 电荷平衡修复配置
+
+    2026-08-21 探针实测: PHREEQC REACTION 注入裸阳离子 (无伴随阴离子)
+    因电荷平衡被迫产生 OH- → 伪碱化 (Ca+2 343 → pH 9.28, 复现 v0.7.0
+    fertilizer 8~11); 裸 H+ 注入不酸化 (H 以非 H+ 形态存在)。修复:
+    净电荷注入按等当量伴随保守惰性阴离子 (默认 An-, 复用 companion
+    inert_anion 机制, 独立开关):
+      - enable: 总开关 (默认 true; false=回退裸注入, 对照实验)
+      - anion: 保守惰性阴离子元素名 (PHREEQC 要求单元素名, 物种 = 名+'-';
+        默认 An; 引擎输入头段自定义 SOLUTION_MASTER_SPECIES, 不碰 phreeqc.dat;
+        companion 启用时与其 inert_anion 共享物种名)
+    """
+    enable: bool = True
+    anion: str = "An"
+
+
+@dataclass
 class SimulationConfig:
     """模拟控制参数"""
     n_years: int = 50
@@ -146,6 +164,7 @@ class SimulationConfig:
     lateral: Optional[LateralConfig] = None     # v0.6.1: Darcy 侧向排水 (None=禁用)
     companion: CompanionConfig = field(default_factory=CompanionConfig)  # v0.7.0: NO3- 伴随淋失
     weathering: WeatheringConfig = field(default_factory=WeatheringConfig)  # v0.7.0: 矿物风化集总注入
+    charge_pairing: ChargePairingConfig = field(default_factory=ChargePairingConfig)  # v0.7.x: REACTION 电荷平衡
 
 
 @dataclass
@@ -358,6 +377,19 @@ def _parse_weathering(raw):
         degrade_minerals=list(degrade))
 
 
+def _parse_charge_pairing(raw):
+    """v0.7.x (工单77): 解析 simulation.charge_pairing 节点 (缺省 → 默认启用)
+
+    与 companion 不同: charge pairing 缺省 = 启用 (裸注入电荷不平衡是
+    施肥碱化根因, 2026-08-21 实测), 显式 enable: false 才回退裸注入。
+    """
+    if not isinstance(raw, dict):
+        raw = {}
+    return ChargePairingConfig(
+        enable=raw.get('enable', True),
+        anion=raw.get('anion', 'An'))
+
+
 class ConfigManager:
     """配置管理器: 加载、验证、提供配置参数"""
 
@@ -437,7 +469,8 @@ class ConfigManager:
                 baseflow=_parse_baseflow(s.get('baseflow')),
                 lateral=_parse_lateral(s.get('lateral')),
                 companion=_parse_companion(s.get('companion')),
-                weathering=_parse_weathering(s.get('weathering'))
+                weathering=_parse_weathering(s.get('weathering')),
+                charge_pairing=_parse_charge_pairing(s.get('charge_pairing'))
             )
             # v0.5.2: surface_infiltration_coeff 已废弃 (Green-Ampt 入渗替代
             # Horton), 残留配置显式报错 (breaking change 明示, 不静默忽略)

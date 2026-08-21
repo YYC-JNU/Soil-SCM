@@ -349,6 +349,9 @@ def main():
     parser.add_argument('--degrade', nargs='+', default=[],
                         help='v0.7.0 工单76: 从平衡相降级的矿物 '
                              '(如 gibbsite kaolinite; 空=不降级)')
+    parser.add_argument('--no-charge-pairing', action='store_true',
+                        help='v0.7.x 工单77: 关闭 REACTION 电荷配对 '
+                             '(回退裸注入, 对照实验)')
     args = parser.parse_args()
 
     csv_path = f'output/sensitivity_pH_30yr_{args.tag}.csv'
@@ -379,16 +382,21 @@ def main():
     # v0.6.1: 每个情景独立引擎 (避免降级污染) + 子进程超时护栏
     # v0.7.0 工单76: 接入 companion (D3 伴随淋失, 默认启用) + weathering
     # (D2 风化注入, --weather-rate>0 才启用, 方向带调优)
-    from src.config_manager import CompanionConfig, WeatheringConfig
+    from src.config_manager import (CompanionConfig, WeatheringConfig,
+                                    ChargePairingConfig)
     wth_cfg = None
     if args.weather_rate > 0:
         wth_cfg = WeatheringConfig(enable=True,
                                    rate_molc_ha_yr=args.weather_rate,
                                    degrade_minerals=list(args.degrade))
+    # v0.7.x 工单77: REACTION 电荷配对默认启用 (--no-charge-pairing 关闭对照)
+    pair_cfg = (ChargePairingConfig(enable=False)
+                if args.no_charge_pairing else ChargePairingConfig(enable=True))
     engine_cfg = dict(database='phreeqc.dat', mode='phreeqc',
                       initial_psi_cm=-100.0,
                       companion_cfg=CompanionConfig(enable=True),
-                      weathering_cfg=wth_cfg)
+                      weathering_cfg=wth_cfg,
+                      charge_pairing_cfg=pair_cfg)
     reader_paths = ('data/soil_survey.csv', 'data/exchangeable_ions.csv')
     for key in targets:
         rows = existing.get(key, [])

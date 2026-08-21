@@ -135,6 +135,14 @@ simulation:
     nh4_exchange: true           # NH4+ 等效置换 (施肥月水解后按交换占比注入盐基,
                                  #   模拟 NH4+ 置换盐基→盐基淋失酸化通道; 氮不进溶液)
 
+  # v0.7.x (工单77): REACTION 电荷平衡修复 (charge pairing)
+  #   2026-08-21 实测: 裸阳离子注入 (NH4+ 置换 Ca+2 等) 因 PHREEQC 电荷平衡
+  #   伪碱化 (Ca+2 343 → pH 9.28, 复现 v0.7.0 fertilizer 8~11); 裸 H+ 注入
+  #   不酸化。修复: 净电荷注入伴随等当量保守惰性阴离子 (默认 An-) — 电中性盐。
+  charge_pairing:
+    enable: true                 # 总开关 (默认 true; false=回退裸注入, 对照)
+    anion: An                    # 保守惰性阴离子元素名 (物种=名+'-'; companion 启用时共享)
+
   # v0.7.0: 原生矿物风化集总注入 (D2, spec 69 工单73)
   #   集总风化碱度 REACTION 注入替代瞬时平衡相"无限供碱" (矿物闪蒸);
   #   不用 KINETICS (v0.3.0 证伪: 冻结矿物切断 L2 回补→加速 AlX3 耗尽)

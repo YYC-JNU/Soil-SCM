@@ -278,8 +278,15 @@ def test_companion_acid_reaction_injection(profile, soil_info):
 
 
 def test_companion_disabled_no_anion_species(profile, soil_info):
-    """v0.7.0 (工单71): companion 关闭 → 无惰性阴离子物种定义 (回退 v0.6.1)"""
-    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    """v0.7.0 (工单71): companion 关闭 → 无伴随淋失注入 (回退 v0.6.1)
+
+    v0.7.x (工单77) 更新: charge pairing (REACTION 电荷平衡修复) 默认独立
+    启用, 故 An- 物种定义仍在 (供配对注入); 但 companion 专属的伴随淋失
+    (E_loss/companion_anion_eq) 不注入。
+    """
+    from src.config_manager import ChargePairingConfig
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc",
+                      charge_pairing_cfg=ChargePairingConfig(enable=False))
     state = e.build_initial_state(profile, soil_info, 0.015)
     inp = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile)
     assert "SOLUTION_MASTER_SPECIES" not in inp
