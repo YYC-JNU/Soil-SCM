@@ -778,11 +778,14 @@ def test_companion_nh4_exchange_default_and_parse(tmp_path):
 # ==================== v0.7.0 (spec 69, 工单73): weathering 配置 ====================
 
 def test_weathering_default_disabled(cfg):
-    """v0.7.0 (工单73): 默认 weathering 不启用 (D2 为可回退增强)"""
+    """v0.7.0 (工单73/76): config.yaml 默认启用 weathering (调优 D);
+    SimulationConfig 构造器默认关闭 (引擎层回退护栏)"""
+    from src.config_manager import SimulationConfig
     wth = cfg.config.simulation.weathering
     assert wth is not None
-    assert wth.enable is False
+    assert wth.enable is True          # config.yaml 调优 D 后默认启用
     assert wth.rate_molc_ha_yr == 500.0
+    assert SimulationConfig().weathering.enable is False  # 构造默认关闭
 
 
 def test_weathering_parse(tmp_path):
