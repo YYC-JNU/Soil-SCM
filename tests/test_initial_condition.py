@@ -150,9 +150,9 @@ def test_hx_in_phreeqc_input(profile, soil_info):
 
 
 def test_hx_logk_constant():
-    """v0.6.1 (Q7): HX_LOGK 常量 = 3.0 (2026-08-20 扫描标定: 平衡 pH 4.99 收敛观测)"""
+    """v0.6.1 (Q7): HX_LOGK 常量 (v0.7.0 工单76 调优 B: 3.0→2.8 减弱锁酸)"""
     from src.constants import HX_LOGK
-    assert HX_LOGK == 3.0
+    assert HX_LOGK == 2.8
 
 
 def test_calc_exchange_site_total_includes_hx(profile, soil_info):

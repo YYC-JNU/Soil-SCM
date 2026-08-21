@@ -76,15 +76,16 @@ simulation:
   #   activation_energy_kJ: Arrhenius 活化能 (增温风化↑ → 气候敏感性传导)
   #   degrade_minerals: 从 EQUILIBRIUM_PHASES 降级的矿物 (消除"矿物闪蒸"
   #     无限供碱, 疑点1 机制A; 状态保留保 Al 循环通道)
-  # 默认不启用 (enable: false 保持 v0.6.1 基线; 工单 76 验收按方向带启用调参)
+  # 工单76 调优 D (2026-08-21): 启用风化注入 + 降级 gibbsite/kaolinite
+  # (消除"矿物闪蒸"无限供碱, 对治 natural 碱化; 保 Al 循环通道)
   weathering:
-    enable: false
+    enable: true
     rate_molc_ha_yr: 500.0
     ca_frac: 0.5
     mg_frac: 0.3
     k_frac: 0.2
     activation_energy_kJ: 40.0
-    degrade_minerals: []
+    degrade_minerals: [gibbsite, kaolinite]
 
   # ---- L6 (v0.4.0): 逐层参数覆盖 (真实剖面约束, 仅 n_layers>1 时生效) ----
   layer_depths: null                 # 每层厚度 (cm), 长度必须 = n_layers; null=等分兜底; 每层 effective_depth 由此派生
