@@ -135,6 +135,18 @@ simulation:
     nh4_exchange: true           # NH4+ 等效置换 (施肥月水解后按交换占比注入盐基,
                                  #   模拟 NH4+ 置换盐基→盐基淋失酸化通道; 氮不进溶液)
 
+  # v0.7.0: 原生矿物风化集总注入 (D2, spec 69 工单73)
+  #   集总风化碱度 REACTION 注入替代瞬时平衡相"无限供碱" (矿物闪蒸);
+  #   不用 KINETICS (v0.3.0 证伪: 冻结矿物切断 L2 回补→加速 AlX3 耗尽)
+  weathering:
+    enable: false                # 总开关 (默认关保持 v0.6.1 基线; 工单76 验收启用调参)
+    rate_molc_ha_yr: 500.0       # 每层年均风化碱度 molc/ha/yr (扫描 100/500/1000)
+    ca_frac: 0.5                 # 盐基电荷占比 Ca (5:3:2)
+    mg_frac: 0.3                 # 盐基电荷占比 Mg
+    k_frac: 0.2                  # 盐基电荷占比 K
+    activation_energy_kJ: 40.0   # Arrhenius 活化能 (增温风化↑, 气候敏感性传导)
+    degrade_minerals: []         # 从平衡相降级的矿物 (如 [gibbsite, kaolinite, illite])
+
 # ─────────────────────────────────────────────
 # soil_data: 土壤数据配置
 # ─────────────────────────────────────────────

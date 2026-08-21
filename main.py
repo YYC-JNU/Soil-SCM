@@ -486,7 +486,8 @@ def run_simulation(config_path: str = "config/config.yaml"):
                            nitrification_k1=getattr(cfg.simulation, 'nitrification_k1', 1.0),
                            nitrification_k2=getattr(cfg.simulation, 'nitrification_k2', 0.4),
                            initial_psi_cm=getattr(cfg.simulation, 'initial_psi_cm', -100.0),
-                           companion_cfg=getattr(cfg.simulation, 'companion', None))
+                           companion_cfg=getattr(cfg.simulation, 'companion', None),
+                           weathering_cfg=getattr(cfg.simulation, 'weathering', None))
 
     # 构建初始状态 (initial_pCO2 已在阶段 4 中计算)
     # WF2/Q1: 多分层时构建 List[SoilState]; L6 (v0.4.0): 支持逐层参数覆盖
