@@ -85,13 +85,14 @@ class CompanionConfig:
       - enable: 总开关
       - bypass_no3_carry: bypass 优先流携带 L1 池 NO₃⁻ 直通 L2 (工单70)
       - bs_high/bs_low: 分级注入阈值 % (工单71 CompAn 分级用)
-      - inert_anion: 惰性阴离子物种名 (工单71)
+      - inert_anion: 惰性阴离子元素名 (PHREEQC 要求单元素名, 物种 = 名+'-';
+        默认 An; 引擎输入头段自定义 SOLUTION_MASTER_SPECIES, 不碰 phreeqc.dat)
     """
     enable: bool = True
     bypass_no3_carry: bool = True
     bs_high: float = 30.0
     bs_low: float = 10.0
-    inert_anion: str = "CompAn"
+    inert_anion: str = "An"
 
 
 @dataclass
@@ -311,7 +312,7 @@ def _parse_companion(raw):
         bypass_no3_carry=raw.get('bypass_no3_carry', True),
         bs_high=raw.get('bs_high', 30.0),
         bs_low=raw.get('bs_low', 10.0),
-        inert_anion=raw.get('inert_anion', 'CompAn'))
+        inert_anion=raw.get('inert_anion', 'An'))
 
 
 class ConfigManager:

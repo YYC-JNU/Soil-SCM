@@ -128,9 +128,10 @@ simulation:
   companion:
     enable: true                 # 总开关 (false=完全回退 v0.6.1; D3 为 v0.7.0 主线, 默认启用)
     bypass_no3_carry: true       # bypass 优先流携带 L1 池 NO3- 直通 L2 (默认模式)
-    bs_high: 30.0                # 分级注入高阈值 % (BS≥high 全量注入 CompAn)
+    bs_high: 30.0                # 分级注入高阈值 % (BS≥high 全量注入惰性阴离子)
     bs_low: 10.0                 # 分级注入低阈值 % (BS<low 切换酸化注入 H+)
-    inert_anion: CompAn          # 惰性阴离子物种名 (引擎输入头段自定义, 不碰 phreeqc.dat)
+    inert_anion: An              # 惰性阴离子元素名 (PHREEQC 要求单元素名, 物种=名+'-',
+                                 #   引擎输入头段自定义, 不碰 phreeqc.dat)
 
 # ─────────────────────────────────────────────
 # soil_data: 土壤数据配置
