@@ -68,7 +68,7 @@ simulation:
 
 ### 实测诊断结果（2026-08-17，4 年 4 层，fertilizer）
 
-![L6 逐层参数覆盖诊断：真实剖面 vs 等参基线](images/L6_layer_overrides_good_bad.png)
+![L6 逐层参数覆盖诊断：真实剖面 vs 等参基线](../images/L6_layer_overrides_good_bad.png)
 
 | 层 | 等参基线耗尽 | 真实剖面耗尽 | 影响 |
 |----|-------------|-------------|------|

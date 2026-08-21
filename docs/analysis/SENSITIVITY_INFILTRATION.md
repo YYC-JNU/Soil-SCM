@@ -20,7 +20,7 @@
 
 ## 2. 结果
 
-![表层入渗率敏感性散点图](images/sensitivity_infiltration_scatter.png)
+![表层入渗率敏感性散点图](../images/sensitivity_infiltration_scatter.png)
 
 | 入渗系数 | L1 (0-20cm) | L2 (20-40cm) | L3 (40-60cm) | L4 (60-100cm) |
 |---------|-------------|--------------|--------------|---------------|
@@ -65,3 +65,7 @@
 - **L2~L4 的 2.70 恒定**：强酸稳态可能由矿物缓冲（非晶质 Al(OH)₃ 溶解下限）锚定。
 - **单层不适用**：n_layers=1 无此水文（precip_infiltration 路径）。
 - **seed 敏感性**：结果依赖 seed=42 的降雨序列；换 seed 会改变阈值精确位置但结构（阶梯穿透）应保持。
+
+> **⚠️ 2026-08-21 核对注记（v0.5.1 实验快照）**：
+> - 扫描参数 `simulation.surface_infiltration_coeff` 已于 **v0.5.2 废弃**（Green-Ampt 物理入渗替代，残留配置显式报错）；本文"入渗系数"即该废弃参数，不可再用于当前版本。
+> - 文中 L3/L4 Ksat（7.2 / 2.9 cm/day）与"Ksat 递减 76.8→2.9"为 **v0.5.1 时期剖面默认**；v0.5.2 起 `DEFAULT_4LAYER_KSAT=[12.0, 1.9, 0.48, 0.05]`（层间排水）+ `DEFAULT_KSAT_SURFACE=7.2`（地表入渗）。

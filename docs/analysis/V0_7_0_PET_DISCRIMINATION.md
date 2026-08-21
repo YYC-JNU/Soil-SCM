@@ -3,7 +3,7 @@
 > **文档编号**：V0_7_0_PET_DISCRIMINATION
 > **创建日期**：2026-08-21（v0.7.0 工单 75）
 > **依据**：`tools/verify_v0_7_0_pet_discrimination.py` + `output/pet_discrimination_v070.csv` + v0.6.0 复盘 §2.3（假设 A/B/C 定义）
-> **基线**：v0.7.0（companion 默认启用、weathering 默认关），事件驱动 4 层 natural，无预平衡（与 `verify_v0_6_1_numerical.py` 官方口径一致）
+> **基线**：v0.7.0（companion 默认启用；weathering 关——sensitivity 口径，`config/config.yaml` 中默认 `enable: true`，见工单 76 调优 D），事件驱动 4 层 natural，无预平衡（与 `verify_v0_6_1_numerical.py` 官方口径一致）
 
 ---
 
@@ -54,3 +54,5 @@
 - HX log_k 再标定（3.0→2.5~2.8）→ 恢复盐基缓冲的时间尺度（与 E1 预平衡收敛联动重锚定）
 - 判别脚本扩展：单层对比（隔离水文/化学）+ PET 400~800 低段（验证 v0.6.0 的"Na 盐累积酸化"分支是否在 HX 标定后重现）
 - 预平衡对 HX 收敛的影响评估（本实验观察到预平衡在 HX 重分配下可能挂起——HX 增长循环数值边界，需 KNOBS 调优或 HX 注入钳制）
+
+> **⚠️ 2026-08-21 核对注记**：本实验基线 HX `log_k=3.0`（工单 75 当时值）；**工单 76 调优 B 已改为 2.8**（`src/constants.py` `HX_LOGK=2.8`，科学解读区间 2.5~2.8 内偏保守），与本节结论 3 及遗留建议方向一致；v0.7.x 工单 81 继续微调 + E1 重锚定。

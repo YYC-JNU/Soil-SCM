@@ -1,4 +1,4 @@
-# v0.7.0 工单76 验收报告（30 年 8 情景全链路摸底）
+# v0.7.0 工单76 验收报告（5 年短程方向带摸底 + 机制证据；30 年全量被 PHREEQC 卡顿阻塞，见 §四）
 
 > **文档编号**：V0_7_0_ACCEPTANCE
 > **创建日期**：2026-08-21
@@ -10,7 +10,8 @@
 ## 一、验收口径
 
 - **sensitivity 口径**（`tools/sensitivity_pH_30yr.py`，无降水化学，预平衡 60 步）——与 v0.6.1 官方 30 年验证一致
-- 配置：companion 启用（D3+NH₄⁺）、HX log_k=2.8（调优 B）、weathering 默认关（调优 D 因 30 年 PHREEQC 卡顿暂缓，见 §四）
+- 配置（验收口径 = sensitivity 脚本默认）：companion 启用（D3+NH₄⁺）、HX log_k=2.8（调优 B）、weathering 关（`--weather-rate 0`；调优 D 因 30 年 PHREEQC 卡顿暂缓，见 §四）
+  - ⚠️ **注意区分**：`config/config.yaml` 中 weathering 默认 `enable: true`（工单 76 调优 D：rate=500 + degrade `[gibbsite, kaolinite]`，commit `55acec8`），与 sensitivity 验收口径（关）不同；引擎层 `SimulationConfig` 构造器默认仍关闭（`test_weathering_default_disabled` 护栏）
 
 ## 二、方向带摸底结果（5 年短程 + 机制证据）
 

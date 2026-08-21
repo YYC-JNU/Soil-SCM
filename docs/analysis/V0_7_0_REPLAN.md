@@ -77,5 +77,5 @@ v0.7.0（地球化学重构，本版）→ v0.7.x（长期）
 
 ## 五、进行中事项（v0.6.1 发布后）
 
-- **30 年 8 情景全量验证**（后台 PID 73284，`output/sensitivity_v061.log/csv`）：完成后 `--plot` 出图 + 撰写 `SENSITIVITY_PH_30YR_V061.md`
+- ~~**30 年 8 情景全量验证**（后台 PID 73284，`output/sensitivity_v061.log/csv`）~~ **✅ 已完成**：`--plot` 出图 + 撰写 `docs/analysis/SENSITIVITY_PH_30YR_V061.md`（2026-08-20）；8 情景 30 年全程 `phreeqc_ok=1` 无降级
 - **HANDOFF 已更新**到 v0.6.1（本文档为依据）
