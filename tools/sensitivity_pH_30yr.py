@@ -337,12 +337,18 @@ def main():
                         help='预平衡最大步数 (默认 60)')
     parser.add_argument('--skip-pre', action='store_true',
                         help='跳过预平衡 (调试)')
-    parser.add_argument('--tag', type=str, default='v060',
-                        help='输出文件名标签 (并行分情景运行用, 默认 v060)')
+    parser.add_argument('--tag', type=str, default='v070',
+                        help='输出文件名标签 (并行分情景运行用, 默认 v070)')
     parser.add_argument('--timeout', type=float, default=1800.0,
                         help='单情景子进程超时秒数 (v0.6.1: PHREEQC 卡顿防护, '
                              '默认 1800s=30min/情景; natural 30y 约 65s, '
                              'lime 高 Ca/OH 平衡慢实测 >10min)')
+    parser.add_argument('--weather-rate', type=float, default=0.0,
+                        help='v0.7.0 工单76: 风化注入速率 molc/ha/yr/层 '
+                             '(0=关闭, 500=默认; 方向带调优扫描)')
+    parser.add_argument('--degrade', nargs='+', default=[],
+                        help='v0.7.0 工单76: 从平衡相降级的矿物 '
+                             '(如 gibbsite kaolinite; 空=不降级)')
     args = parser.parse_args()
 
     csv_path = f'output/sensitivity_pH_30yr_{args.tag}.csv'
@@ -371,8 +377,18 @@ def main():
 
     existing = load_existing(csv_path)
     # v0.6.1: 每个情景独立引擎 (避免降级污染) + 子进程超时护栏
+    # v0.7.0 工单76: 接入 companion (D3 伴随淋失, 默认启用) + weathering
+    # (D2 风化注入, --weather-rate>0 才启用, 方向带调优)
+    from src.config_manager import CompanionConfig, WeatheringConfig
+    wth_cfg = None
+    if args.weather_rate > 0:
+        wth_cfg = WeatheringConfig(enable=True,
+                                   rate_molc_ha_yr=args.weather_rate,
+                                   degrade_minerals=list(args.degrade))
     engine_cfg = dict(database='phreeqc.dat', mode='phreeqc',
-                      initial_psi_cm=-100.0)
+                      initial_psi_cm=-100.0,
+                      companion_cfg=CompanionConfig(enable=True),
+                      weathering_cfg=wth_cfg)
     reader_paths = ('data/soil_survey.csv', 'data/exchangeable_ions.csv')
     for key in targets:
         rows = existing.get(key, [])

@@ -530,9 +530,9 @@ def test_nh4_exchange_event_accounting(profile, soil_info):
         states, dict(EVENT_FORCING, precip=10.0), act, profile,
         hydrology=hydrology)
     row0 = hydrology['event_details'][0]
-    # L1 施肥月: 置换当量 = 12 kg N × N_MOL_PER_KG_N × k1
+    # L1 施肥月: 置换当量 = 12 kg N × N_MOL_PER_KG_N × k1 × k2 (硝化量, 调优 A)
     assert row0['nh4_exchanged_eq_L1'] == pytest.approx(
-        12.0 * 1000.0 / 14.007, rel=1e-3)
+        12.0 * 1000.0 / 14.007 * 0.4, rel=1e-3)
     # L2~L4: 无置换 (硝化仅 L1)
     assert row0['nh4_exchanged_eq_L2'] == 0.0
     # PHREEQC 平衡成功 (含置换注入 + 硝化产酸)

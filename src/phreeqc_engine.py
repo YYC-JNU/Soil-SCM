@@ -963,7 +963,8 @@ class PhreeqcEngine:
                 row[f'inert_eq_L{i+1}'] = companion_anion_eq
                 row[f'acid_eq_L{i+1}'] = companion_acid_eq
                 pending_e_loss[i] = leach_no3_i
-                # 记账列 (v0.7.0, 工单72): NH4+ 置换当量 (施肥月 L1 水解量×k1)
+                # 记账列 (v0.7.0, 工单72): NH4+ 置换当量 (施肥月 L1 硝化量×k2;
+                # 工单76 调优 A: 从水解量改为硝化量, 抑制盐基过量注入)
                 nh4_exchanged_i = 0.0
                 if (self.companion_enabled
                         and self.companion_cfg.nh4_exchange
@@ -971,7 +972,7 @@ class PhreeqcEngine:
                         and getattr(action, 'apply_fertilizer', False)):
                     nh4_exchanged_i = (
                         getattr(action, 'n_amount', 0.0) * N_MOL_PER_KG_N
-                        * self.nitrification_k1)
+                        * self.nitrification_k1 * self.nitrification_k2)
                 row[f'nh4_exchanged_eq_L{i+1}'] = nh4_exchanged_i
                 # ---- v0.6.1 (spec 62 Q3/Q6): 溶质随水移出系统 + 浓度冲洗 ----
                 # 侧向/基流排水带走溶质: n_new = max(n_old×(1−Q_out/V), C_min×V)
@@ -1431,10 +1432,14 @@ class PhreeqcEngine:
         # 模拟农业"NH4+ 置换盐基→盐基淋失"酸化通道 (不触碰 L4 Q3=A:
         # NH4+/NO3- 不进溶液; 与硝化 H+ 同场平衡, 净效应 H+ 主导酸化)。
         # 再吸附由平衡自然回吸 (Q20 决策), NH4X_virtual 记账列观测净效率。
+        # 工单76 调优 A (2026-08-21): 置换当量从水解量 (857 eq/次) 改为
+        # 硝化量 (343 eq/次) — 实测 857 使肥料盐基流净 +180 eq/次 (置换注入
+        # 的盐基被 Gapon 回吞 > 产酸), 施肥仍碱化; 仅对实际参与硝化的 N
+        # 置换, 物理更准且抑制盐基过量注入。
         if (self.companion_enabled and self.companion_cfg.nh4_exchange
                 and not forcing.get('skip_nitrification')
-                and n_reaction and n_reaction.get('hydrolyzed', 0.0) > 0):
-            nh4_eq = n_reaction['hydrolyzed']
+                and n_reaction and n_reaction.get('nitrified', 0.0) > 0):
+            nh4_eq = n_reaction['nitrified']
             ratios = exchange_base_ratios(state.exchange)
             if ratios:
                 for ion, frac in ratios.items():

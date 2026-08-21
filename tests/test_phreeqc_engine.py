@@ -306,8 +306,8 @@ def test_exchange_base_ratios_pure_function():
 def test_nh4_exchange_reaction_injection(profile, soil_info):
     """v0.7.0 (工单72): 施肥月水解后 REACTION 注入置换盐基 (按交换占比)
 
-    hydrolyzed = 12 kg N → 857 mol (k1=1.0 全水解); 置换当量 = 857 eq,
-    按当前交换相 Ca:Mg:K:Na 电荷占比分布注入 (与硝化 H+ 同场平衡)。
+    工单76 调优 A: 置换当量 = 硝化量 (12 kg N → 856.8 mol × k1=1.0 × k2=0.4
+    = 342.7 mol), 非全水解量 (857) — 抑制 Gapon 回吞导致的盐基过量注入。
     """
     import re
     e = _companion_engine()
@@ -317,11 +317,12 @@ def test_nh4_exchange_reaction_injection(profile, soil_info):
     # 4 种盐基各注入一行 (Ca+2/Mg+2/K+/Na+)
     assert inp.count("# NH4+ 置换") == 4
     assert "Ca+2" in inp
-    # 注入总量 = 水解当量 (12 kg N → 856.8 mol, k1=1.0)
+    # 注入总量 = 硝化当量 (12 kg N → 856.8 mol × k1 × k2)
     vals = [float(m) for m in re.findall(
         r"\s([\d.eE+-]+)\s+# NH4\+ 置换", inp)]
     assert len(vals) == 4
-    assert sum(vals) == pytest.approx(12.0 * 1000.0 / 14.007, rel=1e-3)
+    assert sum(vals) == pytest.approx(
+        12.0 * 1000.0 / 14.007 * 1.0 * 0.4, rel=1e-3)
 
 
 # ==================== v0.7.0 (spec 69, 工单73): D2 矿物风化集总注入 ====================
