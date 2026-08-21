@@ -284,5 +284,5 @@ Q10 子时间步、Q11 输出变量、Q14 anatase、Q17 包结构、Q19 魔法�
 | **v0.5.3** | 2026-08-19 | **VGM 水分特征 + Feddes ET/Oudin PET + LayerCascade 重构 + OM 矿化产 CO₂**（θ 状态迁移）；**234 测试全绿** |
 | **v0.6.0** | 2026-08-19 | **化学子步长拆分**（事件驱动 PHREEQC + 体积-θ 耦合 Q8b + First-Flush 峰值列/事件明细 + Hargreaves calc_pet 分派）；**259 测试全绿** |
 | **v0.6.1** | 2026-08-20 | **数值稳定性根治 + HX 交换酸注入**（VIC 深层基流 D_max=100 + Darcy 侧向排水 k_lat 分层 + fallback 连续 N=3 局部降级 + 浓度冲洗 C_warn=0.5 + HX **log_k=3.0 扫描标定**/GAP_H=0.3 + water_salt_balance 闭合审计）；3 年验收 PASS（无降级 + L4 max 0.109<1 + E1 5.0）；**289 测试全绿**；spec 62 + 工单 63~68（/grilling Q1~Q10 定案）|
-| **v0.7.0** | 规划 | **地球化学重构**（NO₃⁻ 示踪池 + 伴随阳离子淋失 D3 → 原生矿物风化动力学化 D2 集总注入 + k_om 重参数化 + E2 PET 机制判别 + 30 年 8 情景全链路验收）；工单 69~73（/grilling Q11+ 待定案），详见 `docs/analysis/V0_7_0_REPLAN.md` |
+| **v0.7.0** | 2026-08-21 | **地球化学重构**（NO₃⁻ 示踪池+水库串联淋失 D3 + 惰性阴离子 An⁻ 伴随淋失分级注入 + NH₄⁺ 等效置换 + D2 矿物风化集总注入（Arrhenius+降级）+ k_om E3 标定 + E2 PET 判别）；工单 70~75 ✅ + 调优 A+B+D（NH₄⁺量级 343 / HX log_k 2.8 / weathering 500+降级）；**324 测试全绿**；spec 69 + 工单 70~76（/grilling Q11~Q22 定案）；方向带验收进行中（natural 5.34 持平、fertilizer 8.1 从 11.4 改善未达 <4.0、lime 未回落）——30 年 8 情景全量 + `verify_v0_7_0_acceptance.py` |
 
