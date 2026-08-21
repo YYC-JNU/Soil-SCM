@@ -509,3 +509,46 @@ def test_companion_injection_across_events(profile, soil_info):
     base_after = (ex.get('CaX2', 0.0) * 2 + ex.get('MgX2', 0.0) * 2
                   + ex.get('KX', 0.0) + ex.get('NaX', 0.0))
     assert base_after >= 0.0
+
+
+# ==================== v0.7.0 (spec 69, 工单72): NH4+ 置换事件记账 ====================
+
+def test_nh4_exchange_event_accounting(profile, soil_info):
+    """v0.7.0 (工单72): 施肥月事件级 nh4_exchanged_eq 记账列 (PHREEQC 实测)
+
+    施肥月 L1: 置换当量 = 水解量×k1 (12 kg N → 856.8 mol); L2~L4 无置换;
+    PHREEQC 平衡成功 (置换注入 + 硝化产酸同场, 净效应 H+ 主导酸化)。
+    """
+    e = _engine_companion()
+    states = [e.build_initial_state(profile, soil_info, 0.015) for _ in range(4)]
+    act = MonthlyAction(apply_fertilizer=True, n_amount=12.0)
+    ev1 = {'inflows': [1.0e5, 0.0, 0.0, 0.0], 'drains': [0.0] * 4,
+           'lateral': [0.0] * 4, 'baseflow': [0.0] * 4,
+           'bypass_water_L': 0.0, 'precip_mm': 10.0, 'theta': [0.4] * 4}
+    hydrology = {'events': [ev1], 'aet_mm': 0.0, 'et_deficit_mm': 0.0}
+    new_states, _ = e.run_monthly_multi_layer(
+        states, dict(EVENT_FORCING, precip=10.0), act, profile,
+        hydrology=hydrology)
+    row0 = hydrology['event_details'][0]
+    # L1 施肥月: 置换当量 = 12 kg N × N_MOL_PER_KG_N × k1
+    assert row0['nh4_exchanged_eq_L1'] == pytest.approx(
+        12.0 * 1000.0 / 14.007, rel=1e-3)
+    # L2~L4: 无置换 (硝化仅 L1)
+    assert row0['nh4_exchanged_eq_L2'] == 0.0
+    # PHREEQC 平衡成功 (含置换注入 + 硝化产酸)
+    assert new_states[0].ph > 0.0
+
+
+def test_nh4x_virtual_monthly_column(profile, soil_info):
+    """v0.7.0 (工单72): 月度诊断 NH4X_virtual 列 = NH4+ 库存 (假设占位)"""
+    import main as sim_main
+    e = _engine_companion()
+    states = [e.build_initial_state(profile, soil_info, 0.015) for _ in range(2)]
+    states[0].n_nh4 = 500.0   # NH4 库存 = 假设占据的交换位点 (1:1 eq)
+    hydrology = {'inflows': [0.0, 0.0], 'drains': [0.0, 0.0],
+                 'baseflow': [0.0, 0.0], 'lateral': [0.0, 0.0],
+                 'bypass_water_L': 0.0}
+    diags = sim_main._extract_diagnostics_with_hydrology(
+        states, hydrology, 0.0, 0.0, [None] * 2, ["pH"], [profile] * 2)
+    assert diags[0]['NH4X_virtual'] == pytest.approx(500.0)
+    assert diags[1]['NH4X_virtual'] == pytest.approx(0.0)

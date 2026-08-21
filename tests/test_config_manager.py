@@ -753,3 +753,23 @@ def test_companion_invalid_type_raises(tmp_path):
                  "    enable: \"yes\"\n", encoding="utf-8")
     with pytest.raises(ValueError, match="enable"):
         ConfigManager(str(p))
+
+
+def test_companion_nh4_exchange_default_and_parse(tmp_path):
+    """v0.7.0 (工单72): nh4_exchange 默认 true (NH4+ 等效置换为 v0.7.0 主线)"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text("simulation:\n  n_years: 2\n", encoding="utf-8")
+    comp = ConfigManager(str(p)).config.simulation.companion
+    assert comp.nh4_exchange is True
+    # 可显式关闭 (回退: 仅 D3 无 NH4+ 置换)
+    p2 = tmp_path / "cfg2.yaml"
+    p2.write_text("simulation:\n  n_years: 2\n  companion:\n"
+                  "    nh4_exchange: false\n", encoding="utf-8")
+    comp2 = ConfigManager(str(p2)).config.simulation.companion
+    assert comp2.nh4_exchange is False
+    # 非布尔 → 报错
+    p3 = tmp_path / "cfg3.yaml"
+    p3.write_text("simulation:\n  n_years: 2\n  companion:\n"
+                  "    nh4_exchange: 1\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="nh4_exchange"):
+        ConfigManager(str(p3))

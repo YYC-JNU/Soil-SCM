@@ -143,6 +143,24 @@ def calc_base_saturation(exchange: dict) -> float:
     return base_charge / total * 100.0 if total > 0 else 0.0
 
 
+def exchange_base_ratios(exchange: dict) -> Dict[str, float]:
+    """v0.7.0 (工单72): 交换相 Ca:Mg:K:Na 电荷占比 (置换注入配比)
+
+    按电荷量占比返回 {离子: 比例}, Σ=1; 空交换相 → 空 dict。
+    CaX2/MgX2 为二价 (×2), KX/NaX 为一价。物理依据: NH4+ 置换盐基时
+    各盐基按其在交换相中的电荷占比被置换出来 (简化近似, Gapon 加权留 v0.7.x)。
+    """
+    ca = exchange.get('CaX2', 0.0) * 2.0
+    mg = exchange.get('MgX2', 0.0) * 2.0
+    k = exchange.get('KX', 0.0)
+    na = exchange.get('NaX', 0.0)
+    total = ca + mg + k + na
+    if total <= 0.0:
+        return {}
+    return {'Ca+2': ca / total, 'Mg+2': mg / total,
+            'K+': k / total, 'Na+': na / total}
+
+
 @dataclass
 class DiagnosticOutput:
     """诊断输出"""
@@ -923,6 +941,16 @@ class PhreeqcEngine:
                 row[f'inert_eq_L{i+1}'] = companion_anion_eq
                 row[f'acid_eq_L{i+1}'] = companion_acid_eq
                 pending_e_loss[i] = leach_no3_i
+                # 记账列 (v0.7.0, 工单72): NH4+ 置换当量 (施肥月 L1 水解量×k1)
+                nh4_exchanged_i = 0.0
+                if (self.companion_enabled
+                        and self.companion_cfg.nh4_exchange
+                        and ev_idx == 0 and i == 0
+                        and getattr(action, 'apply_fertilizer', False)):
+                    nh4_exchanged_i = (
+                        getattr(action, 'n_amount', 0.0) * N_MOL_PER_KG_N
+                        * self.nitrification_k1)
+                row[f'nh4_exchanged_eq_L{i+1}'] = nh4_exchanged_i
                 # ---- v0.6.1 (spec 62 Q3/Q6): 溶质随水移出系统 + 浓度冲洗 ----
                 # 侧向/基流排水带走溶质: n_new = max(n_old×(1−Q_out/V), C_min×V)
                 # (工单 63 已提供逐场 lateral/baseflow 水量出口, ev['lateral']/
@@ -1368,6 +1396,21 @@ class PhreeqcEngine:
         h_mol = n_reaction.get('H+', 0.0)
         if h_mol > 0:
             reaction_lines.append(f"  H+     {h_mol:.6e}  # 硝化产酸")
+
+        # v0.7.0 (工单72, spec 69): NH4+ 等效置换 — 施肥月尿素水解后, NH4+
+        # 假想占据交换位点并置换等当量盐基到溶液 (按交换相电荷占比注入),
+        # 模拟农业"NH4+ 置换盐基→盐基淋失"酸化通道 (不触碰 L4 Q3=A:
+        # NH4+/NO3- 不进溶液; 与硝化 H+ 同场平衡, 净效应 H+ 主导酸化)。
+        # 再吸附由平衡自然回吸 (Q20 决策), NH4X_virtual 记账列观测净效率。
+        if (self.companion_enabled and self.companion_cfg.nh4_exchange
+                and not forcing.get('skip_nitrification')
+                and n_reaction and n_reaction.get('hydrolyzed', 0.0) > 0):
+            nh4_eq = n_reaction['hydrolyzed']
+            ratios = exchange_base_ratios(state.exchange)
+            if ratios:
+                for ion, frac in ratios.items():
+                    reaction_lines.append(
+                        f"  {ion} {nh4_eq * frac:.6e}  # NH4+ 置换")
 
         # v0.7.0 (工单71, spec 69): 伴随淋失注入 — 随 NO3- 移出的盐基当量
         # E_loss (工单70 事件循环计算, 经 forcing 传入; 进平衡前注)

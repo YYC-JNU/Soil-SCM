@@ -284,3 +284,61 @@ def test_companion_disabled_no_anion_species(profile, soil_info):
     inp = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile)
     assert "SOLUTION_MASTER_SPECIES" not in inp
     assert "An-" not in inp
+
+
+# ==================== v0.7.0 (spec 69, 工单72): NH4+ 等效置换 ====================
+
+def test_exchange_base_ratios_pure_function():
+    """v0.7.0 (工单72): 交换相 Ca:Mg:K:Na 电荷占比计算 (置换注入配比)"""
+    from src.phreeqc_engine import exchange_base_ratios
+    ratios = exchange_base_ratios(
+        {'CaX2': 5.4e4, 'MgX2': 2.7e4, 'KX': 1.8e4, 'NaX': 6.2e4})
+    total = 5.4e4 * 2 + 2.7e4 * 2 + 1.8e4 + 6.2e4
+    assert ratios['Ca+2'] == pytest.approx(5.4e4 * 2 / total)
+    assert ratios['Mg+2'] == pytest.approx(2.7e4 * 2 / total)
+    assert ratios['K+'] == pytest.approx(1.8e4 / total)
+    assert ratios['Na+'] == pytest.approx(6.2e4 / total)
+    assert sum(ratios.values()) == pytest.approx(1.0)
+    # 空交换 → 空 dict
+    assert exchange_base_ratios({}) == {}
+
+
+def test_nh4_exchange_reaction_injection(profile, soil_info):
+    """v0.7.0 (工单72): 施肥月水解后 REACTION 注入置换盐基 (按交换占比)
+
+    hydrolyzed = 12 kg N → 857 mol (k1=1.0 全水解); 置换当量 = 857 eq,
+    按当前交换相 Ca:Mg:K:Na 电荷占比分布注入 (与硝化 H+ 同场平衡)。
+    """
+    import re
+    e = _companion_engine()
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    act = MonthlyAction(apply_fertilizer=True, n_amount=12.0)
+    inp = e._build_phreeqc_input(state, FORCING, act, profile)
+    # 4 种盐基各注入一行 (Ca+2/Mg+2/K+/Na+)
+    assert inp.count("# NH4+ 置换") == 4
+    assert "Ca+2" in inp
+    # 注入总量 = 水解当量 (12 kg N → 856.8 mol, k1=1.0)
+    vals = [float(m) for m in re.findall(
+        r"\s([\d.eE+-]+)\s+# NH4\+ 置换", inp)]
+    assert len(vals) == 4
+    assert sum(vals) == pytest.approx(12.0 * 1000.0 / 14.007, rel=1e-3)
+
+
+def test_nh4_exchange_skipped_without_fertilizer(profile, soil_info):
+    """v0.7.0 (工单72): 无施肥 → 无置换注入"""
+    e = _companion_engine()
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    inp = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile)
+    assert "# NH4+ 置换" not in inp
+
+
+def test_nh4_exchange_skipped_when_disabled(profile, soil_info):
+    """v0.7.0 (工单72): nh4_exchange=false → 无置换注入 (D3 单独生效)"""
+    from src.config_manager import CompanionConfig
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc",
+                      companion_cfg=CompanionConfig(enable=True,
+                                                    nh4_exchange=False))
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    act = MonthlyAction(apply_fertilizer=True, n_amount=12.0)
+    inp = e._build_phreeqc_input(state, FORCING, act, profile)
+    assert "# NH4+ 置换" not in inp
