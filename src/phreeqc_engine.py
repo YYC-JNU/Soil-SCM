@@ -693,7 +693,7 @@ class PhreeqcEngine:
         返回空 dict 表示全部交换离子观测偏差已收敛 (<10%)。
         """
         injection = {}
-        # v0.6.1 (spec 62 Q7): HX 为标定酸库 (log_k=3.0 扫描标定, 平衡量由
+        # v0.6.1 (spec 62 Q7): HX 为标定酸库 (log_k=HX_LOGK 扫描标定, 平衡量由
         # 热力学决定, 非观测锚定输入) — 不纳入观测锚定; 盐基阳离子
         # (Ca/Mg/K/Na/Al) 为观测交换离子, 锚定保持 <10% 偏差。
         # v0.6.1 防冲垮: 偏差 >50% 的离子跳过锚定 — 明显非物理偏差 (如 HX
@@ -1306,7 +1306,7 @@ class PhreeqcEngine:
         # v0.6.1 (spec 62 Q7): 注入 HX 交换物种 — phreeqc.dat 的
         # "H+ + X- = HX" 被注释禁用 (第 1362 行), 必须自定义注入使模型可识别
         # 交换性 H 酸库 (exch_h→HX, initial_condition.build_exchange)。
-        # log_k=HX_LOGK (默认 1.0, phreeqc.dat 注释区基准值, 可标定)
+        # log_k=HX_LOGK (v0.6.1 扫描标定 3.0 → v0.7.0 工单76 调优 B 改 2.8, 可标定)
         lines.append("EXCHANGE_SPECIES")
         lines.append("H+ + X- = HX")
         lines.append(f"    -log_k {HX_LOGK}")
