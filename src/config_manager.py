@@ -78,6 +78,23 @@ class LateralConfig:
 
 
 @dataclass
+class CompanionConfig:
+    """v0.7.0 (spec 69, 工单70): NO₃⁻ 伴随淋失配置
+
+    D3 为 v0.7.0 主线功能, 默认启用; enable: false → 完全回退 v0.6.1。
+      - enable: 总开关
+      - bypass_no3_carry: bypass 优先流携带 L1 池 NO₃⁻ 直通 L2 (工单70)
+      - bs_high/bs_low: 分级注入阈值 % (工单71 CompAn 分级用)
+      - inert_anion: 惰性阴离子物种名 (工单71)
+    """
+    enable: bool = True
+    bypass_no3_carry: bool = True
+    bs_high: float = 30.0
+    bs_low: float = 10.0
+    inert_anion: str = "CompAn"
+
+
+@dataclass
 class SimulationConfig:
     """模拟控制参数"""
     n_years: int = 50
@@ -100,6 +117,7 @@ class SimulationConfig:
     event_driven: bool = False                  # v0.6.0: 事件驱动化学 (子步长拆分, 逐场 PHREEQC), 默认关
     baseflow: Optional[BaseflowConfig] = None   # v0.6.1: VIC 深层基流 (None=禁用)
     lateral: Optional[LateralConfig] = None     # v0.6.1: Darcy 侧向排水 (None=禁用)
+    companion: CompanionConfig = field(default_factory=CompanionConfig)  # v0.7.0: NO3- 伴随淋失
 
 
 @dataclass
@@ -280,6 +298,22 @@ def _parse_lateral(raw):
         k_lat=k_lat)
 
 
+def _parse_companion(raw):
+    """v0.7.0: 解析 simulation.companion 节点 (缺省/空 → 默认启用)
+
+    与 baseflow/lateral 不同: companion 缺省 = 启用 (D3 为 v0.7.0 主线),
+    显式 enable: false 才完全回退 v0.6.1。
+    """
+    if not isinstance(raw, dict):
+        raw = {}
+    return CompanionConfig(
+        enable=raw.get('enable', True),
+        bypass_no3_carry=raw.get('bypass_no3_carry', True),
+        bs_high=raw.get('bs_high', 30.0),
+        bs_low=raw.get('bs_low', 10.0),
+        inert_anion=raw.get('inert_anion', 'CompAn'))
+
+
 class ConfigManager:
     """配置管理器: 加载、验证、提供配置参数"""
 
@@ -357,7 +391,8 @@ class ConfigManager:
                 initial_psi_cm=s.get('initial_psi_cm', INITIAL_PSI_CM),
                 event_driven=s.get('event_driven', False),
                 baseflow=_parse_baseflow(s.get('baseflow')),
-                lateral=_parse_lateral(s.get('lateral'))
+                lateral=_parse_lateral(s.get('lateral')),
+                companion=_parse_companion(s.get('companion'))
             )
             # v0.5.2: surface_infiltration_coeff 已废弃 (Green-Ampt 入渗替代
             # Horton), 残留配置显式报错 (breaking change 明示, 不静默忽略)
@@ -616,6 +651,23 @@ class ConfigManager:
                     raise ValueError(
                         f"['simulation.lateral.k_lat' 参数存在问题: "
                         f"系数 {lat.k_lat} 必须 >0, 请确认后再输入]")
+
+        # ---- v0.7.0 (spec 69, 工单70): NO3- 伴随淋失配置校验 ----
+        comp = self.config.simulation.companion
+        if comp is not None:
+            if not isinstance(comp.enable, bool):
+                raise ValueError(
+                    "['simulation.companion.enable' 参数存在问题: "
+                    "必须为布尔 (true/false), 请确认后再输入]")
+            if not isinstance(comp.bypass_no3_carry, bool):
+                raise ValueError(
+                    "['simulation.companion.bypass_no3_carry' 参数存在问题: "
+                    "必须为布尔 (true/false), 请确认后再输入]")
+            if not (0.0 < comp.bs_low < comp.bs_high <= 100.0):
+                raise ValueError(
+                    "['simulation.companion.bs_high/bs_low' 参数存在问题: "
+                    f"阈值需满足 0 < bs_low({comp.bs_low}) < "
+                    f"bs_high({comp.bs_high}) ≤ 100, 请确认后再输入]")
 
         # ---- v0.5.3: 初始基质势校验 (负值吸力) ----
         psi = self.config.simulation.initial_psi_cm

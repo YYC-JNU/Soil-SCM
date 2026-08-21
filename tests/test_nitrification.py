@@ -46,7 +46,8 @@ def test_urea_hydrolysis_full_with_k1_one():
     r = advance_nitrification(s, MonthlyAction(), k1=1.0, k2=0.0)
     assert s.n_urea == pytest.approx(0.0)
     assert s.n_nh4 == pytest.approx(100.0)
-    assert r == {'H+': 0.0}
+    # v0.7.0 (工单70): 返回契约扩展键, 按键断言 (见 test_nitrification_syncs_no3_pool)
+    assert r['H+'] == pytest.approx(0.0)
 
 
 def test_nitrification_k2_ratio():
@@ -164,3 +165,53 @@ def test_engine_default_rates_from_constants(profile, soil_info, monkeypatch):
     e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
     assert e.nitrification_k1 == NITRIFICATION_K1
     assert e.nitrification_k2 == NITRIFICATION_K2
+
+
+# ==================== v0.7.0 (spec 69, 工单70): NO3- 示踪池 ====================
+
+def test_soil_state_has_no3_pool_field():
+    """v0.7.0 (工单70): SoilState 含 n_no3_pool 淋失示踪池 (mol N)"""
+    s = SoilState()
+    assert hasattr(s, 'n_no3_pool')
+    assert s.n_no3_pool == 0.0
+
+
+def test_nitrification_syncs_no3_pool():
+    """v0.7.0 (工单70): 硝化量同步进入 n_no3_pool; n_no3 累计器向后兼容
+
+    n_no3_pool 是淋失示踪池 (供逐场 lost_no3 消费), n_no3 是累计诊断器,
+    两者由 advance_nitrification 同步推进。
+    """
+    s = SoilState(n_urea=100.0, n_nh4=0.0, n_no3=0.0)
+    r = advance_nitrification(s, MonthlyAction(), k1=1.0, k2=0.4)
+    # 尿素 100 → 全水解 100 NH4+ → 40% 硝化 40 NO3-
+    assert s.n_no3_pool == pytest.approx(40.0)   # 同步入池
+    assert s.n_no3 == pytest.approx(40.0)        # 累计器不变
+    assert r['H+'] == pytest.approx(80.0)        # 产酸键不变
+    # 返回契约扩展 (spec 69): nitrified/hydrolyzed 键供 D3/NH4+ 消费
+    assert r['nitrified'] == pytest.approx(40.0)
+    assert r['hydrolyzed'] == pytest.approx(100.0)
+
+
+def test_calc_no3_leaching_reservoir_series():
+    """v0.7.0 (工单70): 水库串联淋失 lost = min(pool×Q/V_pool, pool)"""
+    from src.phreeqc_engine import calc_no3_leaching
+    # 正常: 50% 水量 → 50% 池淋失
+    assert calc_no3_leaching(100.0, 50.0, 100.0) == pytest.approx(50.0)
+    # 全量水量 → 全量池淋失 (cap at pool)
+    assert calc_no3_leaching(100.0, 100.0, 100.0) == pytest.approx(100.0)
+    # 超量水量 (frac>1, 干旱期 V_pool 极小) → cap at pool (防抽干)
+    assert calc_no3_leaching(100.0, 500.0, 100.0) == pytest.approx(100.0)
+
+
+def test_calc_no3_leaching_pool_never_negative():
+    """v0.7.0 (工单70): 全局不变量 — 淋失 ≤ 池存量 (pool ≥ 0)"""
+    from src.phreeqc_engine import calc_no3_leaching
+    # 空池 / 无排水 → 0
+    assert calc_no3_leaching(0.0, 50.0, 100.0) == 0.0
+    assert calc_no3_leaching(100.0, 0.0, 100.0) == 0.0
+    # 极端组合 (干旱期 V_pool 极小、Q/V 远超 1): 恒有 0 ≤ lost ≤ pool
+    for pool, q, v in [(50.0, 10.0, 1.0), (1e-6, 1e5, 1e-9),
+                       (123.4, 999.9, 1.0), (0.0, 1e5, 1e-9)]:
+        lost = calc_no3_leaching(pool, q, v)
+        assert 0.0 <= lost <= pool + 1e-12

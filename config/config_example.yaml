@@ -122,6 +122,16 @@ simulation:
   layer_overrides: []            # L6: 逐层参数覆盖密集列表 (长度=n_layers)；[]=无覆盖
   initial_psi_cm: -100           # v0.5.3: 初始基质势 cm (负值, 田间持水量; VGM 正算初始 θ)
 
+  # v0.7.0: NO3- 伴随淋失 (D3, spec 69 工单70/71)
+  #   硝态氮逐层示踪池 + 水库串联淋失 + bypass 携带 L1 池直通 L2;
+  #   随 NO3- 移出的盐基当量经 REACTION 注入惰性阴离子 CompAn (分级 inert/hybrid/acid)
+  companion:
+    enable: true                 # 总开关 (false=完全回退 v0.6.1; D3 为 v0.7.0 主线, 默认启用)
+    bypass_no3_carry: true       # bypass 优先流携带 L1 池 NO3- 直通 L2 (默认模式)
+    bs_high: 30.0                # 分级注入高阈值 % (BS≥high 全量注入 CompAn)
+    bs_low: 10.0                 # 分级注入低阈值 % (BS<low 切换酸化注入 H+)
+    inert_anion: CompAn          # 惰性阴离子物种名 (引擎输入头段自定义, 不碰 phreeqc.dat)
+
 # ─────────────────────────────────────────────
 # soil_data: 土壤数据配置
 # ─────────────────────────────────────────────

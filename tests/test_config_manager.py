@@ -713,3 +713,43 @@ def test_lateral_parse_and_validate(tmp_path):
                   encoding="utf-8")
     with pytest.raises(ValueError, match="f_slope"):
         ConfigManager(str(p3))
+
+
+# ==================== v0.7.0 (spec 69, 工单70): companion 配置 ====================
+
+def test_companion_default_enabled(cfg):
+    """v0.7.0 (工单70): 默认 companion 启用 (D3 为 v0.7.0 主线, enable:false 才回退)"""
+    comp = cfg.config.simulation.companion
+    assert comp is not None
+    assert comp.enable is True
+    assert comp.bypass_no3_carry is True
+
+
+def test_companion_parse(tmp_path):
+    """v0.7.0 (工单70): simulation.companion 节点解析 (bypass 携带可关)"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text("simulation:\n  n_years: 2\n  companion:\n"
+                 "    enable: true\n    bypass_no3_carry: false\n",
+                 encoding="utf-8")
+    comp = ConfigManager(str(p)).config.simulation.companion
+    assert comp is not None
+    assert comp.enable is True
+    assert comp.bypass_no3_carry is False
+
+
+def test_companion_disable_rollback(tmp_path):
+    """v0.7.0 (工单70): enable: false → 显式关闭 (完全回退 v0.6.1)"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text("simulation:\n  n_years: 2\n  companion:\n    enable: false\n",
+                 encoding="utf-8")
+    comp = ConfigManager(str(p)).config.simulation.companion
+    assert comp.enable is False
+
+
+def test_companion_invalid_type_raises(tmp_path):
+    """v0.7.0 (工单70): 非布尔开关 → 报错"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text("simulation:\n  n_years: 2\n  companion:\n"
+                 "    enable: \"yes\"\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="enable"):
+        ConfigManager(str(p))
