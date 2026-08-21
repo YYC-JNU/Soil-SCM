@@ -114,6 +114,29 @@ def test_apply_om_pco2_vertical_gradient():
     assert effs[0] - base > effs[3] - base   # 表层增量最大
 
 
+# ==================== v0.7.0 (spec 69, 工单74): k_om 重参数化 E3 标定锚点 ====================
+
+def test_k_om_e3_calibration_anchor():
+    """v0.7.0 (工单74): k_om 三档扫描锚点 — pCO₂_eff 单调 0.024→0.039
+
+    E3 标定区间 (0.0003/0.0005/0.0008): L1 OM=30 g/kg, base=0.015 →
+      k=0.0003 → 0.024; k=0.0005 → 0.030 (当前默认); k=0.0008 → 0.039
+    单调递增即表层酸化方向成立 (与 v0.6.0 E3 复验一致)。
+    """
+    from src.climate_forcing import apply_om_pco2
+    base = 0.015
+    om_l1 = 30.0
+    pco2_effs = [apply_om_pco2(base, om_l1, k_om=k)
+                 for k in (0.0003, 0.0005, 0.0008)]
+    assert pco2_effs == pytest.approx([0.024, 0.030, 0.039])
+    # 单调严格递增 (表层酸化随 k_om 增强)
+    assert pco2_effs[0] < pco2_effs[1] < pco2_effs[2]
+    # 当前默认 K_OM_PCO2 = 0.0005 → pCO2_eff L1 = 0.030
+    from src.constants import K_OM_PCO2
+    assert K_OM_PCO2 == 0.0005
+    assert apply_om_pco2(base, om_l1) == pytest.approx(0.030)
+
+
 # ==================== v0.6.0 Hargreaves PET (S4, Q8/Q9) ====================
 
 def test_calc_pet_oudin_dispatch_equals_legacy():
