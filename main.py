@@ -344,6 +344,9 @@ def _extract_diagnostics_with_hydrology(soil_states, hydrology, runoff_mm,
         layer_diags[i]['lateral'] = hydrology.get('lateral', [0.0] * n)[i]
         # v0.7.0 (工单70): NO3- 示踪池月度存量 (mol, 月末状态)
         layer_diags[i]['n_no3_pool'] = soil_states[i].n_no3_pool
+        # v0.7.0 (工单72): NH4+ 假设占用的交换位点 (eq, NH4X_virtual 记账,
+        # 不进 EXCHANGE 总量 — CEC 守恒审计不破, 预平衡锚定不受扰)
+        layer_diags[i]['NH4X_virtual'] = soil_states[i].n_nh4
     # v0.7.0 (工单70): NO3- 淋失月度聚合 (mol; 事件级 Σ, 非事件路径恒 0 保列)
     ev_details = (hydrology or {}).get('event_details', [])
     for i in range(n):

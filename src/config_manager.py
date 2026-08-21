@@ -87,12 +87,15 @@ class CompanionConfig:
       - bs_high/bs_low: 分级注入阈值 % (工单71 CompAn 分级用)
       - inert_anion: 惰性阴离子元素名 (PHREEQC 要求单元素名, 物种 = 名+'-';
         默认 An; 引擎输入头段自定义 SOLUTION_MASTER_SPECIES, 不碰 phreeqc.dat)
+      - nh4_exchange: NH4+ 等效置换开关 (工单72; 施肥月水解后按交换占比注入盐基,
+        模拟 NH4+ 置换盐基的农业酸化通道; 不触碰 L4 Q3=A 氮不进溶液)
     """
     enable: bool = True
     bypass_no3_carry: bool = True
     bs_high: float = 30.0
     bs_low: float = 10.0
     inert_anion: str = "An"
+    nh4_exchange: bool = True
 
 
 @dataclass
@@ -312,7 +315,8 @@ def _parse_companion(raw):
         bypass_no3_carry=raw.get('bypass_no3_carry', True),
         bs_high=raw.get('bs_high', 30.0),
         bs_low=raw.get('bs_low', 10.0),
-        inert_anion=raw.get('inert_anion', 'An'))
+        inert_anion=raw.get('inert_anion', 'An'),
+        nh4_exchange=raw.get('nh4_exchange', True))
 
 
 class ConfigManager:
@@ -663,6 +667,10 @@ class ConfigManager:
             if not isinstance(comp.bypass_no3_carry, bool):
                 raise ValueError(
                     "['simulation.companion.bypass_no3_carry' 参数存在问题: "
+                    "必须为布尔 (true/false), 请确认后再输入]")
+            if not isinstance(comp.nh4_exchange, bool):
+                raise ValueError(
+                    "['simulation.companion.nh4_exchange' 参数存在问题: "
                     "必须为布尔 (true/false), 请确认后再输入]")
             if not (0.0 < comp.bs_low < comp.bs_high <= 100.0):
                 raise ValueError(
