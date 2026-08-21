@@ -32,7 +32,7 @@
 ## 四、阻塞项与已知问题（如实记录）
 
 1. **PHREEQC 偶发卡顿（RunString 不返回）在 v0.7.0 下更频繁**：HX=2.8 使高离子强度/高 pH 平衡更易卡（v0.6.0 复盘建议 5"KNOBS 迭代数/容差调优"）；weather on 的 natural 30 年 pH 7.8+ 后稳定卡死；spawn 子进程多次卡顿 → **30 年 8 情景全量未完成**（5 年短程数据已覆盖方向带判定）
-2. **fertilizer<4.0 未达**：GAS_PHASE 固定 pCO₂ 缓冲吞酸（科学解读偏差 2）是核心障碍——需 GAS_PHASE 动态化（v0.7.x backlog）；weather on 已改善至 8.1 但不足
+2. **fertilizer<4.0 未达**：~~GAS_PHASE 固定 pCO₂ 缓冲吞酸（科学解读偏差 2）是核心障碍~~ **（2026-08-21 v0.7.x 工单 77 证伪修正）**：探针实测 GAS_PHASE 吞酸幅度仅 +0.05 pH，真正机制 = **REACTION 裸注入电荷不平衡伪碱化**（裸阳离子 Ca²⁺/K⁺/Mg²⁺ → PHREEQC 电荷中性约束产生 OH⁻，裸 `Ca+2 343` → pH 9.28 复现观测；裸 H⁺ 硝化产酸从不酸化）。工单 77 charge pairing 修复后单层施肥不碱化、sensitivity 3y 11.20→10.86；剩余盐基滞留 → 工单 80（详见 `docs/analysis/V0_7_X_REACTION_CHARGE_POSTMORTEM.md`）；weather on 已改善至 8.1 但不足
 3. **lime 未回落**：Ca 盐基供给 > 淋失（无 NO₃⁻ 伴随通道，lime 情景无施肥）——需强化 Ca 淋失或 D3 扩展至 lime 盐基
 4. **natural vs fertilizer 对 weathering 需求相反**：weather on 利于 fertilizer（8.1）害于 natural（7.7）——需按情景区分配置或 weathering 参数再调（v0.7.x）
 
@@ -40,11 +40,11 @@
 
 - **PASS**：natural 方向带（持平）；D3/NH₄⁺/D2/HX 机制全部落地并验证；数值稳定（5 年全情景 phreeqc_ok=1）
 - **FAIL**：fertilizer<4.0、lime 回落、30 年全量（PHREEQC 卡顿阻塞）
-- **发布建议**：v0.7.0 以"**地球化学机制落地**"阶段性发布（natural 达标 + 三疑点机制证据），方向带未达项如实标注 → 留 v0.7.x（GAS_PHASE 动态化 + KNOBS 调优 + weathering 情景区分）；或由用户决定继续深调优后再发布
+- **发布建议**：v0.7.0 以"**地球化学机制落地**"阶段性发布（natural 达标 + 三疑点机制证据），方向带未达项如实标注 → 留 v0.7.x（**工单 77 电荷平衡修复**（2026-08-21 已完成，证伪 GAS_PHASE 归因）+ KNOBS 调优 + weathering 情景区分 + lime 盐基淋失强化）；或由用户决定继续深调优后再发布
 
 ## 六、v0.7.x 后续（backlog 已登记）
 
-- GAS_PHASE 固定缓冲动态化（偏差 2）——fertilizer<4.0 关键
+- ~~GAS_PHASE 固定缓冲动态化（偏差 2）~~ **（工单 77 证伪取消，2026-08-21）**：探针证伪 GAS_PHASE 非主因；真因=裸注入电荷伪碱化 → **工单 77 电荷配对修复已完成**；剩余盐基滞留 → lime 盐基淋失强化
 - KNOBS 迭代/容差调优（高离子强度收敛）——30 年全量解锁
 - weathering 情景区分（natural off / fertilizer on）或参数再扫描
 - HX log_k 微调 + E1 重锚定联动
