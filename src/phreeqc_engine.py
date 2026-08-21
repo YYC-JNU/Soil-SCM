@@ -62,6 +62,9 @@ class SoilState:
     n_urea: float = 0.0          # 尿素形态氮 (mol N), 水解前库存
     n_nh4: float = 0.0           # 铵态氮 (mol N), 由 SELECTED_OUTPUT N(-3) 回填
     n_no3: float = 0.0           # 硝态氮 (mol N), 由 SELECTED_OUTPUT N(5) 回填
+    # v0.7.0 (工单70): 硝态氮淋失示踪池 (mol N) — 由 advance_nitrification 同步
+    # 推进; 逐场 lost_no3 水库串联消费; n_no3 保持为累计诊断器 (向后兼容)
+    n_no3_pool: float = 0.0
     theta: float = 0.0           # v0.5.3: 本层体积含水量 θ (m³/m³), 跨月累积
                                  # (规范状态, Q1/Q7; L/ha 由 vgm.theta_to_water_L 派生)
 
@@ -100,8 +103,30 @@ def advance_nitrification(state: SoilState, action,
     nitrified = state.n_nh4 * k2
     state.n_nh4 -= nitrified
     state.n_no3 += nitrified
+    # v0.7.0 (工单70): 硝化量同步进入淋失示踪池 (供逐场 lost_no3 消费)
+    state.n_no3_pool += nitrified
 
-    return {'H+': 2.0 * nitrified}
+    # v0.7.0 (工单70): 返回契约扩展 — nitrified/hydrolyzed 键供 D3 伴随淋失
+    # (工单71) 与 NH4+ 等效置换 (工单72) 消费; 'H+' 键契约不变 (向后兼容)
+    return {'H+': 2.0 * nitrified,
+            'nitrified': nitrified,
+            'hydrolyzed': hydrolyzed}
+
+
+def calc_no3_leaching(pool_mol: float, water_out_L: float,
+                      v_pool_L: float) -> float:
+    """v0.7.0 (工单70): NO₃⁻ 随水移出量 (mol) — 水库串联淋失 + 全局不变量
+
+    lost = min(pool × water_out/V_pool, pool)  (池不变量: pool ≥ 0)
+      - water_out_L: 该出口通道排水量 (L, 垂直/侧向/基流/bypass)
+      - v_pool_L: 池溶液体积 (L), ≤0 按 1.0 保护
+      - 返回移出摩尔量 (0 ≤ lost ≤ pool): 与 v0.6.1 "防抽干" 同哲学 —
+        bypass/排水量再大也只能带走池中实际存在的 NO₃⁻ (Q19 审查通过)
+    """
+    if pool_mol <= 0.0 or water_out_L <= 0.0:
+        return 0.0
+    v = max(v_pool_L, 1.0)
+    return min(pool_mol * (water_out_L / v), pool_mol)
 
 
 @dataclass
@@ -148,7 +173,8 @@ class PhreeqcEngine:
                  enable_surface: bool = False,
                  nitrification_k1: float = NITRIFICATION_K1,
                  nitrification_k2: float = NITRIFICATION_K2,
-                 initial_psi_cm: float = INITIAL_PSI_CM):
+                 initial_psi_cm: float = INITIAL_PSI_CM,
+                 companion_cfg=None):
         """
         参数:
             database: PHREEQC 热力学数据库
@@ -197,6 +223,13 @@ class PhreeqcEngine:
         self.mineral_scale = MINERAL_SCALE
         # v0.5.3: 初始基质势 (cm, 负值) — 经 VGM 正算 state.theta (D8/Q8)
         self.initial_psi_cm = initial_psi_cm
+        # v0.7.0 (spec 69, 工单70): NO3- 伴随淋失配置 (None=禁用, 回退 v0.6.1)
+        # companion 为 v0.7.0 主线 (config 默认启用); 既有测试构造引擎不传 → 禁用
+        self.companion_cfg = companion_cfg
+        self.companion_enabled = bool(companion_cfg is not None
+                                      and companion_cfg.enable)
+        self.companion_bypass_no3_carry = bool(
+            companion_cfg is not None and companion_cfg.bypass_no3_carry)
 
         # ---- 初始化后端 (v0.1.3: 仅官方引擎, phreeqpython 已废弃) ----
         if OFFICIAL_PHREEQC_AVAILABLE:
@@ -760,12 +793,19 @@ class PhreeqcEngine:
         for ev_idx, ev in enumerate(event_list):
             layer_states = []
             inflow_ions = {}
+            # v0.7.0 (工单70): 本场层间 NO3- 池下移/bypass 携带的传递量 (mol)
+            pool_carry = 0.0
             event_action = action if ev_idx == 0 else MonthlyAction()
             row = {'year': monthly_forcing.get('year', 0),
                    'month': monthly_forcing.get('month', 0),
                    'event': ev_idx + 1,
                    'precip_mm': ev.get('precip_mm', 0.0)}
             for i in range(n):
+                # v0.7.0 (工单70): 吸收上层 drains 下移/bypass 携带的 NO3- 池
+                # (水库串联: 上层排出的池质量逐层下移, 先处理上层后下层)
+                if i > 0 and pool_carry > 0:
+                    new_states[i].n_no3_pool += pool_carry
+                    pool_carry = 0.0
                 layer_forcing = dict(monthly_forcing)
                 # L6: 逐层 pCO₂ 注入 (缺省回退全局 forcing['pCO2'])
                 if layer_pco2s is not None:
@@ -788,6 +828,39 @@ class PhreeqcEngine:
                     forcing=layer_forcing, theta_after=theta_ev)
                 layer_states.append(new_state)
                 last_diags[i] = diag
+                # ---- v0.7.0 (工单70, spec 69): NO3- 示踪池水库串联淋失 ----
+                # 池随水移出 (垂直下移/侧向/基流/bypass), 全局不变量 pool≥0
+                # (calc_no3_leaching 内部 min(公式, pool) 防抽干, Q19)
+                leach_no3_i = 0.0
+                if self.companion_enabled:
+                    v_pool = max(new_state.volume, 1.0)
+                    drain_i = ev['drains'][i]
+                    lat_out_L = (ev.get('lateral') or [0.0] * n)[i]
+                    base_out_L = (ev.get('baseflow') or [0.0] * n)[i]
+                    # ① 垂直下移: drains 携带池 → 下一层 (水库串联)
+                    mass_down = calc_no3_leaching(
+                        new_state.n_no3_pool, drain_i, v_pool)
+                    new_state.n_no3_pool -= mass_down
+                    leach_no3_i += mass_down
+                    if i < n - 1:
+                        pool_carry += mass_down
+                    # ② 出系统: lateral + baseflow 带走池余额
+                    lost_out = calc_no3_leaching(
+                        new_state.n_no3_pool, lat_out_L + base_out_L, v_pool)
+                    new_state.n_no3_pool -= lost_out
+                    leach_no3_i += lost_out
+                    # ③ bypass 携带: L1 池 NO3- 直通 L2 (默认模式, 深度分布留 v0.7.x)
+                    if i == 0:
+                        bypass_water = ev.get('bypass_water_L', 0.0)
+                        if bypass_water > 0 and self.companion_bypass_no3_carry:
+                            m_bypass = calc_no3_leaching(
+                                new_state.n_no3_pool, bypass_water, v_pool)
+                            new_state.n_no3_pool -= m_bypass
+                            leach_no3_i += m_bypass
+                            pool_carry += m_bypass
+                # 记账列 (v0.7.0): 池存量 + 该场淋失量
+                row[f'n_no3_pool_L{i+1}'] = new_state.n_no3_pool
+                row[f'leach_no3_L{i+1}_mol'] = leach_no3_i
                 # ---- v0.6.1 (spec 62 Q3/Q6): 溶质随水移出系统 + 浓度冲洗 ----
                 # 侧向/基流排水带走溶质: n_new = max(n_old×(1−Q_out/V), C_min×V)
                 # (工单 63 已提供逐场 lateral/baseflow 水量出口, ev['lateral']/
@@ -1036,6 +1109,8 @@ class PhreeqcEngine:
         new_state.n_urea = old_state.n_urea
         new_state.n_nh4 = old_state.n_nh4
         new_state.n_no3 = old_state.n_no3
+        # v0.7.0 (工单70): 淋失示踪池随状态延续 (advance 已就地推进, 此处复制)
+        new_state.n_no3_pool = old_state.n_no3_pool
 
         diag = DiagnosticOutput(ph=new_state.ph, pe=new_state.pe)
         return new_state, diag

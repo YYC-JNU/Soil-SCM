@@ -319,3 +319,126 @@ def test_diagnostics_baseflow_lateral_columns(profile, soil_info, monkeypatch):
     assert diags[0]['baseflow'] == 0.0
     assert diags[3]['baseflow'] == pytest.approx(1.0e5)
     assert diags[0]['lateral'] == 0.0
+
+
+# ==================== v0.7.0 (spec 69, 工单70): NO3- 池事件级水库串联淋失 ====================
+
+def _engine_companion(**kw):
+    from src.config_manager import CompanionConfig
+    kw.setdefault('companion_cfg', CompanionConfig(enable=True))
+    return PhreeqcEngine(database="phreeqc.dat", mode="phreeqc", **kw)
+
+
+def test_no3_pool_cascade_vertical_and_outflow(profile, soil_info):
+    """v0.7.0 (工单70): 4 层事件级水库串联 — 垂直下移 + L4 出系统, pool≥0
+
+    L1 池 1000 mol: drains 垂直下移逐层, L4 baseflow 出口带走 → 池守恒。
+    """
+    e = _engine_companion()
+    states = [e.build_initial_state(profile, soil_info, 0.015) for _ in range(4)]
+    states[0].n_no3_pool = 1000.0
+    ev = {'inflows': [1.0e5, 0.0, 0.0, 0.0],
+          'drains': [1.0e5, 1.0e4, 1.0e4, 0.0],
+          'lateral': [0.0, 0.0, 0.0, 0.0],
+          'baseflow': [0.0, 0.0, 0.0, 1.0e5],
+          'bypass_water_L': 0.0, 'precip_mm': 50.0,
+          'theta': [0.40, 0.40, 0.40, 0.40]}
+    hydrology = {'events': [ev], 'aet_mm': 0.0, 'et_deficit_mm': 0.0}
+    new_states, _ = e.run_monthly_multi_layer(
+        states, dict(EVENT_FORCING, precip=50.0), MonthlyAction(),
+        profile, hydrology=hydrology)
+    # 全局不变量: 各层 pool ≥ 0
+    for s in new_states:
+        assert s.n_no3_pool >= 0.0
+    # 垂直下移: L1 池被 drains 消耗
+    assert new_states[0].n_no3_pool < 1000.0
+    # 层间传递: L2 收到 L1 下移量 (该场先处理 L1 后处理 L2)
+    assert new_states[1].n_no3_pool > 0.0
+    # L4 baseflow 出口 → 系统总量减少 (出系统淋失)
+    total = sum(s.n_no3_pool for s in new_states)
+    assert total < 1000.0
+    assert total > 0.0
+    # 记账列: event_details 含 n_no3_pool/leach_no3
+    details = hydrology.get('event_details', [])
+    assert details
+    row0 = details[0]
+    assert 'n_no3_pool_L1' in row0
+    assert 'leach_no3_L1_mol' in row0
+    # leach_no3_L1 = L1 垂直下移量 (drains=1e5, V_pool=θ×depth×1e5)
+    from src.vgm import theta_to_water_L
+    v_l1 = theta_to_water_L(0.40, profile.effective_depth)
+    expected_leach_l1 = 1000.0 * min(1.0e5 / v_l1, 1.0)
+    assert row0['leach_no3_L1_mol'] == pytest.approx(expected_leach_l1, rel=1e-6)
+    # 自洽: L1 淋失 = 初始池 − 末池 (无 bypass/出口)
+    assert row0['leach_no3_L1_mol'] == pytest.approx(
+        1000.0 - new_states[0].n_no3_pool, rel=1e-6)
+
+
+def test_no3_pool_bypass_carry(profile, soil_info):
+    """v0.7.0 (工单70): bypass 优先流携带 L1 池 NO3- 直通 L2 (默认模式)"""
+    e = _engine_companion()
+    states = [e.build_initial_state(profile, soil_info, 0.015) for _ in range(4)]
+    states[0].n_no3_pool = 1000.0
+    ev = {'inflows': [1.0e5, 1.0e4, 1.0e4, 1.0e4],
+          'drains': [0.0, 0.0, 0.0, 0.0],
+          'lateral': [0.0, 0.0, 0.0, 0.0],
+          'baseflow': [0.0, 0.0, 0.0, 0.0],
+          'bypass_water_L': 1.0e6,   # 大优先流 (> L1 体积)
+          'precip_mm': 100.0,
+          'theta': [0.40, 0.40, 0.40, 0.40]}
+    hydrology = {'events': [ev], 'aet_mm': 0.0, 'et_deficit_mm': 0.0}
+    new_states, _ = e.run_monthly_multi_layer(
+        states, dict(EVENT_FORCING, precip=100.0), MonthlyAction(),
+        profile, hydrology=hydrology)
+    # L1 池被 bypass 携带消耗 (cap at pool: 最多带走全部)
+    assert 0.0 <= new_states[0].n_no3_pool <= 1000.0
+    # L2 收到 bypass 携带的 NO3- (直通 L2)
+    assert new_states[1].n_no3_pool > 0.0
+    # 无其他出口: L1+L2 池守恒 (bypass 是层间转移非损失)
+    assert new_states[0].n_no3_pool + new_states[1].n_no3_pool \
+        == pytest.approx(1000.0, rel=1e-3)
+
+
+def test_no3_pool_disabled_without_companion(profile, soil_info):
+    """v0.7.0 (工单70): companion 关闭 (默认) → 池不动 (完全回退 v0.6.1)"""
+    e = _engine()  # companion_cfg=None → 禁用
+    states = [e.build_initial_state(profile, soil_info, 0.015) for _ in range(4)]
+    states[0].n_no3_pool = 1000.0
+    ev = {'inflows': [1.0e5, 0.0, 0.0, 0.0],
+          'drains': [1.0e5, 1.0e4, 1.0e4, 0.0],
+          'lateral': [0.0, 0.0, 0.0, 0.0],
+          'baseflow': [0.0, 0.0, 0.0, 1.0e5],
+          'bypass_water_L': 0.0, 'precip_mm': 50.0,
+          'theta': [0.40, 0.40, 0.40, 0.40]}
+    hydrology = {'events': [ev], 'aet_mm': 0.0, 'et_deficit_mm': 0.0}
+    new_states, _ = e.run_monthly_multi_layer(
+        states, dict(EVENT_FORCING, precip=50.0), MonthlyAction(),
+        profile, hydrology=hydrology)
+    # 禁用: 池不参与淋失 (保持原值)
+    assert new_states[0].n_no3_pool == pytest.approx(1000.0)
+    assert new_states[1].n_no3_pool == pytest.approx(0.0)
+
+
+def test_diagnostics_no3_pool_monthly_columns(profile, soil_info):
+    """v0.7.0 (工单70): 月度诊断输出 n_no3_pool 存量 + leach_no3_mol 聚合列"""
+    import main as sim_main
+    e = _engine_companion()
+    states = [e.build_initial_state(profile, soil_info, 0.015) for _ in range(4)]
+    states[0].n_no3_pool = 100.0
+    hydrology = {
+        'inflows': [1.0e5, 0, 0, 0], 'drains': [0.0, 0, 0, 0],
+        'baseflow': [0.0, 0, 0, 0], 'lateral': [0.0, 0, 0, 0],
+        'bypass_water_L': 0.0,
+        'event_details': [
+            {'leach_no3_L1_mol': 10.0, 'leach_no3_L2_mol': 5.0},
+            {'leach_no3_L1_mol': 3.0, 'leach_no3_L2_mol': 1.0}]}
+    diags = sim_main._extract_diagnostics_with_hydrology(
+        states, hydrology, 0.0, 0.0, [None] * 4,
+        ["pH"], [profile] * 4)
+    # 月度存量列: 直接来自月末状态
+    assert diags[0]['n_no3_pool'] == pytest.approx(100.0)
+    assert diags[3]['n_no3_pool'] == pytest.approx(0.0)
+    # 月度淋失聚合列: 事件级 Σ
+    assert diags[0]['leach_no3_mol'] == pytest.approx(13.0)
+    assert diags[1]['leach_no3_mol'] == pytest.approx(6.0)
+    assert diags[2]['leach_no3_mol'] == pytest.approx(0.0)

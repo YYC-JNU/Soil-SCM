@@ -342,6 +342,13 @@ def _extract_diagnostics_with_hydrology(soil_states, hydrology, runoff_mm,
     for i in range(n):
         layer_diags[i]['baseflow'] = hydrology.get('baseflow', [0.0] * n)[i]
         layer_diags[i]['lateral'] = hydrology.get('lateral', [0.0] * n)[i]
+        # v0.7.0 (工单70): NO3- 示踪池月度存量 (mol, 月末状态)
+        layer_diags[i]['n_no3_pool'] = soil_states[i].n_no3_pool
+    # v0.7.0 (工单70): NO3- 淋失月度聚合 (mol; 事件级 Σ, 非事件路径恒 0 保列)
+    ev_details = (hydrology or {}).get('event_details', [])
+    for i in range(n):
+        layer_diags[i]['leach_no3_mol'] = sum(
+            row.get(f'leach_no3_L{i+1}_mol', 0.0) for row in ev_details)
     # v0.6.0 (Q14): First-Flush 峰值列 (L1 当月最大单场淋失, mmol/ha;
     # 非事件驱动路径恒 0, 列保持存在)
     if diag_objs and diag_objs[0] is not None:
@@ -475,7 +482,8 @@ def run_simulation(config_path: str = "config/config.yaml"):
                            enable_surface=getattr(cfg.simulation, 'enable_surface', False),
                            nitrification_k1=getattr(cfg.simulation, 'nitrification_k1', 1.0),
                            nitrification_k2=getattr(cfg.simulation, 'nitrification_k2', 0.4),
-                           initial_psi_cm=getattr(cfg.simulation, 'initial_psi_cm', -100.0))
+                           initial_psi_cm=getattr(cfg.simulation, 'initial_psi_cm', -100.0),
+                           companion_cfg=getattr(cfg.simulation, 'companion', None))
 
     # 构建初始状态 (initial_pCO2 已在阶段 4 中计算)
     # WF2/Q1: 多分层时构建 List[SoilState]; L6 (v0.4.0): 支持逐层参数覆盖
