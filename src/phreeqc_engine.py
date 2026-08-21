@@ -129,6 +129,20 @@ def calc_no3_leaching(pool_mol: float, water_out_L: float,
     return min(pool_mol * (water_out_L / v), pool_mol)
 
 
+def calc_base_saturation(exchange: dict) -> float:
+    """v0.7.0 (工单71): 盐基饱和度 BS% — 与 main._extract_diagnostics 同公式
+
+    BS = (CaX2×2 + MgX2×2 + KX + NaX) / (盐基 + AlX3×3) × 100
+    (与既有 base_saturation 诊断列数值一致, 分级注入与输出可对照)
+    """
+    base_charge = (exchange.get('CaX2', 0.0) * 2.0
+                   + exchange.get('MgX2', 0.0) * 2.0
+                   + exchange.get('KX', 0.0)
+                   + exchange.get('NaX', 0.0))
+    total = base_charge + exchange.get('AlX3', 0.0) * 3.0
+    return base_charge / total * 100.0 if total > 0 else 0.0
+
+
 @dataclass
 class DiagnosticOutput:
     """诊断输出"""
@@ -769,6 +783,26 @@ class PhreeqcEngine:
 
         return new_states, diags
 
+    def _grade_companion_injection(self, e_loss_eq: float, bs: float):
+        """v0.7.0 (工单71, spec 69): 伴随淋失分级注入 (Q18=A)
+
+        按层盐基饱和度 BS 动态选择注入策略 (专家方案 D):
+          - BS ≥ bs_high: 全量注入 CompAn- (交换相盐基充足, Gapon 正常驱动解吸)
+          - bs_low ≤ BS < bs_high: CompAn- × 线性衰减 (BS−bs_low)/(bs_high−bs_low)
+          - BS < bs_low: 切换酸化注入 H+ = E_loss 当量 (交换相盐基枯竭,
+            继续 InertAnion 会拽 Al/H 异常压 pH; H+ 主导酸化更物理)
+
+        返回: (anion_eq, acid_eq, mode) — mode ∈ inert/hybrid/acid
+        """
+        bs_high = self.companion_cfg.bs_high
+        bs_low = self.companion_cfg.bs_low
+        if bs >= bs_high:
+            return e_loss_eq, 0.0, 'inert'
+        if bs >= bs_low:
+            frac = (bs - bs_low) / (bs_high - bs_low)
+            return e_loss_eq * frac, 0.0, 'hybrid'
+        return 0.0, e_loss_eq, 'acid'
+
     def _run_multi_layer_events(self, states: list, monthly_forcing: dict,
                                 action, soil_profile, layer_pco2s,
                                 event_list: list, hydrology: dict = None):
@@ -790,6 +824,9 @@ class PhreeqcEngine:
         flush_no3_peak = 0.0
         flush_base_peak = 0.0
         event_details = []
+        # v0.7.0 (工单71): 各层"上一场淋失产生的伴随当量"待下场平衡前注入
+        # (跨场保留: 本场淋失 → 下一场注入, 逐场滚动)
+        pending_e_loss = [0.0] * n
         for ev_idx, ev in enumerate(event_list):
             layer_states = []
             inflow_ions = {}
@@ -819,6 +856,24 @@ class PhreeqcEngine:
                     layer_forcing['bypass_water_L'] = ev['bypass_water_L']
                 if inflow_ions:
                     layer_forcing['inflow_ions'] = inflow_ions
+                # v0.7.0 (工单71, spec 69): 伴随淋失分级注入 — 上一场淋失的
+                # 盐基当量 (E_loss) 在本场平衡前经 REACTION 注入 (CompAn-/H+),
+                # 交换相由平衡自洽解吸 (Gapon 哲学, Q11=E 方案)
+                companion_anion_eq = 0.0
+                companion_acid_eq = 0.0
+                companion_mode = 'none'
+                if self.companion_enabled and pending_e_loss[i] > 0:
+                    bs = calc_base_saturation(new_states[i].exchange)
+                    companion_anion_eq, companion_acid_eq, companion_mode = \
+                        self._grade_companion_injection(pending_e_loss[i], bs)
+                    if companion_mode == 'acid':
+                        logger.warning(
+                            "v0.7.0 伴随淋失: 层 %d 盐基枯竭 (BS=%.1f%% < %.0f%%), "
+                            "切换酸化注入 H+ = %.2f eq",
+                            i + 1, bs, self.companion_cfg.bs_low,
+                            companion_acid_eq)
+                layer_forcing['companion_anion_eq'] = companion_anion_eq
+                layer_forcing['companion_acid_eq'] = companion_acid_eq
                 rain_ev = RainEvent(precip_mm=ev.get('precip_mm', 0.0),
                                     duration_h=2.0)
                 # 该场事件后的 θ (事件化水文已逐场更新, ev['theta'] 记录)
@@ -861,6 +916,13 @@ class PhreeqcEngine:
                 # 记账列 (v0.7.0): 池存量 + 该场淋失量
                 row[f'n_no3_pool_L{i+1}'] = new_state.n_no3_pool
                 row[f'leach_no3_L{i+1}_mol'] = leach_no3_i
+                # 记账列 (v0.7.0, 工单71): 伴随淋失分级注入记录
+                # (本场注入 = 上一场淋失当量的分级结果; 本场淋失 → 下一场注入)
+                row[f'companion_mode_L{i+1}'] = companion_mode
+                row[f'companion_eq_L{i+1}'] = pending_e_loss[i]
+                row[f'inert_eq_L{i+1}'] = companion_anion_eq
+                row[f'acid_eq_L{i+1}'] = companion_acid_eq
+                pending_e_loss[i] = leach_no3_i
                 # ---- v0.6.1 (spec 62 Q3/Q6): 溶质随水移出系统 + 浓度冲洗 ----
                 # 侧向/基流排水带走溶质: n_new = max(n_old×(1−Q_out/V), C_min×V)
                 # (工单 63 已提供逐场 lateral/baseflow 水量出口, ev['lateral']/
@@ -1131,6 +1193,23 @@ class PhreeqcEngine:
         """
         lines = []
 
+        # v0.7.0 (工单71, spec 69): 自定义保守惰性阴离子物种定义
+        # (不碰 phreeqc.dat; 不参与氧化还原; 供伴随淋失 E_loss 等当量注入,
+        #  进平衡前 REACTION 注入 → 电荷平衡驱动交换相盐基解吸, Gapon 自洽)
+        # 元素名 = companion.inert_anion (PHREEQC 要求单元素名, 默认 An),
+        # 物种 = 元素名 + '-'; gfW 取 Cl 原子量 (保守示踪)
+        if self.companion_enabled:
+            an_name = self.companion_cfg.inert_anion
+            an_species = f"{an_name}-"
+            lines.append("SOLUTION_MASTER_SPECIES")
+            lines.append(
+                f"    {an_name}    {an_species}    0.0    {an_name}    35.453")
+            lines.append("")
+            lines.append("SOLUTION_SPECIES")
+            lines.append(f"    {an_species} = {an_species}")
+            lines.append("    -log_k    0.0")
+            lines.append("")
+
         # KNOBS: 提高收敛鲁棒性 (物理矿物量较大时数值更难收敛)
         # 迭代数取 100 平衡速度与收敛 (500 会使长模拟显著变慢)
         # WF4/WF5: SURFACE 增加非线性, 需更高迭代数收敛 (1000, 实测验证)
@@ -1290,6 +1369,20 @@ class PhreeqcEngine:
         if h_mol > 0:
             reaction_lines.append(f"  H+     {h_mol:.6e}  # 硝化产酸")
 
+        # v0.7.0 (工单71, spec 69): 伴随淋失注入 — 随 NO3- 移出的盐基当量
+        # E_loss (工单70 事件循环计算, 经 forcing 传入; 进平衡前注)
+        #   - companion_anion_eq>0: 注入惰性阴离子 CompAn- (电荷平衡驱动交换相解吸)
+        #   - companion_acid_eq>0: 酸化注入 H+ (BS<low 盐基枯竭模式)
+        companion_anion_eq = forcing.get('companion_anion_eq', 0.0)
+        companion_acid_eq = forcing.get('companion_acid_eq', 0.0)
+        if companion_anion_eq > 0 and self.companion_enabled:
+            an_species = f"{self.companion_cfg.inert_anion}-"
+            reaction_lines.append(
+                f"  {an_species} {companion_anion_eq:.6e}  # 伴随淋失")
+        if companion_acid_eq > 0:
+            reaction_lines.append(
+                f"  H+     {companion_acid_eq:.6e}  # 伴随淋失酸化")
+
         # v0.5.0: 预平衡观测锚定注入 (pH/交换离子修正, 见 pre_equilibrate)
         injection = forcing.get('injection')
         if injection:
@@ -1338,7 +1431,11 @@ class PhreeqcEngine:
         lines.append("  -water true")
         # L4 (Q1=A): 氮库存为模型状态 (不注入溶液), 无需 N(-3)/N(5) 回填;
         # 总 N 保留供层间平流 (inflow_ions)
-        lines.append("  -totals Ca Mg K Na Al P Zn Cl C S N Si F")
+        # v0.7.0 (工单71): companion 启用时 totals 追加惰性阴离子元素 (审计)
+        totals_line = "  -totals Ca Mg K Na Al P Zn Cl C S N Si F"
+        if self.companion_enabled:
+            totals_line += f" {self.companion_cfg.inert_anion}"
+        lines.append(totals_line)
         lines.append("  -molalities CaX2 MgX2 KX NaX AlX3 HX X-")
         # L2: 输出矿物相摩尔量 (供矿物演化回填, 修复 Al 耗尽根因)
         # 只列出非零矿物; 矿物名须与 phreeqc.dat PHASES 段一致

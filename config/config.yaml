@@ -64,7 +64,7 @@ simulation:
     bypass_no3_carry: true
     bs_high: 30.0
     bs_low: 10.0
-    inert_anion: CompAn
+    inert_anion: An
 
   # ---- L6 (v0.4.0): 逐层参数覆盖 (真实剖面约束, 仅 n_layers>1 时生效) ----
   layer_depths: null                 # 每层厚度 (cm), 长度必须 = n_layers; null=等分兜底; 每层 effective_depth 由此派生

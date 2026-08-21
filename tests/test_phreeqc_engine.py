@@ -229,3 +229,58 @@ def test_hx_in_exchange_state(profile, soil_info):
                                          profile)
     # 交换相 HX 保留 (绝对摩尔量在平衡中演化, 不消失)
     assert new_state.exchange.get('HX', 0.0) >= 0.0
+
+
+# ==================== v0.7.0 (spec 69, 工单71): CompAn 惰性阴离子伴随淋失 ====================
+
+def _companion_engine():
+    from src.config_manager import CompanionConfig
+    return PhreeqcEngine(database="phreeqc.dat", mode="phreeqc",
+                         companion_cfg=CompanionConfig(enable=True))
+
+
+def test_companion_anion_species_in_input(profile, soil_info):
+    """v0.7.0 (工单71): _build_phreeqc_input 含惰性阴离子物种定义 (默认 An)
+
+    SOLUTION_MASTER_SPECIES/SOLUTION_SPECIES 注入输入头段 (不碰 phreeqc.dat),
+    不参与氧化还原, 供伴随淋失 E_loss 等当量注入 (REACTION 端, 交换相不动)。
+    PHREEQC 元素名须为单元素 (CompAn 会拆为 Comp+An 报错, 故用 An)。
+    """
+    e = _companion_engine()
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    inp = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile)
+    assert "SOLUTION_MASTER_SPECIES" in inp
+    assert "SOLUTION_SPECIES" in inp
+    assert "An" in inp
+    assert "An-" in inp
+
+
+def test_companion_anion_reaction_injection(profile, soil_info):
+    """v0.7.0 (工单71): forcing companion_anion_eq → REACTION 注入 An- 等当量"""
+    e = _companion_engine()
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    forcing = dict(FORCING, companion_anion_eq=100.0, companion_acid_eq=0.0)
+    inp = e._build_phreeqc_input(state, forcing, MonthlyAction(), profile)
+    assert "An-" in inp
+    assert "# 伴随淋失" in inp
+    # 注入量 = 当量 (100 eq → 100 mol 一价阴离子)
+    assert "1.000000e+02" in inp
+
+
+def test_companion_acid_reaction_injection(profile, soil_info):
+    """v0.7.0 (工单71): forcing companion_acid_eq → REACTION 注入 H+ (酸化模式)"""
+    e = _companion_engine()
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    forcing = dict(FORCING, companion_anion_eq=0.0, companion_acid_eq=50.0)
+    inp = e._build_phreeqc_input(state, forcing, MonthlyAction(), profile)
+    assert "H+" in inp
+    assert "# 伴随淋失酸化" in inp
+
+
+def test_companion_disabled_no_anion_species(profile, soil_info):
+    """v0.7.0 (工单71): companion 关闭 → 无惰性阴离子物种定义 (回退 v0.6.1)"""
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    inp = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile)
+    assert "SOLUTION_MASTER_SPECIES" not in inp
+    assert "An-" not in inp
