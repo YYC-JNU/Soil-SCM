@@ -2,7 +2,7 @@
 
 基于 PHREEQC 地球化学引擎的土壤单点物理化学数值模式，用于模拟长期（数十年）施肥、酸化、淋溶与改良条件下的土壤化学演变（pH、盐基饱和度、交换性阳离子等）。
 
-> **当前版本**：v0.6.1（2026-08-20，数值稳定性根治：VIC 深层基流 + Darcy 侧向排水 + HX 交换酸注入 + fallback 局部降级 + 闭合审计）
+> **当前版本**：v0.7.0（2026-08-21，地球化学重构：NO₃⁻ 伴随淋失 + NH₄⁺ 等效置换 + D2 矿物风化集总注入 + k_om 标定 + E2 PET 判别；30 年 8 情景方向带验收进行中）
 > **快速上手**：见 [USERGUIDE.md](USERGUIDE.md) ｜ **版本历史**：见 [§十一 版本更新记录](#十一版本更新记录)
 
 ---
@@ -338,6 +338,20 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 ---
 
 ## 十一、版本更新记录
+
+### v0.7.0（2026-08-21，验收进行中）
+
+> - **NO₃⁻ 示踪池 + 水库串联淋失（D3）**：`n_no3_pool` 逐层入 SoilState；逐场 `lost_no3 = min(pool×ΣQ/V_pool, pool)`（全局不变量 pool≥0）；垂直下移+体积稀释；bypass 携带 L1 池直通 L2；`leach_no3/n_no3_pool` 记账列（工单 70）
+> - **伴随阳离子淋失（CompAn 分级注入）**：自定义惰性阴离子 `An⁻`（`SOLUTION_MASTER_SPECIES`，单元素名约束）经 REACTION 等当量注入 E_loss；按盐基饱和度分级（BS≥30 全量 / 10~30 线性衰减 / <10 酸化注入 H⁺+枯竭警告）；交换相不动靠 Gapon 自洽（工单 71）
+> - **NH₄⁺ 等效置换**：施肥月水解后按交换相电荷占比注入置换盐基（当量=硝化量 343 eq/次，工单 76 调优）；`NH4X_virtual` 记账列（不进交换，CEC 守恒不破）（工单 72）
+> - **D2 矿物风化集总注入**：Arrhenius 温度依赖风化碱度（`rate(T)=rate_ref×exp(−Ea/R×(1/T−1/T_ref))`，Ea=40 kJ/mol）+ `degrade_minerals` 从平衡相降级（消除矿物闪蒸供碱）；不用 KINETICS（v0.3.0 证伪）（工单 73）
+> - **k_om 重参数化**：E3 三档标定（0.024/0.030/0.039 单调锚点固化），维持 0.0005（工单 74）
+> - **E2 PET 机制判别**：PET 1000/1100 中间点扫描 + NaX/CaX2 时序 → 假设 A 部分成立/B/C 不成立；HX 首月清空交换相盐基消除 v0.6.0 非单调跳变（`docs/analysis/V0_7_0_PET_DISCRIMINATION.md`）（工单 75）
+> - **调优 A+B+D**（工单 76）：NH₄⁺ 置换量级 857→343、HX log_k 3.0→2.8（减弱锁酸）、weathering 500+降 gibbsite/kaolinite（fertilizer 11.4→8.1）
+> - **配置新增**：`simulation.companion.{enable/bypass_no3_carry/bs_high/bs_low/inert_anion/nh4_exchange}` + `simulation.weathering.{enable/rate_molc_ha_yr/ca_frac/mg_frac/k_frac/activation_energy_kJ/degrade_minerals}`
+> - **验收**：`tools/verify_v0_7_0_acceptance.py` 方向带断言（natural 缓降/fertilizer<4.0/lime 回落/排序/无降级/N 收支闭合）；**30 年 8 情景全量运行中**（sensitivity 口径）
+> - **科学诚实**：方向带部分达标（natural 5.34 持平接近达标；fertilizer 8.1 从 11.4 大幅改善但未达 <4.0；lime 未回落）——GAS_PHASE 固定缓冲吞酸是剩余障碍（v0.7.x backlog）
+> - **测试**：289 → **324 passed**；grilling Q11~Q22 定案见 spec 69 + 工单 70~76
 
 ### v0.6.1（2026-08-20）
 
