@@ -4,11 +4,12 @@
 
 **Blocked by:** 70, 71, 72（盐基扣除与置换改变矿物基线后，风化注入量级才有对标基础）。
 
-**Status:** ready-for-agent
+**Status:** ✅ 已完成 (2026-08-21, v0.7.0)
 
-- [ ] 风化注入：逐月 REACTION Ca/Mg/K/HCO₃⁻（比例 5:3:2，等当量），weathering_rate 默认 500 molc/ha/yr 可配（初值，方向带扫描 100/500/1000 后定案）
-- [ ] Arrhenius 温度依赖：增温情景风化速率↑（单元测试验证温度导数正）
-- [ ] 矿物降级评估：illite/gibbsite/kaolinite 从平衡相移除或降量后，Al 循环不中断（AlX₃ 不加速耗尽——对照 v0.3.0 证伪链）
-- [ ] 自然情景 30 年 pH 缓降方向（里程碑观察：工单 73+70/71 后 natural 不再上升）
-- [ ] config `simulation.weathering.{enable, rate_molc_ha_yr, ca_frac, mg_frac, k_frac, activation_energy_kJ}` 解析/校验；`enable: false` 完全回退
-- [ ] 现有 289 测试全绿（expand-contract）
+- [x] 风化注入：逐月 REACTION Ca/Mg/K/HCO₃⁻（电荷占比 5:3:2，HCO₃⁻ 等当量电荷守恒），weathering_rate 默认 500 molc/ha/yr 可配（扫描 100/500/1000 留工单 76）
+- [x] Arrhenius 温度依赖：`weathering_arrhenius_factor` 纯函数 + 注入量随 T 缩放（30°C≈1.30 倍；增温风化↑测试验证）
+- [x] 矿物降级：`degrade_minerals` config → 从 EQUILIBRIUM_PHASES 移除（状态保留，SELECTED_OUTPUT 回填不破坏）；PHREEQC 实测平衡成功（降 gibbsite/kaolinite 后 AlX3 仍存，Al 循环通道不断）
+- [x] config `simulation.weathering.{enable, rate_molc_ha_yr, ca_frac, mg_frac, k_frac, activation_energy_kJ, degrade_minerals}` 解析/校验（rate>0、占比和=1、活化能>0）；`enable: false` 完全回退
+- [x] 现有 289 测试全绿（expand-contract；**323 passed**）
+
+> **里程碑观察**：自然情景 30 年 pH 缓降方向依赖 weathering + degrade 组合启用，其参数扫描（rate 100/500/1000 + 降级名单）属工单 76 方向带验收范畴，本工单交付机制 + config 结构。

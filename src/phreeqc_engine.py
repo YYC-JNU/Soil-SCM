@@ -12,6 +12,7 @@
   - 溶质运移/淋溶
 """
 
+import math
 import numpy as np
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -161,6 +162,22 @@ def exchange_base_ratios(exchange: dict) -> Dict[str, float]:
             'K+': k / total, 'Na+': na / total}
 
 
+def weathering_arrhenius_factor(temp_c: float,
+                                activation_energy_kJ: float,
+                                t_ref_k: float = 298.15) -> float:
+    """v0.7.0 (工单73): 矿物风化 Arrhenius 温度因子 (D2, 气候敏感性传导)
+
+    factor = exp(−Ea/R × (1/T − 1/T_ref)), T 为开尔文
+      - T = T_ref (25°C) → 1.0 (基准)
+      - Ea=40 kJ/mol 时: 30°C ≈ 1.30 (增温 5°C 风化 +30%);
+        20°C ≈ 0.77 (降温风化减缓) → 增温情景产生可观测风化响应 (疑点2)
+    """
+    r = 8.314
+    t_k = temp_c + 273.15
+    return math.exp(-activation_energy_kJ * 1000.0 / r
+                    * (1.0 / t_k - 1.0 / t_ref_k))
+
+
 @dataclass
 class DiagnosticOutput:
     """诊断输出"""
@@ -206,7 +223,8 @@ class PhreeqcEngine:
                  nitrification_k1: float = NITRIFICATION_K1,
                  nitrification_k2: float = NITRIFICATION_K2,
                  initial_psi_cm: float = INITIAL_PSI_CM,
-                 companion_cfg=None):
+                 companion_cfg=None,
+                 weathering_cfg=None):
         """
         参数:
             database: PHREEQC 热力学数据库
@@ -262,6 +280,10 @@ class PhreeqcEngine:
                                       and companion_cfg.enable)
         self.companion_bypass_no3_carry = bool(
             companion_cfg is not None and companion_cfg.bypass_no3_carry)
+        # v0.7.0 (spec 69, 工单73): 矿物风化集总注入配置 (None=禁用, 回退基线)
+        self.weathering_cfg = weathering_cfg
+        self.weathering_enabled = bool(weathering_cfg is not None
+                                       and weathering_cfg.enable)
 
         # ---- 初始化后端 (v0.1.3: 仅官方引擎, phreeqpython 已废弃) ----
         if OFFICIAL_PHREEQC_AVAILABLE:
@@ -1295,8 +1317,15 @@ class PhreeqcEngine:
         # EQUILIBRIUM_PHASES 块 (v0.6.1: 恢复全矿物平衡相, KINETICS 已回退)
         # 矿物量 = 物理摩尔量 × 缩放系数 (折中方案, 见 docs/analysis/Q1_plus_ANALYSIS.md):
         # 物理值会导致碱性突变(pH~9.9), 10% 提供真实缓冲且 pH 合理(4.4-4.5)
+        # v0.7.0 (工单73): weathering.degrade_minerals 指定的矿物从平衡相降级
+        # (不写入本块 → 消除"矿物闪蒸"无限供碱, 疑点1 机制A); 状态仍保留
+        # (SELECTED_OUTPUT 矿物演化回填不破坏 — v0.3.0 证伪教训: 不切断回补)
         lines.append("EQUILIBRIUM_PHASES 1")
+        degrade_set = set(self.weathering_cfg.degrade_minerals
+                          if self.weathering_enabled else [])
         for mineral, moles in state.minerals.items():
+            if mineral in degrade_set:
+                continue
             if moles > 0:
                 scaled = moles * self.mineral_scale
                 lines.append(f"  {mineral:<15} 0.0  {scaled:.6e}")
@@ -1425,6 +1454,31 @@ class PhreeqcEngine:
         if companion_acid_eq > 0:
             reaction_lines.append(
                 f"  H+     {companion_acid_eq:.6e}  # 伴随淋失酸化")
+
+        # v0.7.0 (工单73, spec 69): 矿物风化集总碱度注入 (D2, 不用 KINETICS)
+        # 逐月注入风化碱度: Ca:Mg:K 按电荷占比 (默认 5:3:2) + HCO3- 等当量;
+        # Arrhenius 温度依赖 (rate(T) = rate_ref×exp(−Ea/R×(1/T−1/T_ref)))
+        # 替代瞬时平衡相的"无限供碱" (矿物闪蒸, 疑点1 机制A); 增温情景
+        # 风化↑ → 气候敏感性传导恢复 (疑点2)
+        if self.weathering_enabled:
+            wth = self.weathering_cfg
+            temp_c = forcing.get('temp', 25.0)
+            arrhenius = weathering_arrhenius_factor(
+                temp_c, wth.activation_energy_kJ)
+            monthly_molc = wth.rate_molc_ha_yr / 12.0 * arrhenius
+            # 各盐基注入摩尔量 (电荷占比 → mol, 二价 ×2)
+            ca_mol = monthly_molc * wth.ca_frac / 2.0
+            mg_mol = monthly_molc * wth.mg_frac / 2.0
+            k_mol = monthly_molc * wth.k_frac
+            if ca_mol > 0:
+                reaction_lines.append(f"  Ca+2   {ca_mol:.6e}  # 矿物风化")
+            if mg_mol > 0:
+                reaction_lines.append(f"  Mg+2   {mg_mol:.6e}  # 矿物风化")
+            if k_mol > 0:
+                reaction_lines.append(f"  K+     {k_mol:.6e}  # 矿物风化")
+            if monthly_molc > 0:
+                reaction_lines.append(
+                    f"  HCO3-  {monthly_molc:.6e}  # 矿物风化")
 
         # v0.5.0: 预平衡观测锚定注入 (pH/交换离子修正, 见 pre_equilibrate)
         injection = forcing.get('injection')

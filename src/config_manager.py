@@ -99,6 +99,29 @@ class CompanionConfig:
 
 
 @dataclass
+class WeatheringConfig:
+    """v0.7.0 (spec 69, 工单73): 原生矿物风化集总注入配置 (D2, 不用 KINETICS)
+
+    v0.3.0 证伪 KINETICS (冻结矿物切断 L2 回补→加速 AlX3 耗尽), 故用集总
+    REACTION 注入风化碱度替代瞬时平衡相:
+      - rate_molc_ha_yr: 每层年均风化碱度 (molc/ha/yr, 默认 500; 工单 76 按
+        方向带扫描 100/500/1000 定案)
+      - ca_frac/mg_frac/k_frac: 盐基电荷占比 (Ca:Mg:K=5:3:2 归一, Σ=1)
+      - activation_energy_kJ: Arrhenius 活化能 (硅酸盐风化典型 40 kJ/mol,
+        增温情景风化↑ → 气候敏感性传导恢复)
+      - degrade_minerals: 从 EQUILIBRIUM_PHASES 降级的矿物名列表 (默认空=不降级,
+        保 Al 循环通道不断 — v0.3.0 教训; 工单 76 按方向带扫描定案后用户配置)
+    """
+    enable: bool = False
+    rate_molc_ha_yr: float = 500.0
+    ca_frac: float = 0.5
+    mg_frac: float = 0.3
+    k_frac: float = 0.2
+    activation_energy_kJ: float = 40.0
+    degrade_minerals: List[str] = field(default_factory=list)
+
+
+@dataclass
 class SimulationConfig:
     """模拟控制参数"""
     n_years: int = 50
@@ -122,6 +145,7 @@ class SimulationConfig:
     baseflow: Optional[BaseflowConfig] = None   # v0.6.1: VIC 深层基流 (None=禁用)
     lateral: Optional[LateralConfig] = None     # v0.6.1: Darcy 侧向排水 (None=禁用)
     companion: CompanionConfig = field(default_factory=CompanionConfig)  # v0.7.0: NO3- 伴随淋失
+    weathering: WeatheringConfig = field(default_factory=WeatheringConfig)  # v0.7.0: 矿物风化集总注入
 
 
 @dataclass
@@ -319,6 +343,21 @@ def _parse_companion(raw):
         nh4_exchange=raw.get('nh4_exchange', True))
 
 
+def _parse_weathering(raw):
+    """v0.7.0: 解析 simulation.weathering 节点 (缺省/空 → 默认不启用)"""
+    if not isinstance(raw, dict):
+        raw = {}
+    degrade = raw.get('degrade_minerals', []) or []
+    return WeatheringConfig(
+        enable=raw.get('enable', False),
+        rate_molc_ha_yr=raw.get('rate_molc_ha_yr', 500.0),
+        ca_frac=raw.get('ca_frac', 0.5),
+        mg_frac=raw.get('mg_frac', 0.3),
+        k_frac=raw.get('k_frac', 0.2),
+        activation_energy_kJ=raw.get('activation_energy_kJ', 40.0),
+        degrade_minerals=list(degrade))
+
+
 class ConfigManager:
     """配置管理器: 加载、验证、提供配置参数"""
 
@@ -397,7 +436,8 @@ class ConfigManager:
                 event_driven=s.get('event_driven', False),
                 baseflow=_parse_baseflow(s.get('baseflow')),
                 lateral=_parse_lateral(s.get('lateral')),
-                companion=_parse_companion(s.get('companion'))
+                companion=_parse_companion(s.get('companion')),
+                weathering=_parse_weathering(s.get('weathering'))
             )
             # v0.5.2: surface_infiltration_coeff 已废弃 (Green-Ampt 入渗替代
             # Horton), 残留配置显式报错 (breaking change 明示, 不静默忽略)
@@ -677,6 +717,29 @@ class ConfigManager:
                     "['simulation.companion.bs_high/bs_low' 参数存在问题: "
                     f"阈值需满足 0 < bs_low({comp.bs_low}) < "
                     f"bs_high({comp.bs_high}) ≤ 100, 请确认后再输入]")
+
+        # ---- v0.7.0 (spec 69, 工单73): 矿物风化注入配置校验 ----
+        wth = self.config.simulation.weathering
+        if wth is not None:
+            if not isinstance(wth.enable, bool):
+                raise ValueError(
+                    "['simulation.weathering.enable' 参数存在问题: "
+                    "必须为布尔 (true/false), 请确认后再输入]")
+            if wth.rate_molc_ha_yr <= 0:
+                raise ValueError(
+                    "['simulation.weathering.rate_molc_ha_yr' 参数存在问题: "
+                    f"风化速率 {wth.rate_molc_ha_yr} 必须 >0, 请确认后再输入]")
+            frac_sum = wth.ca_frac + wth.mg_frac + wth.k_frac
+            if not (0.0 < wth.ca_frac < 1.0 and 0.0 < wth.mg_frac < 1.0
+                    and 0.0 < wth.k_frac < 1.0) or abs(frac_sum - 1.0) > 1e-6:
+                raise ValueError(
+                    "['simulation.weathering.ca/mg/k_frac' 参数存在问题: "
+                    f"盐基电荷占比须 0<各<1 且和=1 (当前 {wth.ca_frac}/"
+                    f"{wth.mg_frac}/{wth.k_frac} Σ={frac_sum:.4f}), 请确认后再输入]")
+            if wth.activation_energy_kJ <= 0:
+                raise ValueError(
+                    "['simulation.weathering.activation_energy_kJ' 参数存在问题: "
+                    "活化能必须 >0, 请确认后再输入]")
 
         # ---- v0.5.3: 初始基质势校验 (负值吸力) ----
         psi = self.config.simulation.initial_psi_cm

@@ -324,6 +324,136 @@ def test_nh4_exchange_reaction_injection(profile, soil_info):
     assert sum(vals) == pytest.approx(12.0 * 1000.0 / 14.007, rel=1e-3)
 
 
+# ==================== v0.7.0 (spec 69, 工单73): D2 矿物风化集总注入 ====================
+
+def _weathering_engine(**kw):
+    from src.config_manager import WeatheringConfig
+    kw.setdefault('weathering_cfg', WeatheringConfig(enable=True))
+    return PhreeqcEngine(database="phreeqc.dat", mode="phreeqc", **kw)
+
+
+def test_weathering_arrhenius_factor():
+    """v0.7.0 (工单73): Arrhenius 温度依赖 — T=T_ref→1, T↑→风化↑ (增温响应)"""
+    from src.phreeqc_engine import weathering_arrhenius_factor
+    f25 = weathering_arrhenius_factor(25.0, 40.0)   # T_ref=298.15K
+    f30 = weathering_arrhenius_factor(30.0, 40.0)
+    f20 = weathering_arrhenius_factor(20.0, 40.0)
+    assert f25 == pytest.approx(1.0, rel=1e-6)
+    assert f30 > f25          # 增温风化加速 (气候敏感性传导)
+    assert f20 < f25          # 降温风化减缓
+    # Ea 越大温度敏感度越高
+    assert (weathering_arrhenius_factor(30.0, 60.0)
+            > weathering_arrhenius_factor(30.0, 40.0))
+
+
+def test_weathering_reaction_injection_math(profile, soil_info):
+    """v0.7.0 (工单73): 风化 REACTION 注入数学 — Ca:Mg:K 电荷占比 + HCO3 等当量
+
+    rate=1200 molc/ha/yr → 月 100 molc (T=25°C, Arrhenius=1);
+    Ca:Mg:K 电荷 5:3:2, HCO3- 等当量 (电荷守恒)。
+    """
+    import re
+    from src.config_manager import WeatheringConfig
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc",
+                      weathering_cfg=WeatheringConfig(
+                          enable=True, rate_molc_ha_yr=1200.0))
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    inp = e._build_phreeqc_input(state, dict(FORCING, temp=25.0),
+                                 MonthlyAction(), profile)
+    # 解析 # 矿物风化 行: {物种: mol}
+    vals = {}
+    for line in inp.splitlines():
+        if "# 矿物风化" in line:
+            sp, amt = line.split("# 矿物风化")[0].split()
+            vals[sp.strip()] = float(amt)
+    assert 'HCO3-' in vals and 'Ca+2' in vals and 'Mg+2' in vals and 'K+' in vals
+    hco3 = vals['HCO3-']
+    # HCO3- 等当量 = 月总 molc (100)
+    assert hco3 == pytest.approx(1200.0 / 12.0, rel=1e-6)
+    # 电荷守恒: Ca+2×2 + Mg+2×2 + K+ = HCO3-
+    assert (vals['Ca+2'] * 2 + vals['Mg+2'] * 2 + vals['K+']
+            == pytest.approx(hco3, rel=1e-6))
+    # Ca:Mg:K 电荷比 5:3:2
+    assert vals['Ca+2'] * 2 / hco3 == pytest.approx(0.5, rel=1e-6)
+    assert vals['Mg+2'] * 2 / hco3 == pytest.approx(0.3, rel=1e-6)
+    assert vals['K+'] / hco3 == pytest.approx(0.2, rel=1e-6)
+
+
+def test_weathering_arrhenius_applied_to_injection(profile, soil_info):
+    """v0.7.0 (工单73): 注入量随温度 Arrhenius 缩放 (增温→风化碱度↑)"""
+    import re
+    from src.config_manager import WeatheringConfig
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc",
+                      weathering_cfg=WeatheringConfig(
+                          enable=True, rate_molc_ha_yr=1200.0))
+    state = e.build_initial_state(profile, soil_info, 0.015)
+
+    def hco3_at(temp):
+        inp = e._build_phreeqc_input(state, dict(FORCING, temp=temp),
+                                     MonthlyAction(), profile)
+        for line in inp.splitlines():
+            if "# 矿物风化" in line and line.startswith("  HCO3-"):
+                return float(line.split()[1])
+        return 0.0
+
+    h25 = hco3_at(25.0)
+    h30 = hco3_at(30.0)
+    assert h25 == pytest.approx(1200.0 / 12.0, rel=1e-6)
+    assert h30 > h25   # 增温风化碱度注入增强
+
+
+def test_weathering_disabled_no_injection(profile, soil_info):
+    """v0.7.0 (工单73): weathering 关闭 → 无风化注入 (回退基线)"""
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    inp = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile)
+    assert "# 矿物风化" not in inp
+
+
+def test_weathering_degrade_minerals_from_equilibrium(profile, soil_info):
+    """v0.7.0 (工单73): degrade_minerals → 该矿物从 EQUILIBRIUM_PHASES 移除
+
+    保 Al 循环通道 (Al(OH)3(a)/gibbsite 未降级时仍平衡相; 降级后状态保留、
+    仅不写入平衡相 — v0.3.0 证伪教训: 不切断 L2 矿物回补)。
+    """
+    from src.config_manager import WeatheringConfig
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc",
+                      weathering_cfg=WeatheringConfig(
+                          enable=True, degrade_minerals=['gibbsite']))
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    inp = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile)
+    # EQUILIBRIUM_PHASES 无 gibbsite
+    eq_block = inp.split("EQUILIBRIUM_PHASES")[1].split("GAS_PHASE")[0]
+    assert "gibbsite" not in eq_block
+    # 其他矿物仍在
+    assert "kaolinite" in eq_block
+    # 状态仍保留 gibbsite (不破坏矿物演化回填)
+    assert 'gibbsite' in state.minerals
+
+
+def test_weathering_phreeqc_balance_with_degrade(profile, soil_info):
+    """v0.7.0 (工单73): 风化注入 + 矿物降级 PHREEQC 实测平衡成功
+
+    验证: 风化碱度 REACTION (Ca/Mg/K/HCO3) 与降级后的平衡相 (gibbsite/
+    kaolinite 移除) 在真实 PHREEQC 平衡中收敛, Al 循环通道不断 (AlX3 仍
+    在交换相), pH 有效。
+    """
+    from src.config_manager import WeatheringConfig
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc",
+                      weathering_cfg=WeatheringConfig(
+                          enable=True, rate_molc_ha_yr=500.0,
+                          degrade_minerals=['gibbsite', 'kaolinite']))
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    new_state, diag = e.run_monthly_step(state, FORCING, MonthlyAction(),
+                                         profile)
+    assert new_state.ph > 0.0
+    assert diag is not None
+    # Al 循环通道: 交换相 AlX3 仍存在 (未因矿物降级而立即耗尽)
+    assert new_state.exchange.get('AlX3', 0.0) > 0.0
+    # 矿化风化注入后溶液盐基响应 (Ca/Mg 解吸或保留, 非 NaN)
+    assert new_state.solution.get('Ca', 0.0) >= 0.0
+
+
 def test_nh4_exchange_skipped_without_fertilizer(profile, soil_info):
     """v0.7.0 (工单72): 无施肥 → 无置换注入"""
     e = _companion_engine()

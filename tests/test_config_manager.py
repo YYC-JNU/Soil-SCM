@@ -773,3 +773,52 @@ def test_companion_nh4_exchange_default_and_parse(tmp_path):
                   "    nh4_exchange: 1\n", encoding="utf-8")
     with pytest.raises(ValueError, match="nh4_exchange"):
         ConfigManager(str(p3))
+
+
+# ==================== v0.7.0 (spec 69, 工单73): weathering 配置 ====================
+
+def test_weathering_default_disabled(cfg):
+    """v0.7.0 (工单73): 默认 weathering 不启用 (D2 为可回退增强)"""
+    wth = cfg.config.simulation.weathering
+    assert wth is not None
+    assert wth.enable is False
+    assert wth.rate_molc_ha_yr == 500.0
+
+
+def test_weathering_parse(tmp_path):
+    """v0.7.0 (工单73): simulation.weathering 节点解析"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text("simulation:\n  n_years: 2\n  weathering:\n"
+                 "    enable: true\n    rate_molc_ha_yr: 800.0\n"
+                 "    ca_frac: 0.6\n    mg_frac: 0.3\n    k_frac: 0.1\n"
+                 "    activation_energy_kJ: 50.0\n"
+                 "    degrade_minerals: [gibbsite, kaolinite]\n",
+                 encoding="utf-8")
+    wth = ConfigManager(str(p)).config.simulation.weathering
+    assert wth.enable is True
+    assert wth.rate_molc_ha_yr == 800.0
+    assert wth.ca_frac == 0.6 and wth.mg_frac == 0.3 and wth.k_frac == 0.1
+    assert wth.activation_energy_kJ == 50.0
+    assert wth.degrade_minerals == ['gibbsite', 'kaolinite']
+
+
+def test_weathering_invalid_raises(tmp_path):
+    """v0.7.0 (工单73): weathering 值域校验 (rate≤0 / 占比和≠1 / 活化能≤0)"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text("simulation:\n  n_years: 2\n  weathering:\n"
+                 "    enable: true\n    rate_molc_ha_yr: 0.0\n",
+                 encoding="utf-8")
+    with pytest.raises(ValueError, match="rate"):
+        ConfigManager(str(p))
+    p2 = tmp_path / "cfg2.yaml"
+    p2.write_text("simulation:\n  n_years: 2\n  weathering:\n"
+                  "    enable: true\n    ca_frac: 0.7\n    mg_frac: 0.3\n"
+                  "    k_frac: 0.2\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="frac"):
+        ConfigManager(str(p2))
+    p3 = tmp_path / "cfg3.yaml"
+    p3.write_text("simulation:\n  n_years: 2\n  weathering:\n"
+                  "    enable: true\n    activation_energy_kJ: -1.0\n",
+                  encoding="utf-8")
+    with pytest.raises(ValueError, match="activation"):
+        ConfigManager(str(p3))
