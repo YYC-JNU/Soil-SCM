@@ -352,6 +352,12 @@ def _extract_diagnostics_with_hydrology(soil_states, hydrology, runoff_mm,
     for i in range(n):
         layer_diags[i]['leach_no3_mol'] = sum(
             row.get(f'leach_no3_L{i+1}_mol', 0.0) for row in ev_details)
+    # v0.7.x (工单80): 盐基淋失月度聚合 (eq; 事件级 Σ, 非事件路径恒 0 保列)
+    for i in range(n):
+        layer_diags[i]['base_loss_eq'] = sum(
+            row.get(f'base_loss_eq_L{i+1}', 0.0) for row in ev_details)
+        layer_diags[i]['e_base_anion_eq'] = sum(
+            row.get(f'e_base_anion_eq_L{i+1}', 0.0) for row in ev_details)
     # v0.6.0 (Q14): First-Flush 峰值列 (L1 当月最大单场淋失, mmol/ha;
     # 非事件驱动路径恒 0, 列保持存在)
     if diag_objs and diag_objs[0] is not None:
@@ -489,7 +495,9 @@ def run_simulation(config_path: str = "config/config.yaml"):
                            companion_cfg=getattr(cfg.simulation, 'companion', None),
                            weathering_cfg=getattr(cfg.simulation, 'weathering', None),
                            charge_pairing_cfg=getattr(cfg.simulation,
-                                                      'charge_pairing', None))
+                                                      'charge_pairing', None),
+                           base_leaching_cfg=getattr(cfg.simulation,
+                                                     'base_leaching', None))
 
     # 构建初始状态 (initial_pCO2 已在阶段 4 中计算)
     # WF2/Q1: 多分层时构建 List[SoilState]; L6 (v0.4.0): 支持逐层参数覆盖

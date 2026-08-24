@@ -80,6 +80,23 @@ simulation:
     enable: true
     anion: An
 
+  # ---- v0.7.x (工单80): 盐基淋失强化 (base_leaching, D3 扩展至无 NO3- 通道) ----
+  # lime 永不回落 (Ca 盐基供给 > 淋失) 与 fertilizer<4.0 (盐基滞留) 的共同缺环:
+  # 对每层每场, "离开本层的全部水" (drains+lateral+baseflow, Q4=A) 携带的溶液
+  # 盐基当量 E_base 在下一场平衡前经 REACTION 注入等当量保守惰性阴离子 (默认
+  # An-, Q6=A) → 平衡自洽拽出交换相盐基 (Gapon, Q2=A), 盐基被持续追赶带走。
+  # 与 NO3- 伴随 E_loss 叠加正交 (Q7=A, 独立记账不双重计数)。
+  #   enable: 总开关 (默认 true, 全情景含 natural; false=工单 80 前基线,
+  #     供 A/B 对照 — natural 30y 前后轨迹叠加对比图)
+  #   anion: 保守惰性阴离子元素名 (默认 An, 与 companion/charge_pairing 共享物种)
+  #   bs_high/bs_low: BS 分级降权 % (Q5=A: ≥bs_high 全量 / 中间线性衰减 /
+  #     <bs_low 归零不注酸 — 酸化职责保留给硝化产酸/companion acid)
+  base_leaching:
+    enable: true
+    anion: An
+    bs_high: 30.0
+    bs_low: 10.0
+
   # ---- v0.7.0: 原生矿物风化集总注入 (D2, spec 69 工单73) ----
   # 集总风化碱度 REACTION 注入 (不用 KINETICS, v0.3.0 证伪 KINETICS 冻结矿物
   # 切断 L2 回补→加速 AlX3 耗尽):

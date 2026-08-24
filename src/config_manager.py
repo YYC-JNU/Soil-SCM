@@ -122,6 +122,26 @@ class WeatheringConfig:
 
 
 @dataclass
+class BaseLeachingConfig:
+    """v0.7.x (工单80): 盐基淋失强化配置 (D3 扩展至无 NO₃⁻ 通道)
+
+    /grilling Q1~Q10 定案 (2026-08-24): 对每层每场, \"离开本层的全部水\"
+    (drains+lateral+baseflow) 携带的溶液盐基当量作为 E_base, 下一场平衡前
+    REACTION 注入等当量保守惰性阴离子 (默认 An-) → 平衡自洽拽出交换相盐基
+    (Gapon), 盐基被持续追赶带走。按 BS 分级降权:
+      - BS ≥ bs_high: 全量注入
+      - bs_low ≤ BS < bs_high: 线性衰减 ×(BS−bs_low)/(bs_high−bs_low)
+      - BS < bs_low: 归零 (zero, 不注入 — 酸化职责保留给硝化/companion acid,
+        防 natural 被本通道额外酸化拉出 4.5~5.0 带)
+    全情景启用 (含 natural); enable: false = 工单 80 前基线 (A/B 对照)。
+    """
+    enable: bool = True
+    anion: str = "An"          # 保守惰性阴离子元素名 (单元素名, 复用 companion/pairing 物种)
+    bs_high: float = 30.0
+    bs_low: float = 10.0
+
+
+@dataclass
 class ChargePairingConfig:
     """v0.7.x (工单77): REACTION 电荷平衡修复配置
 
@@ -165,6 +185,7 @@ class SimulationConfig:
     companion: CompanionConfig = field(default_factory=CompanionConfig)  # v0.7.0: NO3- 伴随淋失
     weathering: WeatheringConfig = field(default_factory=WeatheringConfig)  # v0.7.0: 矿物风化集总注入
     charge_pairing: ChargePairingConfig = field(default_factory=ChargePairingConfig)  # v0.7.x: REACTION 电荷平衡
+    base_leaching: BaseLeachingConfig = field(default_factory=BaseLeachingConfig)  # v0.7.x (工单80): 盐基淋失强化
 
 
 @dataclass
@@ -390,6 +411,21 @@ def _parse_charge_pairing(raw):
         anion=raw.get('anion', 'An'))
 
 
+def _parse_base_leaching(raw):
+    """v0.7.x (工单80): 解析 simulation.base_leaching 节点 (缺省 → 默认启用)
+
+    全情景启用 (Q3=C, 含 natural 由 BS 分级自然降权); 显式 enable: false
+    即工单 80 前基线 (A/B 对照, 供 natural 30y 轨迹叠加对比)。
+    """
+    if not isinstance(raw, dict):
+        raw = {}
+    return BaseLeachingConfig(
+        enable=raw.get('enable', True),
+        anion=raw.get('anion', 'An'),
+        bs_high=raw.get('bs_high', 30.0),
+        bs_low=raw.get('bs_low', 10.0))
+
+
 class ConfigManager:
     """配置管理器: 加载、验证、提供配置参数"""
 
@@ -470,7 +506,8 @@ class ConfigManager:
                 lateral=_parse_lateral(s.get('lateral')),
                 companion=_parse_companion(s.get('companion')),
                 weathering=_parse_weathering(s.get('weathering')),
-                charge_pairing=_parse_charge_pairing(s.get('charge_pairing'))
+                charge_pairing=_parse_charge_pairing(s.get('charge_pairing')),
+                base_leaching=_parse_base_leaching(s.get('base_leaching'))
             )
             # v0.5.2: surface_infiltration_coeff 已废弃 (Green-Ampt 入渗替代
             # Horton), 残留配置显式报错 (breaking change 明示, 不静默忽略)
@@ -773,6 +810,23 @@ class ConfigManager:
                 raise ValueError(
                     "['simulation.weathering.activation_energy_kJ' 参数存在问题: "
                     "活化能必须 >0, 请确认后再输入]")
+
+        # ---- v0.7.x (工单80): 盐基淋失强化配置校验 ----
+        bl = self.config.simulation.base_leaching
+        if bl is not None:
+            if not isinstance(bl.enable, bool):
+                raise ValueError(
+                    "['simulation.base_leaching.enable' 参数存在问题: "
+                    "必须为布尔 (true/false), 请确认后再输入]")
+            if not (0.0 < bl.bs_low < bl.bs_high <= 100.0):
+                raise ValueError(
+                    "['simulation.base_leaching.bs_high/bs_low' 参数存在问题: "
+                    f"阈值需满足 0 < bs_low({bl.bs_low}) < "
+                    f"bs_high({bl.bs_high}) ≤ 100, 请确认后再输入]")
+            if not bl.anion or not bl.anion.strip():
+                raise ValueError(
+                    "['simulation.base_leaching.anion' 参数存在问题: "
+                    "保守惰性阴离子元素名不能为空 (默认 An), 请确认后再输入]")
 
         # ---- v0.5.3: 初始基质势校验 (负值吸力) ----
         psi = self.config.simulation.initial_psi_cm

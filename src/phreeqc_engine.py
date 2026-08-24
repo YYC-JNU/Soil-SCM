@@ -130,6 +130,33 @@ def calc_no3_leaching(pool_mol: float, water_out_L: float,
     return min(pool_mol * (water_out_L / v), pool_mol)
 
 
+def solution_base_eq(solution: dict, volume: float) -> float:
+    """v0.7.x (工单80): 溶液盐基当量总量 (eq)
+
+    eq = (2×Ca + 2×Mg + K + Na) × volume
+      - Ca/Mg 二价 ×2, K/Na 一价 ×1 (与 exchange_base_ratios 同价态约定)
+      - Al 为酸性盐基 (Al³⁺), 不计入
+      - volume ≤ 0 → 0 (防负当量)
+    """
+    if volume <= 0.0:
+        return 0.0
+    return ((solution.get('Ca', 0.0) * 2.0
+             + solution.get('Mg', 0.0) * 2.0
+             + solution.get('K', 0.0)
+             + solution.get('Na', 0.0)) * volume)
+
+
+def calc_base_leaching(base_eq: float, water_out_L: float,
+                       v_pool_L: float) -> float:
+    """v0.7.x (工单80): 盐基随水移出当量 (eq) — E_base, 与 NO₃⁻ 池同构
+
+    E_base = min(溶液盐基eq × water_out/V_pool, 溶液盐基eq)  (0 ≤ lost ≤ pool)
+      - water_out_L: 离开本层的全部水 (drains + lateral + baseflow)
+      - 复用 calc_no3_leaching 同构不变量 (全局 pool≥0, Q19 哲学延续)
+    """
+    return calc_no3_leaching(base_eq, water_out_L, v_pool_L)
+
+
 def calc_base_saturation(exchange: dict) -> float:
     """v0.7.0 (工单71): 盐基饱和度 BS% — 与 main._extract_diagnostics 同公式
 
@@ -225,7 +252,8 @@ class PhreeqcEngine:
                  initial_psi_cm: float = INITIAL_PSI_CM,
                  companion_cfg=None,
                  weathering_cfg=None,
-                 charge_pairing_cfg=None):
+                 charge_pairing_cfg=None,
+                 base_leaching_cfg=None):
         """
         参数:
             database: PHREEQC 热力学数据库
@@ -292,17 +320,26 @@ class PhreeqcEngine:
         self.charge_pairing_cfg = charge_pairing_cfg
         self.charge_pairing_enabled = bool(
             charge_pairing_cfg is None or charge_pairing_cfg.enable)
+        # v0.7.x (工单80): 盐基淋失强化 — None=禁用 (回归护栏, 同 companion);
+        # main/sensitivity 从 config 传入 (config.yaml 默认启用)。enable:false
+        # = 工单 80 前基线 (A/B 对照, natural 30y 轨迹叠加对比)。
+        self.base_leaching_cfg = base_leaching_cfg
+        self.base_leaching_enabled = bool(base_leaching_cfg is not None
+                                          and base_leaching_cfg.enable)
         # 配对阴离子名: companion 启用时与其 inert_anion 共享 (单一定义);
-        # 否则用 charge_pairing.anion (默认 An)
+        # 否则用 charge_pairing.anion (默认 An); 否则 base_leaching.anion
         if companion_cfg is not None and companion_cfg.enable:
             self.pair_anion = companion_cfg.inert_anion
         elif charge_pairing_cfg is not None:
             self.pair_anion = charge_pairing_cfg.anion
+        elif base_leaching_cfg is not None:
+            self.pair_anion = base_leaching_cfg.anion
         else:
             self.pair_anion = "An"
-        # An- 物种定义条件: companion 或 charge pairing 任一启用
+        # An- 物种定义条件: companion 或 charge pairing 或 base leaching 任一启用
         self.anion_defined = bool(self.companion_enabled
-                                  or self.charge_pairing_enabled)
+                                  or self.charge_pairing_enabled
+                                  or self.base_leaching_enabled)
 
         # ---- 初始化后端 (v0.1.3: 仅官方引擎, phreeqpython 已废弃) ----
         if OFFICIAL_PHREEQC_AVAILABLE:
@@ -862,6 +899,27 @@ class PhreeqcEngine:
             return e_loss_eq * frac, 0.0, 'hybrid'
         return 0.0, e_loss_eq, 'acid'
 
+    def _grade_base_leaching(self, e_base_eq: float, bs: float):
+        """v0.7.x (工单80): 盐基淋失 E_base 分级降权 (Q5=A)
+
+        按层盐基饱和度 BS 动态降权 (Q3=C: 全情景含 natural 自然保护):
+          - BS ≥ bs_high: 全量注入 An- (交换相盐基充足, Gapon 正常驱动解吸)
+          - bs_low ≤ BS < bs_high: An- × 线性衰减 (BS−bs_low)/(bs_high−bs_low)
+          - BS < bs_low: 归零 (zero, 不注酸) — E_base 角色是"盐基淋失"而非
+            "酸化注入"; 酸化由硝化产酸/companion acid 负责; 防 natural 长期
+            BS 下降后被本通道额外注酸拉出 4.5~5.0 带
+
+        返回: (anion_eq, mode) — mode ∈ inert/hybrid/zero
+        """
+        bs_high = self.base_leaching_cfg.bs_high
+        bs_low = self.base_leaching_cfg.bs_low
+        if bs >= bs_high:
+            return e_base_eq, 'inert'
+        if bs >= bs_low:
+            frac = (bs - bs_low) / (bs_high - bs_low)
+            return e_base_eq * frac, 'hybrid'
+        return 0.0, 'zero'
+
     def _run_multi_layer_events(self, states: list, monthly_forcing: dict,
                                 action, soil_profile, layer_pco2s,
                                 event_list: list, hydrology: dict = None):
@@ -886,6 +944,8 @@ class PhreeqcEngine:
         # v0.7.0 (工单71): 各层"上一场淋失产生的伴随当量"待下场平衡前注入
         # (跨场保留: 本场淋失 → 下一场注入, 逐场滚动)
         pending_e_loss = [0.0] * n
+        # v0.7.x (工单80): 盐基淋失 E_base 跨场滚动 (本场淋失 → 下场注入 An-)
+        pending_e_base = [0.0] * n
         for ev_idx, ev in enumerate(event_list):
             layer_states = []
             inflow_ions = {}
@@ -933,6 +993,21 @@ class PhreeqcEngine:
                             companion_acid_eq)
                 layer_forcing['companion_anion_eq'] = companion_anion_eq
                 layer_forcing['companion_acid_eq'] = companion_acid_eq
+                # v0.7.x (工单80): 盐基淋失伴随注入 — 上一场 E_base 在本场平衡前
+                # 经 REACTION 注入 An- (Q4=A: 离开本层全部水携带的盐基当量);
+                # BS 分级降权 (Q5=A: <bs_low 归零不注酸), 交换相由 Gapon 自洽
+                base_anion_eq = 0.0
+                base_mode = 'none'
+                if self.base_leaching_enabled and pending_e_base[i] > 0:
+                    bs = calc_base_saturation(new_states[i].exchange)
+                    base_anion_eq, base_mode = self._grade_base_leaching(
+                        pending_e_base[i], bs)
+                    if base_mode == 'zero':
+                        logger.debug(
+                            "v0.7.x 盐基淋失: 层 %d BS=%.1f%% < %.0f%%, "
+                            "E_base 归零 (不注酸)", i + 1, bs,
+                            self.base_leaching_cfg.bs_low)
+                layer_forcing['base_anion_eq'] = base_anion_eq
                 rain_ev = RainEvent(precip_mm=ev.get('precip_mm', 0.0),
                                     duration_h=2.0)
                 # 该场事件后的 θ (事件化水文已逐场更新, ev['theta'] 记录)
@@ -975,6 +1050,24 @@ class PhreeqcEngine:
                 # 记账列 (v0.7.0): 池存量 + 该场淋失量
                 row[f'n_no3_pool_L{i+1}'] = new_state.n_no3_pool
                 row[f'leach_no3_L{i+1}_mol'] = leach_no3_i
+                # v0.7.x (工单80): 盐基淋失 E_base — 仅对模型实际带走的盐基通道配对
+                # (lateral+baseflow 出系统, Q3 同通道; 排除 drains — 事件路径不搬
+                # 溶质, drains 项会形成"纯 An- 泵"正反馈: 注入拽盐基→盐基滞留→
+                # E_base 又涨→交换相耗尽→Al³⁺ 水解酸化崩盘, 2026-08-24 探针证伪
+                # Q4 全水道草案; 修正为出系统出口, 自限无正反馈)
+                base_loss_eq_i = 0.0
+                if self.base_leaching_enabled:
+                    q_out_system = ((ev.get('lateral') or [0.0] * n)[i]
+                                    + (ev.get('baseflow') or [0.0] * n)[i])
+                    v_pool = max(new_state.volume, 1.0)
+                    base_total_eq = solution_base_eq(
+                        new_state.solution, new_state.volume)
+                    base_loss_eq_i = calc_base_leaching(
+                        base_total_eq, q_out_system, v_pool)
+                    pending_e_base[i] = base_loss_eq_i
+                row[f'base_loss_eq_L{i+1}'] = base_loss_eq_i
+                row[f'base_mode_L{i+1}'] = base_mode
+                row[f'e_base_anion_eq_L{i+1}'] = base_anion_eq
                 # 记账列 (v0.7.0, 工单71): 伴随淋失分级注入记录
                 # (本场注入 = 上一场淋失当量的分级结果; 本场淋失 → 下一场注入)
                 row[f'companion_mode_L{i+1}'] = companion_mode
@@ -993,6 +1086,28 @@ class PhreeqcEngine:
                         getattr(action, 'n_amount', 0.0) * N_MOL_PER_KG_N
                         * self.nitrification_k1 * self.nitrification_k2)
                 row[f'nh4_exchanged_eq_L{i+1}'] = nh4_exchanged_i
+                # ---- v0.7.x (工单80): 事件化层间溶质传递 (修复 v0.6.0 事件路径遗漏) ----
+                # 月级路径 (run_monthly_multi_layer 非事件) 已有 drains 溶质传递
+                # (inflow_ions, Q7 平流守恒); 事件路径 (v0.6.0) 只传 NO3- 池,
+                # 垂直渗漏不搬溶液溶质 → 盐基滞留溶液 (fertilizer/lime 碱化的
+                # 结构性根因之一: 只排水不排盐)。此处补充: 每层 drains 按比例
+                # 扣除溶液溶质并作为 mol 注入下层 (i<n-1 时经 inflow_ions;
+                # L4 drains = 深层出系统, 仅扣除)。交换相靠后续平衡 Gapon 补充。
+                drain_water_L = ev['drains'][i]
+                if drain_water_L > 0:
+                    vol_d = max(new_state.volume, 1.0)
+                    frac_d = min(drain_water_L / vol_d, 1.0)
+                    moved_ions = {}
+                    for ion, conc in list(new_state.solution.items()):
+                        if ion in ('temp', 'pH', 'pe', 'units'):
+                            continue
+                        n_out = conc * drain_water_L
+                        if n_out > 0:
+                            moved_ions[ion] = n_out
+                        new_state.solution[ion] = max(
+                            conc * (1.0 - frac_d), C_MIN)
+                    if i < n - 1:
+                        inflow_ions = moved_ions
                 # ---- v0.6.1 (spec 62 Q3/Q6): 溶质随水移出系统 + 浓度冲洗 ----
                 # 侧向/基流排水带走溶质: n_new = max(n_old×(1−Q_out/V), C_min×V)
                 # (工单 63 已提供逐场 lateral/baseflow 水量出口, ev['lateral']/
@@ -1499,6 +1614,14 @@ class PhreeqcEngine:
             if self.charge_pairing_enabled:
                 reaction_lines.append(
                     f"  {self.pair_anion}- {companion_acid_eq:.6e}  # 电荷配对")
+
+        # v0.7.x (工单80): 盐基淋失伴随注入 — 上一场 E_base (离开本层全部水的
+        # 溶液盐基当量, Q4=A) 分级后 (Q5=A) 注入等当量 An- → 平衡自洽拽出交换
+        # 相盐基 (Gapon); 独立于 charge_pairing (保守阴离子伴随, 不依赖配对开关)
+        base_anion_eq = forcing.get('base_anion_eq', 0.0)
+        if base_anion_eq > 0 and self.base_leaching_enabled:
+            reaction_lines.append(
+                f"  {self.pair_anion}- {base_anion_eq:.6e}  # 盐基淋失伴随")
 
         # v0.7.0 (工单73, spec 69): 矿物风化集总碱度注入 (D2, 不用 KINETICS)
         # 逐月注入风化碱度: Ca:Mg:K 按电荷占比 (默认 5:3:2) + HCO3- 等当量;

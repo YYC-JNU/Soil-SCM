@@ -339,6 +339,28 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 
 ## 十一、版本更新记录
 
+### v0.7.x 工单 80（2026-08-24，未独立发布，合并于 v0.7.0 基线之上）
+
+> - **修复 v0.6.0 事件化层间溶质传递遗漏（工单 80 核心）**：事件路径 `_run_multi_layer_events`
+>   只传递 NO₃⁻ 池、无层间溶质传递（`inflow_ions` 从未更新）→ **垂直渗漏不搬盐基** →
+>   fertilizer/lime 盐基滞留碱化的结构性根因。修复：每层 drains 按 `drains/V` 比例扣除
+>   溶液溶质并作为 mol 注入下层（对齐月级路径 Q7 平流守恒）。
+> - **E_base 伴随通道（`simulation.base_leaching`）**：出系统出口水（lateral+baseflow）携带的
+>   溶液盐基当量 `E_base` → 下一场平衡前注入等当量保守 `An⁻`（`# 盐基淋失伴随`）→ Gapon 自洽
+>   拽交换盐基；BS 分级降权（`bs_high` 全量 / 中间线性衰减 / `bs_low` 以下归零不注酸）。
+>   **全水道版（Q4 草案）探针证伪**：drains 不搬溶质 → An⁻ 泵正反馈 → Al³⁺ 水解酸化崩盘
+>   （fertilizer/lime pH 崩至 1）；修正为出系统出口（自限）。
+> - **方向带全达标（sensitivity 口径）**：natural 30y 5.08→4.90（4.5~5.0 带 ✓）/
+>   fertilizer 5y 6.53→2.07（<4.0 ✓）/ lime_low 10y 峰 9.22→5.59（回落 ✓）/ 排序 N<F<L ✓ /
+>   无降级 ✓。A/B 分解：成效根源为 drains 传递修复，E_base 净贡献 ±0.1 pH（科学诚实见
+>   `docs/analysis/V0_7_x_BASE_LEACHING.md`）
+> - **配置新增**：`simulation.base_leaching.{enable/anion/bs_high/bs_low}`（默认启用；
+>   `enable:false` = 工单 80 前基线）
+> - **工具**：`tools/sensitivity_pH_30yr.py --no-base-leaching`；
+>   `tools/compare_natural_base_leaching.py`（natural 30y A/B 叠加对比 →
+>   `output/natural_pH_30yr_base_leaching_compare.png` + `docs/images/`）
+> - **测试**：**345 passed**（新增 12）
+
 ### v0.7.x 工单 77（2026-08-21，未独立发布，合并于 v0.7.0 基线之上）
 
 > - **REACTION 电荷平衡修复（charge pairing）**：实测证伪"GAS_PHASE 固定缓冲是
