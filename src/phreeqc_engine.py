@@ -32,7 +32,11 @@ from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
                            INITIAL_PSI_CM, GREEN_AMPT_PSI_F_MM,
                            DEFAULT_KSAT_SURFACE, MAX_CONCENTRATION_RATIO,
                            FALLBACK_MAX_CONSECUTIVE,
-                           C_MIN, CONC_WARN)
+                           C_MIN, CONC_WARN,
+                           KNOBS_ITERATIONS, KNOBS_TOLERANCE,
+                           KNOBS_TOLERANCE_PRE,
+                           KNOBS_CONVERGENCE_TOLERANCE,
+                           KNOBS_STEP_SIZE)
 from src.vgm import theta_to_water_L
 from src.logging_config import get_logger
 from src.scenario_controller import MonthlyAction
@@ -340,6 +344,11 @@ class PhreeqcEngine:
         self.anion_defined = bool(self.companion_enabled
                                   or self.charge_pairing_enabled
                                   or self.base_leaching_enabled)
+        # v0.7.x (工单78): 预平衡/模拟双 tolerance — 预平衡从远平衡起点需 1e-12
+        # (宽松假收敛稳定, 1e-9 会第一步迭代超限返回垃圾解 CaX2=0); 模拟步从
+        # 预平衡状态 (接近平衡) 用 1e-9 (lime 高 pH 真收敛 10.18, 1e-12 静默假
+        # 收敛 4.89)。_build_phreeqc_input 据此选 -tolerance。
+        self._in_pre_equilibration = False
 
         # ---- 初始化后端 (v0.1.3: 仅官方引擎, phreeqpython 已废弃) ----
         if OFFICIAL_PHREEQC_AVAILABLE:
@@ -675,6 +684,18 @@ class PhreeqcEngine:
         """
         if self.mode == 'simplified' or self.backend != 'official':
             return state
+
+        # v0.7.x (工单78): 预平衡阶段用宽松 tolerance (1e-12) — 从远平衡起点稳定;
+        # 模拟步用 1e-9 (真收敛, lime 高 pH 不假收敛)。_build_phreeqc_input 读此标志。
+        self._in_pre_equilibration = True
+        try:
+            return self._pre_equilibrate_inner(state, soil_profile, max_steps)
+        finally:
+            self._in_pre_equilibration = False
+
+    def _pre_equilibrate_inner(self, state: SoilState, soil_profile,
+                               max_steps: int = 100) -> SoilState:
+        """预平衡主体 (观测锚定迭代, 在 _in_pre_equilibration 标志下执行)"""
 
         from src.initial_condition import InitialConditionBuilder
         from src.scenario_controller import MonthlyAction
@@ -1188,6 +1209,35 @@ class PhreeqcEngine:
             diags_out[0].flush_base_peak_mmol = flush_base_peak
         return new_states, diags_out
 
+    def _warning_count(self) -> int:
+        """PHREEQC 当前警告行数 (本次 RunString 后增量判断用)"""
+        try:
+            return self.official.GetWarningStringLineCount()
+        except Exception:
+            return 0
+
+    def _has_new_convergence_warning(self, before: int) -> bool:
+        """本次 RunString 新增警告含收敛失败关键词 (超限/数值方法失败)
+
+        PHREEQC 在 KNOBS 迭代超限时不抛异常、返回垃圾解 (交换相全 0/溶液
+        不变), 需检测防污染状态链 (工单78, 2026-08-24 探针)。
+        """
+        try:
+            n = self.official.GetWarningStringLineCount()
+        except Exception:
+            return False
+        if n <= before:
+            return False
+        for i in range(before, n):
+            try:
+                line = self.official.GetWarningStringLine(i) or ''
+            except Exception:
+                continue
+            if ('Maximum iterations' in line
+                    or 'Numerical method failed' in line):
+                return True
+        return False
+
     def _run_official_step(self, state, forcing, action, profile,
                            solution_water_L=None, inject_water=True,
                            path='monthly'):
@@ -1216,7 +1266,38 @@ class PhreeqcEngine:
             solution_water_L=solution_water_L, inject_water=inject_water)
 
         try:
+            warn_before = self._warning_count()
             self.official.RunString(input_string)
+            # v0.7.x (工单78): 收敛失败检测 — 模拟步 1e-9 迭代超限时自动重试。
+            # 重试策略 (探针 2026-08-24): ① 先提高迭代 (1e-9 真收敛, lime 高 pH
+            # 需 >100 牛顿步) ② 仍失败 → 宽松 tolerance (1e-12) 兜底 (防远平衡
+            # 起点垃圾解 CaX2=0)。lime 月不能用 1e-12 作为首选 (静默假收敛 4.89)。
+            if (self._has_new_convergence_warning(warn_before)
+                    and not self._in_pre_equilibration):
+                logger.warning(
+                    "PHREEQC 模拟步收敛失败 (迭代超限), 提高迭代重试")
+                retry_string = self._build_phreeqc_input(
+                    state, forcing, action, profile, n_reaction=n_reaction,
+                    solution_water_L=solution_water_L, inject_water=inject_water,
+                    knobs_iterations=max(KNOBS_ITERATIONS * 2, 250))
+                warn_before = self._warning_count()
+                self.official.RunString(retry_string)
+                if self._has_new_convergence_warning(warn_before):
+                    logger.warning(
+                        "PHREEQC 模拟步提高迭代仍不收敛, 宽松容差兜底 (1e-12)")
+                    retry2 = self._build_phreeqc_input(
+                        state, forcing, action, profile,
+                        n_reaction=n_reaction, solution_water_L=solution_water_L,
+                        inject_water=inject_water,
+                        knobs_tolerance=KNOBS_TOLERANCE_PRE)
+                    warn_before = self._warning_count()
+                    self.official.RunString(retry2)
+                    if self._has_new_convergence_warning(warn_before):
+                        raise RuntimeError(
+                            "PHREEQC 未收敛 (Maximum iterations exceeded)")
+                    input_string = retry2
+                else:
+                    input_string = retry_string
             new_state, diag = self._parse_official_output(
                 state, solution_water_L=solution_water_L)
             # v0.6.1 (Q5): 单次成功重置对应路径的连续失败计数 (滑动窗口)
@@ -1364,7 +1445,8 @@ class PhreeqcEngine:
 
     def _build_phreeqc_input(self, state, forcing, action, profile,
                              n_reaction=None, solution_water_L=None,
-                             inject_water=True) -> str:
+                             inject_water=True, knobs_tolerance=None,
+                             knobs_iterations=None) -> str:
         """构建 PHREEQC 输入字符串
 
         参数:
@@ -1400,14 +1482,23 @@ class PhreeqcEngine:
         # KNOBS: 提高收敛鲁棒性 (物理矿物量较大时数值更难收敛)
         # 迭代数取 100 平衡速度与收敛 (500 会使长模拟显著变慢)
         # WF4/WF5: SURFACE 增加非线性, 需更高迭代数收敛 (1000, 实测验证)
-        # v0.6.0: KINETICS 动力学积分增加数值难度, 同样提至 1000
-        # KNOBS: 提高收敛鲁棒性 (物理矿物量较大时数值更难收敛)
-        # 迭代数取 100 平衡速度与收敛 (500 会使长模拟显著变慢)
-        # WF4/WF5: SURFACE 增加非线性, 需更高迭代数收敛 (1000, 实测验证)
-        iterations = 1000 if self.enable_surface else 100
+        # v0.7.x (工单78): 迭代/容差参数化 (constants.KNOBS_*)。预平衡 (远平衡
+        # 起点) 用 KNOBS_TOLERANCE_PRE (1e-12, 宽松假收敛稳定; 1e-9 第一步迭代
+        # 超限返回垃圾解 CaX2=0); 模拟步 (预平衡状态近平衡) 用 KNOBS_TOLERANCE
+        # (1e-9, lime 高 pH 真收敛 10.18, 1e-12 静默假收敛 4.89)。见
+        # docs/analysis/KNOBS_CONVERGENCE.md。
+        iterations = 1000 if self.enable_surface else KNOBS_ITERATIONS
+        if knobs_iterations is not None:
+            iterations = knobs_iterations
+        tolerance = knobs_tolerance
+        if tolerance is None:
+            tolerance = (KNOBS_TOLERANCE_PRE if self._in_pre_equilibration
+                         else KNOBS_TOLERANCE)
         lines.append("KNOBS")
         lines.append(f"  -iterations {iterations}")
-        lines.append("  -tolerance 1e-12")
+        lines.append(f"  -tolerance {tolerance:.1e}")
+        lines.append(f"  -convergence_tolerance {KNOBS_CONVERGENCE_TOLERANCE:.1e}")
+        lines.append(f"  -step_size {KNOBS_STEP_SIZE}")
         lines.append("")
 
         # v0.5.0 L9: 覆盖 AlX3 交换选择性 log_k (抑制盐基置换交换 Al)

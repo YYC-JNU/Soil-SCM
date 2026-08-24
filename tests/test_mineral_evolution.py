@@ -53,6 +53,9 @@ def test_alx3_depletion_slower_with_mineral_evolution(profile, soil_info):
     """L2: 矿物演化回填后, 交换 AlX3 应有矿物回补通道 (不再单向耗尽)"""
     e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
     state = e.build_initial_state(profile, soil_info, 0.015)
+    # v0.7.x (工单78): 先预平衡 (真实流程; 模拟步 1e-9 需近平衡起点, 远起点
+    # 迭代超限会返回交换相全 0 垃圾解)
+    state = e.pre_equilibrate(state, profile, max_steps=30)
     # 模拟雨季连续 3 月 (强降水), 观察 AlX3 变化
     for _ in range(3):
         state, _ = e.run_monthly_step(state, FORCING, ACTION, profile)

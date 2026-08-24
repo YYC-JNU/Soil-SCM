@@ -478,6 +478,8 @@ def test_companion_injection_across_events(profile, soil_info):
     """
     e = _engine_companion()
     states = [e.build_initial_state(profile, soil_info, 0.015) for _ in range(2)]
+    # v0.7.x (工单78): 先预平衡 (真实流程; 模拟步 1e-9 需近平衡起点)
+    states = [e.pre_equilibrate(s, profile, max_steps=30) for s in states]
     states[0].n_no3_pool = 500.0
     ev1 = {'inflows': [1.0e5, 0.0], 'drains': [1.0e5, 0.0],
            'lateral': [0.0, 0.0], 'baseflow': [0.0, 0.0],

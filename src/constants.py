@@ -226,4 +226,22 @@ HX_LOGK = 2.8               # HX 交换物种 log_k (工单76 调优 B: 3.0→2.
 GAP_H_FRACTION = 0.3        # 缺口 → HX 比例 (与 GAP_AL_FRACTION 并列, 余量 NaX)
 
 
+# ---- v0.7.x (工单78): KNOBS 收敛参数 (高离子强度卡顿调优, 2026-08-24) ----
+# PHREEQC 偶发卡顿 (RunString 不返回) 在 HX=2.8 + 配对 An- 高离子强度 + lime 高 pH
+# 下更频繁; 扫描定案 (2026-08-24 探针): **-tolerance 1e-12 在 lime 高 pH 平衡
+# "假收敛"** — 100 次迭代不达标即返回错误解 (lime 月 pH 4.89 未碱化), 而
+# 1e-9/1e-8 真实收敛 (pH 10.18)。1e-12 的 lime 回落 5.59 为数值伪影, 真实
+# (1e-9) lime 10y 9.30 不回落。定案: tolerance=1e-9 (1e-8 与 1e-9 结果一致,
+# 取更保守), iterations=100 保持 (fertilizer/lime 均无迭代不足)。扫描数据
+# 见 docs/analysis/KNOBS_CONVERGENCE.md。SURFACE 启用时 iterations 强制 1000。
+KNOBS_ITERATIONS = 100      # KNOBS -iterations (牛顿迭代上限; 多数月 100 内收敛;
+                            #  难月 (lime 高 pH/高离子强度) 超限时引擎自动提高迭代
+                            #  重试 250, 见 _run_official_step 收敛检测)
+KNOBS_STEP_SIZE = 0.1       # KNOBS -step_size (Newton 迭代步长缩放, PHREEQC 默认 0.1)
+KNOBS_TOLERANCE = 1e-9      # KNOBS -tolerance (模拟步迭代残差判据, 工单78 定案)
+KNOBS_TOLERANCE_PRE = 1e-12 # 预平衡用 -tolerance (从远平衡起点需宽松假收敛稳定,
+                            #  1e-9 会使预平衡第一步迭代超限返回垃圾解 CaX2=0)
+KNOBS_CONVERGENCE_TOLERANCE = 1e-8   # KNOBS -convergence_tolerance (解收敛判定)
+
+
 

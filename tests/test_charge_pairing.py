@@ -140,8 +140,10 @@ def test_phreeqc_paired_acid_actually_acidifies(profile, soil_info):
     """PHREEQC 实测: 配对抗酸 (H+ + An-) pH 下降; 裸 H+ 不酸化"""
     from src.config_manager import ChargePairingConfig
     # 配对: companion_acid_eq 500 → H+ + An- → pH 显著低于 5.0
+    # v0.7.x (工单78): 先预平衡 (真实流程; 模拟步 tolerance=1e-9 需近平衡起点)
     e = _pair_engine()
     state = e.build_initial_state(profile, soil_info, 0.015)
+    state = e.pre_equilibrate(state, profile, max_steps=30)
     forcing = dict(FORCING, precip=0.0,
                    companion_anion_eq=0.0, companion_acid_eq=500.0)
     ns, _ = e.run_monthly_step(state, forcing, MonthlyAction(), profile)
@@ -149,6 +151,7 @@ def test_phreeqc_paired_acid_actually_acidifies(profile, soil_info):
     # 对照: 关闭 pairing 的裸 H+ (companion acid 裸注入) → 不酸化/酸化弱
     e_bare = _engine(charge_pairing_cfg=ChargePairingConfig(enable=False))
     state_b = e_bare.build_initial_state(profile, soil_info, 0.015)
+    state_b = e_bare.pre_equilibrate(state_b, profile, max_steps=30)
     ns_b, _ = e_bare.run_monthly_step(state_b, forcing,
                                       MonthlyAction(), profile)
     assert ns_b.ph >= ns.ph  # 裸注入 pH 不低 (酸化弱于配对或持平)

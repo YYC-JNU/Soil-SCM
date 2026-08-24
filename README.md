@@ -339,6 +339,24 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 
 ## 十一、版本更新记录
 
+### v0.7.x 工单 78（2026-08-24，未独立发布，合并于 v0.7.0 基线之上）
+
+> - **探针证伪 `-tolerance 1e-12` 静默假收敛（关键科学发现）**：lime 高 pH 平衡在
+>   `-tolerance 1e-12` 下 PHREEQC"认为收敛"（**零警告**）但返回错误解（lime 月 pH
+>   4.89 未碱化 vs 真实 1e-9 下 10.18）。**工单 80 报告的"lime 10y 回落 5.59"是
+>   假收敛数值伪影**——真实容差下 lime 10y 9.30 不回落（BASE_LEACHING 已修正）。
+> - **双 tolerance**：预平衡（远平衡起点）用 `KNOBS_TOLERANCE_PRE=1e-12`（宽松假收敛
+>   稳定；1e-9 会迭代超限返回交换相全 0 垃圾解）；模拟步（预平衡状态近平衡）用
+>   `KNOBS_TOLERANCE=1e-9`（lime 高 pH 真收敛）。
+> - **收敛失败检测 + 自动重试**：模拟步超限（"Maximum iterations exceeded"）→
+>   提高迭代（250）重试 → 1e-12 宽松兜底（防垃圾解污染状态链）；`-convergence_tolerance`
+>   显式化（1e-8）。
+> - **KNOBS 参数化**：`KNOBS_ITERATIONS/KNOBS_TOLERANCE/KNOBS_TOLERANCE_PRE/
+>   KNOBS_CONVERGENCE_TOLERANCE/KNOBS_STEP_SIZE` 入 constants（消除硬编码）。
+> - **测试**：**351 passed**（新增 6 KNOBS 测试；4 个 PHREEQC 实测测试加预平衡反映真实流程）
+> - **科学诚实**：详见 `docs/analysis/KNOBS_CONVERGENCE.md`（探针数据 + 定案 + 影响）；
+>   30y 全量在模拟 1e-9 下后期深层盐基累积触发收敛重试，耗时较慢（正确性优先）
+
 ### v0.7.x 工单 80（2026-08-24，未独立发布，合并于 v0.7.0 基线之上）
 
 > - **修复 v0.6.0 事件化层间溶质传递遗漏（工单 80 核心）**：事件路径 `_run_multi_layer_events`

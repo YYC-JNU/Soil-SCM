@@ -61,12 +61,16 @@ def test_multi_layer_equivalent_to_single_when_n1(profile, soil_info):
 def test_multi_layer_leaching_moves_solute_down(profile, soil_info):
     """WF2/Q7: 上层排水溶质应向下层传递 (级联下渗); 下层溶液离子总量不低于单层独立模拟"""
     e, states = _make_layers(profile, soil_info, 2)
+    # v0.7.x (工单78): 先预平衡 (真实流程; 模拟步 1e-9 需近平衡起点)
+    states = [e.pre_equilibrate(s, profile, max_steps=30) for s in states]
     # 运行两层多层模拟
     new_states, _ = e.run_monthly_multi_layer(states, FORCING, ACTION, profile)
     # 运行单层独立模拟 (两层分别跑 run_monthly_step, 无层间交换)
     e2 = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
     s1 = e2.build_initial_state(profile, soil_info, 0.015)
     s2 = e2.build_initial_state(profile, soil_info, 0.015)
+    s1 = e2.pre_equilibrate(s1, profile, max_steps=30)
+    s2 = e2.pre_equilibrate(s2, profile, max_steps=30)
     ns1, _ = e2.run_monthly_step(s1, FORCING, ACTION, profile)
     ns2, _ = e2.run_monthly_step(s2, FORCING, ACTION, profile)
 
