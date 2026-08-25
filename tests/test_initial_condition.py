@@ -38,6 +38,46 @@ def test_exchange_sites_conserved(profile, soil_info):
     assert abs(total - b.cec_total_mol) / b.cec_total_mol < 0.01
 
 
+def test_build_exchange_weathered_gap_al_dominant(profile, soil_info):
+    """工单83: 深层风化层 (低 CEC) 缺口 GAP 分配偏 AlX3
+
+    红壤风化层 (CEC ≤ WEATHERED_GAP_CEC_THRESHOLD) 交换 Al 主导 — 缺口
+    主要补 AlX3 (三价) 而非 NaX (盐基), 减少 NaX 虚高盐基饱和度 (BS)。
+    """
+    from src.input_reader import InputReader
+    from src.config_manager import LayerOverrideConfig
+    from src.constants import (WEATHERED_GAP_CEC_THRESHOLD, WEATHERED_EXCH_CA,
+                               WEATHERED_EXCH_MG, WEATHERED_EXCH_K,
+                               WEATHERED_EXCH_NA, WEATHERED_EXCH_AL,
+                               WEATHERED_EXCH_H)
+    reader = InputReader('data/soil_survey.csv', 'data/exchangeable_ions.csv')
+    base = reader.build_soil_profile()
+    # 构造风化层 profile (低 CEC + 低盐基 + 高 Al, 深层)
+    lo = LayerOverrideConfig(
+        cec=WEATHERED_GAP_CEC_THRESHOLD - 1.0,
+        exch_ca=WEATHERED_EXCH_CA[3], exch_mg=WEATHERED_EXCH_MG[3],
+        exch_k=WEATHERED_EXCH_K[3], exch_na=WEATHERED_EXCH_NA[3],
+        exch_al=WEATHERED_EXCH_AL[3], exch_h=WEATHERED_EXCH_H[3])
+    weath = reader.apply_layer_override(base, lo, 40.0)
+    b = _builder(weath, soil_info)
+    ex = b.build_exchange()
+    # 交换位点守恒仍成立
+    total = b._calc_exchange_site_total(ex)
+    assert abs(total - b.cec_total_mol) / b.cec_total_mol < 0.01
+    # 风化层: Al 电荷 > Na 电荷 (缺口偏 AlX3, 非 NaX)
+    al_charge = ex['AlX3'] * 3.0
+    na_charge = ex['NaX']
+    assert al_charge > na_charge
+    # 非风化层 (高 CEC) 对照: 保持原 GAP — 缺口纯贡献 (exch 全 0) 下
+    # NaX 0.4 > AlX3 0.3 (电荷), 即 Na > Al
+    lo2 = LayerOverrideConfig(cec=12.0, exch_ca=0, exch_mg=0, exch_k=0,
+                              exch_na=0, exch_al=0, exch_h=0)
+    top = reader.apply_layer_override(base, lo2, 20.0)
+    b2 = _builder(top, soil_info)
+    ex2 = b2.build_exchange()
+    assert ex2['AlX3'] * 3.0 < ex2['NaX']
+
+
 def test_charge_balance_within_tolerance(profile, soil_info):
     b = _builder(profile, soil_info)
     solution = b.build_solution()

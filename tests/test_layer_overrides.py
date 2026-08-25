@@ -218,6 +218,35 @@ def test_build_initial_layer_states_n4_auto_hydrology_defaults(profile, soil_inf
     assert profiles[3].clay_pct == DEFAULT_4LAYER_CLAY_PCT[3]
 
 
+def test_build_initial_layer_states_n4_weathered_cec_bs(profile, soil_info):
+    """工单83: n_layers=4 未配置 overrides → 深层风化剖面 CEC/BS 物理化
+
+    L1 保持观测 (表层耕层); L2~L4 CEC 深度衰减 (9/6/4) + 盐基淋洗
+    (Ca 1.5/0.7/0.3) + 交换 Al 主导 (深层 Al > Ca)。修复深层交换盐基库
+    单点外推×层厚放大的物理失真 (V0_7_x_DEEP_SALT_SINK_ANALYSIS)。
+    """
+    from src.constants import (WEATHERED_CEC_4LAYER, WEATHERED_EXCH_CA,
+                               WEATHERED_EXCH_AL, WEATHERED_EXCH_H)
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
+    cfg = SimulationConfig(n_layers=4)
+    s0, states, pco2s, profiles = main._build_initial_layer_states(
+        e, _reader(), profile, soil_info, 0.015, cfg)
+    assert len(profiles) == 4
+    # L1 保持观测 (表层)
+    assert profiles[0].cec == pytest.approx(profile.cec)
+    assert profiles[0].exch_ca == pytest.approx(profile.exch_ca)
+    # L2~L4: CEC 风化衰减
+    for i in (1, 2, 3):
+        assert profiles[i].cec == pytest.approx(WEATHERED_CEC_4LAYER[i])
+    # 深层 Ca 淋洗衰减 + Al 主导
+    assert profiles[1].exch_ca == pytest.approx(WEATHERED_EXCH_CA[1])
+    assert profiles[3].exch_ca == pytest.approx(WEATHERED_EXCH_CA[3])
+    assert profiles[3].exch_al > profiles[3].exch_ca   # 深层 Al 主导
+    assert profiles[3].exch_al == pytest.approx(WEATHERED_EXCH_AL[3])
+    # 深层 CEC 单调下降 (风化剖面)
+    assert profiles[0].cec > profiles[1].cec > profiles[2].cec > profiles[3].cec
+
+
 # ==================== v0.5.2: Ksat 字段拆分 (S2/S3 seam) ====================
 
 def test_ksat_drainage_defaults_and_surface():

@@ -35,7 +35,10 @@ from src.logging_config import setup_logging
 from src.constants import (DEFAULT_4LAYER_DEPTHS, DEFAULT_4LAYER_CLAY_PCT,
                            DEFAULT_4LAYER_POROSITY, DEFAULT_4LAYER_KSAT,
                            DEFAULT_KSAT_SURFACE, OM_PROFILE_4LAYER,
-                           DAYS_IN_MONTH)
+                           WEATHERED_CEC_4LAYER, WEATHERED_EXCH_CA,
+                           WEATHERED_EXCH_MG, WEATHERED_EXCH_K,
+                           WEATHERED_EXCH_NA, WEATHERED_EXCH_AL,
+                           WEATHERED_EXCH_H, DAYS_IN_MONTH)
 from src.climate_forcing import apply_om_pco2
 
 
@@ -123,12 +126,26 @@ def _build_initial_layer_states(engine, reader, soil_profile, soil_info,
         layer_mineral_infos = []
         layer_pco2s = []
         for i in range(4):
-            lo = LayerOverrideConfig(
+            # v0.5.0: 内置物理剖面默认 (水文)
+            lo_kwargs = dict(
                 clay_pct=DEFAULT_4LAYER_CLAY_PCT[i],
                 porosity=DEFAULT_4LAYER_POROSITY[i],
                 ksat=DEFAULT_4LAYER_KSAT[i],
                 ksat_surface=DEFAULT_KSAT_SURFACE,
                 organic_matter=OM_PROFILE_4LAYER[i])   # v0.5.3: OM 垂直剖面
+            # 工单83 (2026-08-25): 深层风化剖面 CEC/BS 物理化 —
+            # L2~L4 CEC 深度衰减 + 盐基淋洗 + 交换 Al 主导 (修复深层交换盐基库
+            # 单点外推×层厚放大的物理失真); L1 (i=0) 保持观测 (表层耕层)。
+            if i > 0:
+                lo_kwargs.update(
+                    cec=WEATHERED_CEC_4LAYER[i],
+                    exch_ca=WEATHERED_EXCH_CA[i],
+                    exch_mg=WEATHERED_EXCH_MG[i],
+                    exch_k=WEATHERED_EXCH_K[i],
+                    exch_na=WEATHERED_EXCH_NA[i],
+                    exch_al=WEATHERED_EXCH_AL[i],
+                    exch_h=WEATHERED_EXCH_H[i])
+            lo = LayerOverrideConfig(**lo_kwargs)
             depth = DEFAULT_4LAYER_DEPTHS[i]
             p = reader.apply_layer_override(soil_profile, lo, depth)
             layer_profiles.append(p)

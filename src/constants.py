@@ -132,6 +132,23 @@ DEFAULT_4LAYER_CLAY_PCT = [25.0, 35.0, 45.0, 50.0]  # 粘粒含量 (%)
 DEFAULT_4LAYER_POROSITY = [0.55, 0.47, 0.45, 0.43]  # 孔隙度
 DEFAULT_4LAYER_KSAT = [12.0, 1.9, 0.48, 0.05]  # 层间排水上限 (cm/day, v0.5.2 起仅 LayerCascade 用)
 
+# ---- 工单83 (2026-08-25): 深层风化剖面默认 (CEC/BS 物理化) ----
+# 红壤风化剖面: 表层观测 → 深层 CEC 衰减 / 盐基淋洗 / 交换 Al 主导。
+# 依据: 龚子同《中国土壤地理》、熊毅《中国土壤》(红壤剖面交换性 Al 分布)。
+# L1 = 观测值 (表层耕层, 保持全局默认 profile); L2~L4 = 风化衰减。
+# 注: 交换 Al "先升后降"为工作假设 (红壤 B 层黏粒淀积 + CEC 衰减交汇)。
+WEATHERED_CEC_4LAYER = [12.0, 9.0, 6.0, 4.0]          # cmol(+)/kg, 深度衰减
+WEATHERED_EXCH_CA = [3.0, 1.5, 0.7, 0.3]              # cmol(+)/kg, 盐基淋洗
+WEATHERED_EXCH_MG = [1.5, 0.8, 0.4, 0.2]
+WEATHERED_EXCH_K = [0.5, 0.3, 0.15, 0.08]
+WEATHERED_EXCH_NA = [0.2, 0.1, 0.05, 0.03]
+WEATHERED_EXCH_AL = [2.0, 4.0, 3.5, 2.8]              # 工作假设: B 层 Al 峰值
+WEATHERED_EXCH_H = [1.0, 0.8, 0.5, 0.3]
+# 深层风化层 (低 CEC) 缺口 GAP 分配偏 AlX3 (交换 Al 主导), 减少 NaX 盐基虚高
+WEATHERED_GAP_CEC_THRESHOLD = 7.0    # CEC ≤ 7 cmol/kg → 视为风化层
+WEATHERED_GAP_AL_FRACTION = 0.6      # 风化层缺口 → AlX3 (三价)
+WEATHERED_GAP_H_FRACTION = 0.3       # 风化层缺口 → HX (一价酸)
+
 # ---- v0.5.3 VGM 水分特征 (D8, VGM参数化方案.txt) ----
 # 三级参数优先级: ①layer_overrides 显式 vgm_* ②clay_pct 连续回归
 # (Saxton & Rawls 2006 + 红壤修正) ③华南红壤兜底; l=0.5 固定 (Mualem);
