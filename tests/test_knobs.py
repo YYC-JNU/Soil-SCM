@@ -72,6 +72,36 @@ def test_knobs_surface_iterations_1000(profile, soil_info):
     assert "-iterations 1000" in inp
 
 
+def test_knobs_no_step_size_line(profile, soil_info):
+    """工单82 (数据驱动, 2026-08-25): KNOBS 块不注入 -step_size
+
+    IPhreeqc 3.8.6 对 -step_size 行的**存在本身**敏感: 实测显式
+    -step_size 0.2~0.001 全部使预平衡第一步 (远起点大交换相, 真实 red_soil
+    数据) 数值发散 (Ca=2000/4000 垃圾解 + 交换相全 0), 仅缺省 (无该行)
+    成功。工单78 引入此行且未被 351 测试/探针 13 暴露 (conftest 小交换相
+    profile + 探针在预平衡降级后的 simplified 上跑) → v0.7.x 预平衡连续
+    3 次失败永久降级 (spec 82 '首月即降级' 的真根因)。
+    """
+    e = _engine()
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    inp = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile)
+    assert "-step_size" not in inp
+
+
+def test_knobs_sim_step_not_use_pre_tolerance(profile, soil_info):
+    """工单82 (Q6=A): 模拟步输入不含 1e-12 (KNOBS_TOLERANCE_PRE)
+
+    1e-12 静默假收敛 (lime 高 pH 4.89 错 vs 1e-9 10.18 对) 已由工单78证伪;
+    模拟步必须 1e-9 真收敛, 失败走 fallback 计数而非宽松容差兜底。
+    KNOBS_TOLERANCE_PRE 仅预平衡 (远起点宽松) 使用。
+    """
+    e = _engine()
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    inp = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile)
+    assert f"-tolerance {KNOBS_TOLERANCE_PRE:.1e}" not in inp
+    assert f"-tolerance {KNOBS_TOLERANCE:.1e}" in inp
+
+
 def test_knobs_monkeypatched_values(profile, soil_info, monkeypatch):
     """v0.7.x (工单78): monkeypatch constants → 注入串跟随 (扫描机制验证)"""
     import src.phreeqc_engine as pe

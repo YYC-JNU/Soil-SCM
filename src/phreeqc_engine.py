@@ -491,7 +491,8 @@ class PhreeqcEngine:
 
     def run_event_step(self, state: SoilState, event, action,
                        soil_profile, forcing: dict = None,
-                       theta_after: float = None
+                       theta_after: float = None,
+                       event_out_water_L: float = None
                        ) -> Tuple[SoilState, DiagnosticOutput]:
         """执行单场降雨事件的化学步 (v0.6.0, Q1/Q3/Q5/Q6)
 
@@ -531,7 +532,13 @@ class PhreeqcEngine:
                     else state.theta)
         water_target_L = theta_to_water_L(theta_ev,
                                           soil_profile.effective_depth)
-        self._rescale_solution_for_volume(state, water_target_L,
+        # 工单82 (Q5=A): 平衡体积 = 排水前混合体积 (排水后 θ 体积 + 该场排水)
+        # 雨水事件是"换水"(入渗+排水同时) 非蒸发浓缩; 排水溶质由调用方
+        # (_run_multi_layer_events) 按摩尔绝对量扣除并回落体积至 θ_out。
+        mix_water_L = water_target_L
+        if event_out_water_L is not None:
+            mix_water_L = water_target_L + max(event_out_water_L, 0.0)
+        self._rescale_solution_for_volume(state, mix_water_L,
                                           soil_profile)
 
         # 模式分派 (与 run_monthly_step 一致)
@@ -545,7 +552,7 @@ class PhreeqcEngine:
 
         if use_phreeqc:
             return self._run_official_step(state, eff, action, soil_profile,
-                                           solution_water_L=water_target_L,
+                                           solution_water_L=mix_water_L,
                                            inject_water=False, path='event')
         return self._run_simplified_step(state, eff, action, soil_profile)
 
@@ -1033,9 +1040,15 @@ class PhreeqcEngine:
                                     duration_h=2.0)
                 # 该场事件后的 θ (事件化水文已逐场更新, ev['theta'] 记录)
                 theta_ev = (ev.get('theta') or [None] * n)[i]
+                # 工单82 (Q5=A): 该场该层排水总量 (drains+lateral+baseflow),
+                # 传给 run_event_step 作为平衡体积 (V_mix = θ_out×d×1e5 + out)
+                out_ev_L = ((ev.get('drains') or [0.0] * n)[i]
+                            + (ev.get('lateral') or [0.0] * n)[i]
+                            + (ev.get('baseflow') or [0.0] * n)[i])
                 new_state, diag = self.run_event_step(
                     new_states[i], rain_ev, event_action, soil_profile,
-                    forcing=layer_forcing, theta_after=theta_ev)
+                    forcing=layer_forcing, theta_after=theta_ev,
+                    event_out_water_L=out_ev_L)
                 layer_states.append(new_state)
                 last_diags[i] = diag
                 # ---- v0.7.0 (工单70, spec 69): NO3- 示踪池水库串联淋失 ----
@@ -1107,64 +1120,66 @@ class PhreeqcEngine:
                         getattr(action, 'n_amount', 0.0) * N_MOL_PER_KG_N
                         * self.nitrification_k1 * self.nitrification_k2)
                 row[f'nh4_exchanged_eq_L{i+1}'] = nh4_exchanged_i
-                # ---- v0.7.x (工单80): 事件化层间溶质传递 (修复 v0.6.0 事件路径遗漏) ----
-                # 月级路径 (run_monthly_multi_layer 非事件) 已有 drains 溶质传递
-                # (inflow_ions, Q7 平流守恒); 事件路径 (v0.6.0) 只传 NO3- 池,
-                # 垂直渗漏不搬溶液溶质 → 盐基滞留溶液 (fertilizer/lime 碱化的
-                # 结构性根因之一: 只排水不排盐)。此处补充: 每层 drains 按比例
-                # 扣除溶液溶质并作为 mol 注入下层 (i<n-1 时经 inflow_ions;
-                # L4 drains = 深层出系统, 仅扣除)。交换相靠后续平衡 Gapon 补充。
+                # ---- 工单82 (Q5=A/Q2=A): 排水溶质摩尔绝对量扣除 + 体积落回 θ_out ----
+                # 事件平衡已在 V_mix = θ_out×depth×1e5 + 排水总量 (排水前混合体积)
+                # 上完成 (run_event_step 的 event_out_water_L)。雨水事件是"换水"
+                # (入渗+排水同时), 排水不浓缩残留水 — 摩尔绝对量守恒:
+                #   - drains 通道: mol_out = C×drain (i<n-1 进下层 inflow_ions;
+                #     L4 无下层 = 深层出系统)
+                #   - lateral+baseflow 通道: mol_out = C×(lat+base) (出系统)
+                #   - 残留溶质 = C×V_mix − Σmol_out; 残留体积 = θ_out×d×1e5
+                #   - 残留浓度 = 残留mol/残留体积 (≈ C, 物理"换水不浓缩")
+                # 修复旧 Q3 比例法 frac=min(Q_out/V,1) 在 q_out>V (L4 基流
+                # 99.6万L vs 48万L) 时钳到 1 → 溶质全清 C_MIN 的物理失真。
+                # 交换相不动靠后续平衡 Gapon 补偿 (spec 62 Q3 决策不变)。
                 drain_water_L = ev['drains'][i]
-                if drain_water_L > 0:
-                    vol_d = max(new_state.volume, 1.0)
-                    frac_d = min(drain_water_L / vol_d, 1.0)
-                    moved_ions = {}
-                    for ion, conc in list(new_state.solution.items()):
-                        if ion in ('temp', 'pH', 'pe', 'units'):
-                            continue
-                        n_out = conc * drain_water_L
-                        if n_out > 0:
-                            moved_ions[ion] = n_out
-                        new_state.solution[ion] = max(
-                            conc * (1.0 - frac_d), C_MIN)
-                    if i < n - 1:
-                        inflow_ions = moved_ions
-                # ---- v0.6.1 (spec 62 Q3/Q6): 溶质随水移出系统 + 浓度冲洗 ----
-                # 侧向/基流排水带走溶质: n_new = max(n_old×(1−Q_out/V), C_min×V)
-                # (工单 63 已提供逐场 lateral/baseflow 水量出口, ev['lateral']/
-                # ev['baseflow']); 交换相不动靠后续平衡 Gapon 自动补偿。
                 lat_out_L = (ev.get('lateral') or [0.0] * n)[i]
                 base_out_L = (ev.get('baseflow') or [0.0] * n)[i]
-                q_out_L = lat_out_L + base_out_L
-                total_lateral_i = 0.0
-                total_base_i = 0.0
-                flush_L = 0.0
-                vol_L = max(new_state.volume, 1.0)
-                # ① 比例扣除侧向/基流携出溶质 (Q3: 只排水不排盐等于没修)
-                if q_out_L > 0:
-                    frac_out = min(q_out_L / vol_L, 1.0)
-                    for ion, conc in list(new_state.solution.items()):
+                q_out_system_L = lat_out_L + base_out_L
+                vol_mix = max(new_state.volume, 1.0)      # 平衡后体积 = V_mix
+                theta_eff = theta_ev if theta_ev is not None else new_state.theta
+                water_after_L = max(
+                    theta_to_water_L(theta_eff,
+                                     soil_profile.effective_depth), 1e-6)
+                moved_ions = {}
+                q3_out_ions = {}
+                if drain_water_L > 0:
+                    for ion, conc in new_state.solution.items():
                         if ion in ('temp', 'pH', 'pe', 'units'):
                             continue
-                        n_new = conc * (1.0 - frac_out)
-                        new_state.solution[ion] = max(n_new, C_MIN)
-                    total_lateral_i = lat_out_L
-                    total_base_i = base_out_L
-                # ② 浓度冲洗 (Q6: C_warn 超限 → 折算额外水量出口 + 同比例扣溶质)
+                        if conc > 0:
+                            moved_ions[ion] = conc * drain_water_L
+                if q_out_system_L > 0:
+                    for ion, conc in new_state.solution.items():
+                        if ion in ('temp', 'pH', 'pe', 'units'):
+                            continue
+                        if conc > 0:
+                            q3_out_ions[ion] = conc * q_out_system_L
+                for ion, conc in list(new_state.solution.items()):
+                    if ion in ('temp', 'pH', 'pe', 'units'):
+                        continue
+                    n_rem = (conc * vol_mix - moved_ions.get(ion, 0.0)
+                             - q3_out_ions.get(ion, 0.0))
+                    new_state.solution[ion] = max(
+                        n_rem / water_after_L, C_MIN)
+                new_state.volume = water_after_L
+                total_lateral_i = lat_out_L
+                total_base_i = base_out_L
+                flush_L = 0.0
+                # 浓度冲洗 (Q6: C_warn 超限 → 折算额外水量出口 + 同比例扣溶质)
                 sol_conc = {k: v for k, v in new_state.solution.items()
                             if k not in ('temp', 'pH', 'pe', 'units')}
                 max_c = max(sol_conc.values()) if sol_conc else 0.0
                 if max_c > CONC_WARN:
                     excess = max_c - CONC_WARN
-                    # 折算冲洗水量: 使 max 浓度降到 C_warn 所需稀释水量
-                    flush_L = vol_L * (excess / max_c)
+                    flush_L = water_after_L * (excess / max_c)
                     if flush_L > 0:
-                        frac_flush = min(flush_L / vol_L, 1.0)
+                        frac_flush = min(flush_L / water_after_L, 1.0)
                         for ion, conc in list(new_state.solution.items()):
                             if ion in ('temp', 'pH', 'pe', 'units'):
                                 continue
-                            n_new = conc * (1.0 - frac_flush)
-                            new_state.solution[ion] = max(n_new, C_MIN)
+                            new_state.solution[ion] = max(
+                                conc * (1.0 - frac_flush), C_MIN)
                 # 出口记账 → event_details + 月度诊断列
                 row[f'lateral_L{i+1}_L'] = total_lateral_i
                 row[f'baseflow_L{i+1}_L'] = total_base_i
@@ -1188,15 +1203,10 @@ class PhreeqcEngine:
                         * ev['drains'][0] * 1000.0
                     flush_no3_peak = max(flush_no3_peak, no3_mmol)
                     flush_base_peak = max(flush_base_peak, base_mmol)
-                # 该场排水携带溶质 → 下层当场输入 (Q4 事件粒度)
-                if i < n - 1:
-                    drain_water_L = ev['drains'][i]
-                    inflow_ions = {}
-                    for ion, conc in new_state.solution.items():
-                        if ion in ('temp', 'pH', 'pe', 'units'):
-                            continue
-                        if conc > 0:
-                            inflow_ions[ion] = conc * drain_water_L
+                # 该场排水携带溶质 → 下层当场输入 (Q4 事件粒度, 工单82 Q2=A:
+                # 用平衡后 V_mix 浓度×drain 的摩尔绝对量 moved_ions, 与扣除同源)
+                if i < n - 1 and drain_water_L > 0:
+                    inflow_ions = moved_ions
             new_states = layer_states
             event_details.append(row)
         # Q14: 事件明细回填 (main 经 hydrology['event_details'] 写事件 CSV)
@@ -1269,9 +1279,10 @@ class PhreeqcEngine:
             warn_before = self._warning_count()
             self.official.RunString(input_string)
             # v0.7.x (工单78): 收敛失败检测 — 模拟步 1e-9 迭代超限时自动重试。
-            # 重试策略 (探针 2026-08-24): ① 先提高迭代 (1e-9 真收敛, lime 高 pH
-            # 需 >100 牛顿步) ② 仍失败 → 宽松 tolerance (1e-12) 兜底 (防远平衡
-            # 起点垃圾解 CaX2=0)。lime 月不能用 1e-12 作为首选 (静默假收敛 4.89)。
+            # 工单82 (Q6=A, 2026-08-25): 废弃 1e-12 宽松兜底 — 1e-12 静默假收敛
+            # (lime 高 pH 4.89 错 vs 1e-9 10.18 对) 已证伪; 提高迭代 (1e-9 真收敛)
+            # 仍失败 → 直接判定收敛失败走 fallback 计数 (连续 N=3 才永久降级),
+            # 绝不回落 1e-12 把假收敛写回状态链。
             if (self._has_new_convergence_warning(warn_before)
                     and not self._in_pre_equilibration):
                 logger.warning(
@@ -1284,20 +1295,11 @@ class PhreeqcEngine:
                 self.official.RunString(retry_string)
                 if self._has_new_convergence_warning(warn_before):
                     logger.warning(
-                        "PHREEQC 模拟步提高迭代仍不收敛, 宽松容差兜底 (1e-12)")
-                    retry2 = self._build_phreeqc_input(
-                        state, forcing, action, profile,
-                        n_reaction=n_reaction, solution_water_L=solution_water_L,
-                        inject_water=inject_water,
-                        knobs_tolerance=KNOBS_TOLERANCE_PRE)
-                    warn_before = self._warning_count()
-                    self.official.RunString(retry2)
-                    if self._has_new_convergence_warning(warn_before):
-                        raise RuntimeError(
-                            "PHREEQC 未收敛 (Maximum iterations exceeded)")
-                    input_string = retry2
-                else:
-                    input_string = retry_string
+                        "PHREEQC 模拟步提高迭代仍不收敛 (1e-9), 判定收敛失败 → "
+                        "fallback (不回落 1e-12 假收敛)")
+                    raise RuntimeError(
+                        "PHREEQC 未收敛 (Maximum iterations exceeded)")
+                input_string = retry_string
             new_state, diag = self._parse_official_output(
                 state, solution_water_L=solution_water_L)
             # v0.6.1 (Q5): 单次成功重置对应路径的连续失败计数 (滑动窗口)
@@ -1487,6 +1489,11 @@ class PhreeqcEngine:
         # 超限返回垃圾解 CaX2=0); 模拟步 (预平衡状态近平衡) 用 KNOBS_TOLERANCE
         # (1e-9, lime 高 pH 真收敛 10.18, 1e-12 静默假收敛 4.89)。见
         # docs/analysis/KNOBS_CONVERGENCE.md。
+        # 工单82 (2026-08-25, 数据驱动): 不注入 -step_size — IPhreeqc 3.8.6
+        # 对 -step_size 行的存在本身敏感 (实测 0.2~0.001 均使预平衡第一步
+        # 远起点大交换相平衡数值发散 Ca=2000/4000 垃圾解, 缺省 OK); 工单78
+        # 引入此行是 v0.7.x 预平衡连续失败→永久降级 (spec82 '首月即降级')
+        # 的真根因。PHREEQC 默认牛顿步长保持。
         iterations = 1000 if self.enable_surface else KNOBS_ITERATIONS
         if knobs_iterations is not None:
             iterations = knobs_iterations
@@ -1498,7 +1505,6 @@ class PhreeqcEngine:
         lines.append(f"  -iterations {iterations}")
         lines.append(f"  -tolerance {tolerance:.1e}")
         lines.append(f"  -convergence_tolerance {KNOBS_CONVERGENCE_TOLERANCE:.1e}")
-        lines.append(f"  -step_size {KNOBS_STEP_SIZE}")
         lines.append("")
 
         # v0.5.0 L9: 覆盖 AlX3 交换选择性 log_k (抑制盐基置换交换 Al)

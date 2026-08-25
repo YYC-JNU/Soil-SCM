@@ -606,7 +606,10 @@ python main.py --config config/config_example.yaml    # 基于模板配置
 **Q7：模拟耗时过长 / 卡住**
 - 原因：官方引擎每月做化学平衡，情景/分层数增加后耗时线性上升；SURFACE 开启时迭代数 1000；**lime 高 pH（~11）收敛慢**（单月 0.22s→1.59s，30 年 10~13 分钟/情景）；极端情况 PHREEQC `RunString` 不返回（卡顿）。
 - 防护（v0.6.1）：子进程超时护栏（`run_monthly_step_with_timeout`，卡顿自动终止不挂死）；fallback 事件级局部降级（连续 3 次失败才永久降级）。
-- 建议：先缩短 `n_years`；lime 类情景用 sensitivity 工具的 `--scenario` 分批；**30 年全量被 L4 深层数值边界阻塞（工单 82，P0）——短程 5~10y 不受影响**。
+- 建议：先缩短 `n_years`；lime 类情景用 sensitivity 工具的 `--scenario` 分批；
+  **30 年全量已由工单 82 解锁**（2026-08-25：`-step_size` 行回归移除 + 事件平衡
+  体积/摩尔绝对量数值稳定化 + KNOBS_ITERATIONS=500）；1e-9 真收敛下 30y 单情景
+  ~30 分钟（深层高离子强度迭代频繁），用 `--timeout 5400` + 分批后台跑
 
 ### 结果解读类
 
@@ -621,15 +624,15 @@ python main.py --config config/config_example.yaml    # 基于模板配置
 
 **Q11：模拟中途"永久降级"是什么？**
 - v0.6.1 起为**事件级局部降级**：单场单层 PHREEQC 失败 → 保留上一正常状态跳过该场；**连续 3 次失败**才永久降级（`FALLBACK_MAX_CONSECUTIVE=3`），之后该引擎全部走简化模式。
-- 已知边界（工单 82，P0）：`-tolerance 1e-9` 真收敛下 natural 30 年首月可能触发永久降级（L4 深层基流 + 体积剧变 + 浓缩 → Ca=4000 mol/L 异常）；`1e-12` 假收敛掩盖此问题。**30 年全量验证在工单 82 修复前不可靠**，短程 5~10y 正确。
+- 已知边界（工单 82，P0，2026-08-25 已修复）：`-tolerance 1e-9` 真收敛下"首月降级"实为 **预平衡阶段** 因 `-step_size` 行回归导致的连续失败（详见 `docs/analysis/V0_7_x_L4_DEEP_SALT_STABILITY.md`）。**工单 82 修复后 natural/fertilizer/lime_low 30y `phreeqc_ok=1` 全程无降级**。
 
 **Q12：PHREEQC"假收敛"是什么？为什么会误导结果？**
 - 工单 78 探针发现：`-tolerance 1e-12` 下 lime 高 pH 平衡"静默假收敛"——PHREEQC 认为收敛（无警告）但返回错误解（lime 月 pH 4.89 未碱化 vs 真收敛 `1e-9` 下 10.18）。曾导致工单 80"lime 回落 5.59"的错误结论。
-- 修复（v0.7.x 工单 78）：双 tolerance——预平衡 `1e-12`（远起点假收敛稳定）/ 模拟步 `1e-9`（真收敛）+ 收敛失败检测 + 自动重试（提高迭代 ×4 后仍失败则 `1e-12` 兜底）。**≥v0.7.x 的模拟输出已走此策略**。
+- 修复（v0.7.x 工单 78 + 82）：双 tolerance——预平衡 `1e-12`（远起点假收敛稳定）/ 模拟步 `1e-9`（真收敛）+ 收敛失败检测 + 自动重试；**工单 82 起废弃 `1e-12` 兜底**（提高迭代仍失败 → fallback 计数，绝不回落假收敛）。**≥v0.7.x 的模拟输出已走此策略**。
 
-**Q13：lime 情景为什么"不回落"？**
-- v0.7.x 工单 78 修正后，真实收敛（1e-9）下 lime_low 10 年 pH 9.30 **不回落**——Ca 盐基供给（~2407 mol/年）> 淋失，且无 NO₃⁻ 伴随通道（lime 无施肥）。工单 80 的 drains 传递修复不足以让 lime 高 pH 在 10 年内回落。
-- 方向带"lime 3~5 年回落"**当前未达标**（如实记录）；后续需 E_base 强度 / HCO₃⁻ 通道 / 增强基流（backlog）。
+**Q13：lime 情景是否回落？**
+- v0.7.x 工单 82（2026-08-25）**30y 实测**（1e-9 真收敛）：lime_low 峰值 ~8（y4）→ **y6~7 回落至 5~6 → y30 5.09——回落实际发生**。修正工单 78"10y 9.30 不回落"（10y 视角恰在碱化平台期，30y 才见回落；且 9.30 当时亦受预平衡降级后 simplified 影响）。
+- 方向带"lime 3~5 年回落"**基本达标**（y6~7 回落至 5~6）；回落机制 = E_base 盐基淋失（工单 80）+ 排水溶质摩尔绝对量扣除（工单 82 Q5/Q2）。
 
 > 📎 延伸阅读：模型局限的完整清单与科学讨论见 `docs/reports/V0_3_0_FINAL_REPORT.md` 第六节；气候/降水化学集成见 `docs/analysis/Q7_PRECIP_CHEMISTRY.md`；收敛调优见 `docs/analysis/KNOBS_CONVERGENCE.md`；电荷平衡修复见 `docs/analysis/V0_7_x_CHARGE_PAIRING.md`。
 

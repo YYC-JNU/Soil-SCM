@@ -254,13 +254,14 @@ def test_lateral_baseflow_solute_proportional_deduction(profile, soil_info):
     row0 = details[0]
     # L4 (i=3) 基流出口记录 = 1e5 L
     assert row0['baseflow_L4_L'] == pytest.approx(1.0e5)
-    # L4 溶质比例扣除: 最终浓度 ≤ 原平衡浓度 × (1 − Q_out/V)
-    # (V 为 L4 体积 θ×40×1e5; 平衡后经 PHREEQC, 保守离子 Cl 近似比例)
-    v_l4 = new_states[3].volume
+    # 工单82 (Q2=A/Q5=A): 排水是"换水"不浓缩 — 基流 1e5 L 按摩尔绝对量移出
+    # (mol=C×Q_out), 残留体积落回 θ_out; 旧 Q3 比例法断言 "cl_after <=
+    # cl_before" (排水稀释) 在新语义下不成立 (排水不改变残留浓度)。
+    w1 = theta_to_water_L(0.40, profile.effective_depth)
+    assert new_states[3].volume == pytest.approx(w1, rel=1e-6)  # 体积落回 θ_out
     cl_after = new_states[3].solution.get('Cl', 0.0)
-    cl_before = states[3].solution.get('Cl', 0.0)  # 近似 (平衡前)
     assert cl_after >= 0.0
-    assert cl_after <= cl_before  # 出口移出后浓度不增 (物理方向)
+    assert cl_after < 10.0   # 排水不触发浓缩/清空 (无数值失败)
 
 
 def test_concentration_flush_triggers_on_high_conc(profile, soil_info):
@@ -364,10 +365,14 @@ def test_no3_pool_cascade_vertical_and_outflow(profile, soil_info):
     row0 = details[0]
     assert 'n_no3_pool_L1' in row0
     assert 'leach_no3_L1_mol' in row0
-    # leach_no3_L1 = L1 垂直下移量 (drains=1e5, V_pool=θ×depth×1e5)
+    # leach_no3_L1 = L1 垂直下移量 (drains=1e5, 池按排水前混合体积 V_mix 比例)
+    # 工单82 (Q5=A): 排水发生在排水前体积 V_mix = θ_out×d×1e5 + 该场排水总量
+    # (drains[0]=1e5 + lateral + baseflow); NO3 池是随水移出的模型库存,
+    # 移出分数 = drain/V_mix (排水发生时池在排水前水量中按比例携带)。
     from src.vgm import theta_to_water_L
     v_l1 = theta_to_water_L(0.40, profile.effective_depth)
-    expected_leach_l1 = 1000.0 * min(1.0e5 / v_l1, 1.0)
+    v_mix = v_l1 + 1.0e5      # 排水总量 = drains[0] 1e5 (lat/base 为 0)
+    expected_leach_l1 = 1000.0 * min(1.0e5 / v_mix, 1.0)
     assert row0['leach_no3_L1_mol'] == pytest.approx(expected_leach_l1, rel=1e-6)
     # 自洽: L1 淋失 = 初始池 − 末池 (无 bypass/出口)
     assert row0['leach_no3_L1_mol'] == pytest.approx(

@@ -234,10 +234,15 @@ GAP_H_FRACTION = 0.3        # 缺口 → HX 比例 (与 GAP_AL_FRACTION 并列, 
 # (1e-9) lime 10y 9.30 不回落。定案: tolerance=1e-9 (1e-8 与 1e-9 结果一致,
 # 取更保守), iterations=100 保持 (fertilizer/lime 均无迭代不足)。扫描数据
 # 见 docs/analysis/KNOBS_CONVERGENCE.md。SURFACE 启用时 iterations 强制 1000。
-KNOBS_ITERATIONS = 100      # KNOBS -iterations (牛顿迭代上限; 多数月 100 内收敛;
-                            #  难月 (lime 高 pH/高离子强度) 超限时引擎自动提高迭代
-                            #  重试 250, 见 _run_official_step 收敛检测)
-KNOBS_STEP_SIZE = 0.1       # KNOBS -step_size (Newton 迭代步长缩放, PHREEQC 默认 0.1)
+KNOBS_ITERATIONS = 500      # KNOBS -iterations (牛顿迭代上限; 多数月 500 内收敛;
+                            #  1e-9 真收敛下 250 首次仍常超限 (工单82 H5 数据:
+                            #  natural 30y 重试 1245 次, 30 分钟超时护栏被触发 →
+                            #  提高基础迭代至 500 消除大部分重试; PHREEQC 收敛即停,
+                            #  无性能损失); 超限自动提高重试 1000)
+KNOBS_STEP_SIZE = 0.1       # 废弃 (工单82, 2026-08-25): 不注入 -step_size — IPhreeqc
+                            #  3.8.6 对该行的存在本身敏感 (实测 0.2~0.001 均使预平衡
+                            #  第一步远起点大交换相平衡数值发散 Ca=2000/4000 垃圾解,
+                            #  缺省 OK); 常量保留仅兼容旧探针引用。PHREEQC 默认步长。
 KNOBS_TOLERANCE = 1e-9      # KNOBS -tolerance (模拟步迭代残差判据, 工单78 定案)
 KNOBS_TOLERANCE_PRE = 1e-12 # 预平衡用 -tolerance (从远平衡起点需宽松假收敛稳定,
                             #  1e-9 会使预平衡第一步迭代超限返回垃圾解 CaX2=0)
