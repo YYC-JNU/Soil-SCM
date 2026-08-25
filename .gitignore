@@ -1,5 +1,6 @@
 # Python 缓存与字节码
 __pycache__/
+.pytest_cache/
 *.py[cod]
 *.egg-info/
 *.egg
