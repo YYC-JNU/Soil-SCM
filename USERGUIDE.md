@@ -130,7 +130,7 @@ python main.py --config /path/to/your_config.yaml   # 任意自定义配置文�
 | `companion` | 启用 | v0.7.0: NO₃⁻ 伴随淋失（D3：`n_no3_pool` 水库串联 + 惰性阴离子 `An⁻` 分级注入拽盐基）+ NH₄⁺ 等效置换；示例见 4.8 |
 | `weathering` | 启用* | v0.7.0: 原生矿物风化集总碱度注入（Arrhenius 温度依赖 + `degrade_minerals` 降级防"矿物闪蒸"）；*`config.yaml` 默认 `enable: true`，引擎层 `SimulationConfig` 构造器默认关闭——以 `config.yaml` 为准 |
 | `charge_pairing` | 启用 | **REACTION 电荷平衡**（v0.7.x 工单77）：净电荷注入（硝化产酸/置换盐基/钾镁肥/companion acid）按等当量伴随保守惰性阴离子 `An⁻`，消除裸注入的电荷伪碱化；`enable: false` 回退裸注入（仅对照实验，会复现"施肥伪碱化"） |
-| `base_leaching` | 启用 | **盐基淋失强化**（v0.7.x 工单80）：对每层每场，出系统出口水（`lateral+baseflow`）携带的溶液盐基当量 `E_base` 在下一场平衡前注入等当量保守 `An⁻` → 平衡自洽拽出交换相盐基（Gapon）→ 盐基被持续追赶带走（lime 回落 + fertilizer 盐基枯竭酸化）；BS 分级降权（`bs_high` 全量 / 中间线性衰减 / `bs_low` 以下归零不注酸）；`enable: false` = 工单 80 前基线（A/B 对照） |
+| `base_leaching` | 启用 | **盐基淋失强化**（v0.7.x 工单80）：对每层每场，出系统出口水（`lateral+baseflow`）携带的溶液盐基当量 `E_base` 在下一场平衡前注入等当量保守 `An⁻` → 平衡自洽拽出交换相盐基（Gapon）→ 盐基被持续追赶带走（lime 回落 + fertilizer 盐基枯竭酸化）；BS 分级降权（`bs_high` 全量 / 中间线性衰减 / `bs_low` 以下归零不注酸）；`enable: false` = 工单 80 前基线（A/B 对照）；**`c_floor_mmol_L`**（工单87 P0-A）：溶液盐基保底浓度下限（mmol/L 当量），E_base 不把溶液盐基逼到该浓度以下（护栏，防深层极端酸化；`0`=关闭护栏，保持工单 80 行为） |
 
 ### 4.2 `soil_data`：土壤数据
 
@@ -228,6 +228,9 @@ base_leaching:
   anion: An
   bs_high: 30.0       # BS≥30 全量 / 10~30 线性衰减 / <10 归零不注酸
   bs_low: 10.0
+  c_floor_mmol_L: 0.0 # 工单87 (P0-A): 溶液盐基保底浓度下限 (mmol/L 当量),
+                      #   0=关闭护栏 (保持工单80 行为); >0 时 E_base 不把溶液
+                      #   盐基逼到该浓度以下 (防深层极端酸化)
 ```
 
 要点：
