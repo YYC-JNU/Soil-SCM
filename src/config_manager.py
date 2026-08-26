@@ -139,6 +139,10 @@ class BaseLeachingConfig:
     anion: str = "An"          # 保守惰性阴离子元素名 (单元素名, 复用 companion/pairing 物种)
     bs_high: float = 30.0
     bs_low: float = 10.0
+    # 工单87 (P0-A): 溶液盐基保底浓度下限 (mmol/L 当量) — E_base 不把溶液盐基
+    # 逼到该浓度以下 (护栏, H1 归因落地); 0 = 关闭护栏 (工单 80 行为兼容)。
+    # 华南红壤深层渗滤液盐基观测量级 ~1 meq/L (0.5~2.0 区间, 定案值见 spec 87)
+    c_floor_mmol_L: float = 0.0
 
 
 @dataclass
@@ -423,7 +427,8 @@ def _parse_base_leaching(raw):
         enable=raw.get('enable', True),
         anion=raw.get('anion', 'An'),
         bs_high=raw.get('bs_high', 30.0),
-        bs_low=raw.get('bs_low', 10.0))
+        bs_low=raw.get('bs_low', 10.0),
+        c_floor_mmol_L=raw.get('c_floor_mmol_L', 0.0))
 
 
 class ConfigManager:

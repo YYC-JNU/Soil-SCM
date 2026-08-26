@@ -301,3 +301,43 @@ def test_base_leaching_disabled_fallback(profile, soil_info):
     assert row0['base_loss_eq_L1'] == 0.0
     assert row0['base_mode_L1'] == 'none'
     assert row0['e_base_anion_eq_L1'] == 0.0
+
+
+def test_calc_base_leaching_eq_floor():
+    """工单87 (P0-A): 溶液盐基保底 eq_floor — 低于保底不认领淋失
+
+    护栏: E_base 不把溶液盐基逼到物理下限之下 (H1 归因落地); 0 ≤ lost ≤ pool。
+    """
+    from src.phreeqc_engine import calc_base_leaching
+    # 低于/等于保底 → 0 (E_base 不认领)
+    assert calc_base_leaching(40.0, 1000.0, 100.0, eq_floor=40.0) == 0.0
+    assert calc_base_leaching(30.0, 1000.0, 100.0, eq_floor=40.0) == 0.0
+    # 高于保底 → 可抽池 = base_eq - eq_floor, 且 ≤ pool
+    lost = calc_base_leaching(100.0, 50.0, 100.0, eq_floor=40.0)
+    # 水出 50L / 池 100L → 60 × 0.5 = 30
+    assert lost == pytest.approx(30.0)
+    # 无出水 → 0
+    assert calc_base_leaching(100.0, 0.0, 100.0, eq_floor=10.0) == 0.0
+    # 兼容: eq_floor=0 与旧行为一致 (lost ≤ pool, 全部可抽)
+    assert calc_base_leaching(100.0, 100.0, 50.0) == pytest.approx(100.0)
+    # 不变量: 0 ≤ lost ≤ (base_eq - eq_floor)
+    for b, w, v in [(80.0, 90.0, 100.0), (200.0, 500.0, 80.0)]:
+        l = calc_base_leaching(b, w, v, eq_floor=20.0)
+        assert 0.0 <= l <= b - 20.0 + 1e-9
+
+
+def test_base_leaching_config_c_floor(tmp_path):
+    """工单87 (P0-A): YAML simulation.base_leaching.c_floor_mmol_L 解析"""
+    from src.config_manager import ConfigManager
+    p = tmp_path / "cfg.yaml"
+    p.write_text(
+        "simulation:\n  n_years: 2\n  base_leaching:\n"
+        "    enable: true\n    c_floor_mmol_L: 1.0\n", encoding="utf-8")
+    cfg = ConfigManager(str(p)).config.simulation.base_leaching
+    assert cfg.c_floor_mmol_L == pytest.approx(1.0)
+    # 缺省 → 0.0 (护栏默认关闭, 工单 80 行为兼容)
+    p2 = tmp_path / "cfg2.yaml"
+    p2.write_text("simulation:\n  n_years: 2\n  base_leaching:\n"
+                  "    enable: true\n", encoding="utf-8")
+    cfg2 = ConfigManager(str(p2)).config.simulation.base_leaching
+    assert cfg2.c_floor_mmol_L == pytest.approx(0.0)

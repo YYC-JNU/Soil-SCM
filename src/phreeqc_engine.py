@@ -151,14 +151,23 @@ def solution_base_eq(solution: dict, volume: float) -> float:
 
 
 def calc_base_leaching(base_eq: float, water_out_L: float,
-                       v_pool_L: float) -> float:
+                       v_pool_L: float, eq_floor: float = 0.0) -> float:
     """v0.7.x (工单80): 盐基随水移出当量 (eq) — E_base, 与 NO₃⁻ 池同构
 
     E_base = min(溶液盐基eq × water_out/V_pool, 溶液盐基eq)  (0 ≤ lost ≤ pool)
       - water_out_L: 离开本层的全部水 (drains + lateral + baseflow)
       - 复用 calc_no3_leaching 同构不变量 (全局 pool≥0, Q19 哲学延续)
+
+    工单87 (P0-A): eq_floor>0 时施加"溶液盐基保底"——低于保底当量时不认领
+    淋失 (E_base 返回 0, 下一场不再注入 An- 拽盐基), 可抽池 = base_eq - eq_floor。
+    护栏语义: 出系统水流仍可自然带走盐基 (Q3 溶质扣除在 run_event_step 内),
+    但 E_base 泵不再把溶液盐基逼到物理下限之下 (H1 归因落地)。
     """
-    return calc_no3_leaching(base_eq, water_out_L, v_pool_L)
+    if base_eq <= eq_floor or water_out_L <= 0.0:
+        return 0.0
+    v = max(v_pool_L, 1.0)
+    pool = base_eq - eq_floor
+    return min(pool * (water_out_L / v), pool)
 
 
 def calc_base_saturation(exchange: dict, include_hx: bool = False) -> float:
@@ -1107,7 +1116,9 @@ class PhreeqcEngine:
                     base_total_eq = solution_base_eq(
                         new_state.solution, new_state.volume)
                     base_loss_eq_i = calc_base_leaching(
-                        base_total_eq, q_out_system, v_pool)
+                        base_total_eq, q_out_system, v_pool,
+                        eq_floor=(self.base_leaching_cfg.c_floor_mmol_L
+                                  * 1e-3 * v_pool))
                     pending_e_base[i] = base_loss_eq_i
                 row[f'base_loss_eq_L{i+1}'] = base_loss_eq_i
                 row[f'base_mode_L{i+1}'] = base_mode
