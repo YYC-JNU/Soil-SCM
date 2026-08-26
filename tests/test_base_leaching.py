@@ -227,6 +227,65 @@ def test_base_leaching_reduces_solution_base(profile, soil_info):
     assert eq_on <= eq_off + 1e-9
 
 
+def test_calc_base_saturation_include_hx():
+    """工单87 (P0-C): include_hx 修复"AlX3 耗尽后 BS→100% 度量伪影"
+
+    std 口径分母不含 HX, AlX3=0 时恒 100%; fix 口径分母含 HX, 大 HX → BS 显著
+    降低 (物理口径), 使 E_base/companion 分级注入不再误判"高 BS 全量注入"。
+    """
+    from src.phreeqc_engine import calc_base_saturation
+    ex = {'CaX2': 1.0, 'MgX2': 0.0, 'KX': 0.0, 'NaX': 0.0,
+          'AlX3': 0.0, 'HX': 100.0}
+    # std: 分母 = 盐基 + AlX3×3 = 2 (无 HX) → 100%
+    assert calc_base_saturation(ex) == pytest.approx(100.0)
+    # fix: 分母 = 盐基 + HX = 2 + 100 → 2/102
+    assert calc_base_saturation(ex, include_hx=True) == pytest.approx(
+        2.0 / 102.0 * 100.0)
+    # HX 越大 fix BS 越低 (单调)
+    ex2 = dict(ex, HX=200.0)
+    assert (calc_base_saturation(ex2, include_hx=True)
+            < calc_base_saturation(ex, include_hx=True))
+    # 无 HX 时两口径一致 (向后兼容)
+    ex3 = {'CaX2': 1.0, 'MgX2': 1.0, 'KX': 1.0, 'NaX': 1.0,
+           'AlX3': 1.0, 'HX': 0.0}
+    assert calc_base_saturation(ex3) == pytest.approx(
+        calc_base_saturation(ex3, include_hx=True))
+
+
+def test_base_leaching_bs_uses_include_hx(profile, soil_info, monkeypatch):
+    """工单87 (P0-C): 事件循环计算 E_base 分级 BS 用含 HX 物理口径
+
+    既有口径: BS 分母不含 HX → AlX3 耗尽层恒 100% → E_base 恒 inert 全量注入
+    (An- 泵正反馈放大, H0 归因)。修复后: 含 HX 口径 → BS 低 → 分级降级。
+    """
+    import src.phreeqc_engine as pe
+    from src.config_manager import BaseLeachingConfig
+    calls = []
+    orig = pe.calc_base_saturation
+
+    def spy(ex, include_hx=False):
+        calls.append(include_hx)
+        return orig(ex, include_hx=include_hx)
+
+    monkeypatch.setattr(pe, 'calc_base_saturation', spy)
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc",
+                      base_leaching_cfg=BaseLeachingConfig(enable=True))
+    states = [e.build_initial_state(profile, soil_info, 0.015)
+              for _ in range(2)]
+    ev1 = {'inflows': [1.0e5, 0.0], 'drains': [1.0e5, 0.0],
+           'lateral': [1.0e4, 0.0], 'baseflow': [0.0, 0.0],
+           'bypass_water_L': 0.0, 'precip_mm': 50.0, 'theta': [0.40, 0.40]}
+    ev2 = {'inflows': [1.0e5, 0.0], 'drains': [1.0e5, 0.0],
+           'lateral': [1.0e4, 0.0], 'baseflow': [0.0, 0.0],
+           'bypass_water_L': 0.0, 'precip_mm': 50.0, 'theta': [0.40, 0.40]}
+    hydrology = {'events': [ev1, ev2], 'aet_mm': 0.0, 'et_deficit_mm': 0.0}
+    e.run_monthly_multi_layer(
+        states, dict(EVENT_FORCING, precip=50.0), MonthlyAction(),
+        profile, hydrology=hydrology)
+    # 第二场触发 E_base 注入 → BS 计算应以 include_hx=True 物理口径
+    assert True in calls, "E_base 分级 BS 计算未使用 include_hx 物理口径"
+
+
 def test_base_leaching_disabled_fallback(profile, soil_info):
     """base_leaching 关闭 → 事件记账列恒 0 (完全回退 v0.7.0 行为)"""
     e = _engine()  # 不传 cfg → 禁用

@@ -161,17 +161,25 @@ def calc_base_leaching(base_eq: float, water_out_L: float,
     return calc_no3_leaching(base_eq, water_out_L, v_pool_L)
 
 
-def calc_base_saturation(exchange: dict) -> float:
+def calc_base_saturation(exchange: dict, include_hx: bool = False) -> float:
     """v0.7.0 (工单71): 盐基饱和度 BS% — 与 main._extract_diagnostics 同公式
 
     BS = (CaX2×2 + MgX2×2 + KX + NaX) / (盐基 + AlX3×3) × 100
     (与既有 base_saturation 诊断列数值一致, 分级注入与输出可对照)
+
+    工单87 (P0-C): include_hx=True 时分母追加 HX (X- 位点上的 H, 一价电荷当量
+    = mol) ——修复"AlX3 耗尽后 BS→100% 度量伪影" (H0 归因: 伪影经 E_base/
+    companion 分级注入反馈放大泵)。引擎分级注入传 include_hx=True (物理口径),
+    输出诊断列保持 include_hx=False (历史口径兼容)。
     """
     base_charge = (exchange.get('CaX2', 0.0) * 2.0
                    + exchange.get('MgX2', 0.0) * 2.0
                    + exchange.get('KX', 0.0)
                    + exchange.get('NaX', 0.0))
-    total = base_charge + exchange.get('AlX3', 0.0) * 3.0
+    acid_charge = exchange.get('AlX3', 0.0) * 3.0
+    if include_hx:
+        acid_charge += exchange.get('HX', 0.0)
+    total = base_charge + acid_charge
     return base_charge / total * 100.0 if total > 0 else 0.0
 
 
@@ -1010,7 +1018,8 @@ class PhreeqcEngine:
                 companion_acid_eq = 0.0
                 companion_mode = 'none'
                 if self.companion_enabled and pending_e_loss[i] > 0:
-                    bs = calc_base_saturation(new_states[i].exchange)
+                    bs = calc_base_saturation(new_states[i].exchange,
+                                              include_hx=True)
                     companion_anion_eq, companion_acid_eq, companion_mode = \
                         self._grade_companion_injection(pending_e_loss[i], bs)
                     if companion_mode == 'acid':
@@ -1027,7 +1036,8 @@ class PhreeqcEngine:
                 base_anion_eq = 0.0
                 base_mode = 'none'
                 if self.base_leaching_enabled and pending_e_base[i] > 0:
-                    bs = calc_base_saturation(new_states[i].exchange)
+                    bs = calc_base_saturation(new_states[i].exchange,
+                                              include_hx=True)
                     base_anion_eq, base_mode = self._grade_base_leaching(
                         pending_e_base[i], bs)
                     if base_mode == 'zero':
