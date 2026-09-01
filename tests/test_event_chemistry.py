@@ -119,10 +119,10 @@ def test_run_monthly_step_event_driven_loops_events(profile, soil_info,
     calls = []
     orig = e.run_event_step
 
-    def spy(state, event, action, profile, forcing=None):
+    def spy(state, event, action, profile, forcing=None, **kwargs):
         calls.append((event.precip_mm,
                       forcing.get('inflow_water_L') if forcing else None))
-        return orig(state, event, action, profile, forcing=forcing)
+        return orig(state, event, action, profile, forcing=forcing, **kwargs)
 
     monkeypatch.setattr(e, 'run_event_step', spy)
     forcing = dict(EVENT_FORCING, precip=100.0, event_driven=True,

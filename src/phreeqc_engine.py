@@ -36,7 +36,11 @@ from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
                            KNOBS_ITERATIONS, KNOBS_TOLERANCE,
                            KNOBS_TOLERANCE_PRE,
                            KNOBS_CONVERGENCE_TOLERANCE,
-                           KNOBS_STEP_SIZE)
+                           KNOBS_STEP_SIZE,
+                           KNOBS_ITERATIONS_SHALLOW,
+                           KNOBS_ITERATIONS_DEEP,
+                           KNOBS_DEEP_START_LAYER,
+                           KNOBS_RETRY_MULTIPLIER)
 from src.vgm import theta_to_water_L
 from src.logging_config import get_logger
 from src.scenario_controller import MonthlyAction
@@ -420,7 +424,9 @@ class PhreeqcEngine:
     def run_monthly_step(self, state: SoilState,
                          monthly_forcing: dict,
                          action,
-                         soil_profile) -> Tuple[SoilState, DiagnosticOutput]:
+                         soil_profile,
+                         layer_index=None,
+                         n_layers=None) -> Tuple[SoilState, DiagnosticOutput]:
         """执行单月计算步
 
         参数:
@@ -428,6 +434,9 @@ class PhreeqcEngine:
             monthly_forcing: 当月气候强迫
             action: 当月操作指令
             soil_profile: 土壤剖面数据
+            layer_index / n_layers (工单86): 分层 KNOBS 迭代透传 (深层可用
+                KNOBS_ITERATIONS_DEEP, 当前=500 与工单85 逐位一致; 探针证伪
+                1000 负收益, 见 V0_7_x_L4_CONVERGENCE_PERF.md)
 
         返回:
             (新状态, 诊断输出)
@@ -451,16 +460,21 @@ class PhreeqcEngine:
             # 缺省旧单次平衡 (预平衡/测试/向后兼容, expand 兼容门禁)
             if monthly_forcing.get('event_driven'):
                 return self._run_monthly_step_events(state, monthly_forcing,
-                                                     action, soil_profile)
+                                                     action, soil_profile,
+                                                     layer_index=layer_index,
+                                                     n_layers=n_layers)
             return self._run_official_step(state, monthly_forcing,
-                                           action, soil_profile)
+                                           action, soil_profile,
+                                           layer_index=layer_index,
+                                           n_layers=n_layers)
         else:
             return self._run_simplified_step(state, monthly_forcing,
                                              action, soil_profile)
 
     def _run_monthly_step_events(self, state: SoilState,
                                  monthly_forcing: dict, action,
-                                 soil_profile) -> Tuple[SoilState, DiagnosticOutput]:
+                                 soil_profile, layer_index=None,
+                                 n_layers=None) -> Tuple[SoilState, DiagnosticOutput]:
         """run_monthly_step 的事件化内部 (v0.6.0, Q3/Q10)
 
         月内逐场闭环: generate_events(月降水) → 逐场:
@@ -497,11 +511,13 @@ class PhreeqcEngine:
                    'temp': monthly_forcing.get('temp', 25.0),
                    'pCO2': monthly_forcing.get('pCO2', 0.015)}
             cur_state, last_diag = self.run_event_step(
-                cur_state, ev, event_action, soil_profile, forcing=eff)
+                cur_state, ev, event_action, soil_profile, forcing=eff,
+                layer_index=layer_index, n_layers=n_layers)
         # 月末浓缩平衡 (Q12): θ 月内下降 → 浓缩 (无降水事件期干化效应)
         if cur_state.theta < theta_start - 1e-9:
             cur_state, diag2 = self.apply_concentration_equilibrium(
-                cur_state, cur_state.theta, soil_profile, monthly_forcing)
+                cur_state, cur_state.theta, soil_profile, monthly_forcing,
+                layer_index=layer_index, n_layers=n_layers)
             if diag2 is not None:
                 last_diag = diag2
         return cur_state, last_diag
@@ -509,8 +525,9 @@ class PhreeqcEngine:
     def run_event_step(self, state: SoilState, event, action,
                        soil_profile, forcing: dict = None,
                        theta_after: float = None,
-                       event_out_water_L: float = None
-                       ) -> Tuple[SoilState, DiagnosticOutput]:
+                       event_out_water_L: float = None,
+                       layer_index=None,
+                       n_layers=None) -> Tuple[SoilState, DiagnosticOutput]:
         """执行单场降雨事件的化学步 (v0.6.0, Q1/Q3/Q5/Q6)
 
         事件驱动化学核心: 每场事件一次全量 PHREEQC 平衡。
@@ -570,12 +587,15 @@ class PhreeqcEngine:
         if use_phreeqc:
             return self._run_official_step(state, eff, action, soil_profile,
                                            solution_water_L=mix_water_L,
-                                           inject_water=False, path='event')
+                                           inject_water=False, path='event',
+                                           layer_index=layer_index,
+                                           n_layers=n_layers)
         return self._run_simplified_step(state, eff, action, soil_profile)
 
     def apply_concentration_equilibrium(self, state: SoilState, theta: float,
                                         soil_profile, forcing: dict,
-                                        action=None):
+                                        action=None, layer_index=None,
+                                        n_layers=None):
         """月末浓缩平衡 (v0.6.0, Q7/Q12)
 
         旱季无降水事件后: θ 下降 → 仅重设 SOLUTION -water = θ×depth×1e5
@@ -608,7 +628,9 @@ class PhreeqcEngine:
         return self._run_official_step(state, eff, action or MonthlyAction(),
                                        soil_profile,
                                        solution_water_L=water_target_L,
-                                       inject_water=False)
+                                       inject_water=False,
+                                       layer_index=layer_index,
+                                       n_layers=n_layers)
 
     def _rescale_solution_for_volume(self, state: SoilState,
                                      new_water_L: float, profile=None):
@@ -899,8 +921,11 @@ class PhreeqcEngine:
             if inflow_ions:
                 # 下层: 接收上层排水溶质 (Q2/Q7 平流守恒)
                 layer_forcing['inflow_ions'] = inflow_ions
+            # 工单86 (2026-08-31): 分层 KNOBS 迭代透传 (深层 L3/L4 用
+            # KNOBS_ITERATIONS_DEEP, 当前=500; 探针证伪 1000 负收益)
             new_state, diag = self.run_monthly_step(
-                states[i], layer_forcing, action, soil_profile)
+                states[i], layer_forcing, action, soil_profile,
+                layer_index=i, n_layers=n)
             new_states.append(new_state)
             diags.append(diag)
 
@@ -1067,7 +1092,8 @@ class PhreeqcEngine:
                 new_state, diag = self.run_event_step(
                     new_states[i], rain_ev, event_action, soil_profile,
                     forcing=layer_forcing, theta_after=theta_ev,
-                    event_out_water_L=out_ev_L)
+                    event_out_water_L=out_ev_L,
+                    layer_index=i, n_layers=n)
                 layer_states.append(new_state)
                 last_diags[i] = diag
                 # ---- v0.7.0 (工单70, spec 69): NO3- 示踪池水库串联淋失 ----
@@ -1271,7 +1297,8 @@ class PhreeqcEngine:
 
     def _run_official_step(self, state, forcing, action, profile,
                            solution_water_L=None, inject_water=True,
-                           path='monthly'):
+                           path='monthly', layer_index=None,
+                           n_layers=None):
         """使用官方 phreeqc (IPhreeqc 3.8.6) 引擎执行计算步
 
         参数:
@@ -1294,7 +1321,8 @@ class PhreeqcEngine:
         # 构建 PHREEQC 输入字符串 (含 SELECTED_OUTPUT 查询块)
         input_string = self._build_phreeqc_input(
             state, forcing, action, profile, n_reaction=n_reaction,
-            solution_water_L=solution_water_L, inject_water=inject_water)
+            solution_water_L=solution_water_L, inject_water=inject_water,
+            layer_index=layer_index, n_layers=n_layers)
 
         try:
             warn_before = self._warning_count()
@@ -1304,14 +1332,22 @@ class PhreeqcEngine:
             # (lime 高 pH 4.89 错 vs 1e-9 10.18 对) 已证伪; 提高迭代 (1e-9 真收敛)
             # 仍失败 → 直接判定收敛失败走 fallback 计数 (连续 N=3 才永久降级),
             # 绝不回落 1e-12 把假收敛写回状态链。
+            # 工单86 (2026-08-31): 重试迭代跟随实际分层首次迭代数 × 倍数
+            # (当前深层=浅层=500 → 重试 1000, 与工单78~85 一致; 探针证伪
+            # 深层 1000 负收益, D 工单后若启用分层再动态跟随)
             if (self._has_new_convergence_warning(warn_before)
                     and not self._in_pre_equilibration):
                 logger.warning(
                     "PHREEQC 模拟步收敛失败 (迭代超限), 提高迭代重试")
+                retry_iters = max(
+                    int(self._pick_knobs_iterations(layer_index, n_layers)
+                        * KNOBS_RETRY_MULTIPLIER),
+                    500)
                 retry_string = self._build_phreeqc_input(
                     state, forcing, action, profile, n_reaction=n_reaction,
                     solution_water_L=solution_water_L, inject_water=inject_water,
-                    knobs_iterations=max(KNOBS_ITERATIONS * 2, 250))
+                    knobs_iterations=retry_iters,
+                    layer_index=layer_index, n_layers=n_layers)
                 warn_before = self._warning_count()
                 self.official.RunString(retry_string)
                 if self._has_new_convergence_warning(warn_before):
@@ -1466,10 +1502,36 @@ class PhreeqcEngine:
         diag = DiagnosticOutput(ph=new_state.ph, pe=new_state.pe)
         return new_state, diag
 
+    def _pick_knobs_iterations(self, layer_index=None,
+                               n_layers=None) -> int:
+        """工单86 (2026-08-31): 分层 KNOBS 迭代选择 (L4 收敛性能优化)
+
+        优先级: SURFACE 强制 1000 (既有行为, test_knobs_surface_iterations_1000)
+        > 深层 (L3/L4, KNOBS_ITERATIONS_DEEP) > 浅层/缺省 (500)。
+
+        数据依据 (工单84 探针 B): 难步 82% 集中 L3+L4 (L4 单层 71%), 重试步占
+        84% 模拟时间。⚠️ 探针证伪 (probe_86_layer_iters.py, natural 1y):
+        深层 500→1000 实测 +56.5% 更慢且重试不减少 — PHREEQC 对首次迭代预算
+        非预期敏感 (首次 1000 的 L4 难步仍超限需重试 2000), 故当前
+        KNOBS_ITERATIONS_DEEP=500 与工单85 权威基线逐位一致; 分层架构保留,
+        D 工单 (铝缓冲标定) 改变 L4 条件数后可再启用。
+
+        layer_index / n_layers 为 None 时 (单层路径/直接调用/测试) 返回默认,
+        行为不变。n_layers=1 时即使传 layer_index 也走默认 (单层回归护栏)。
+        """
+        if self.enable_surface:
+            return 1000
+        if (layer_index is not None and n_layers is not None
+                and n_layers >= 2
+                and layer_index + 1 >= KNOBS_DEEP_START_LAYER):
+            return KNOBS_ITERATIONS_DEEP
+        return KNOBS_ITERATIONS_SHALLOW
+
     def _build_phreeqc_input(self, state, forcing, action, profile,
                              n_reaction=None, solution_water_L=None,
                              inject_water=True, knobs_tolerance=None,
-                             knobs_iterations=None) -> str:
+                             knobs_iterations=None, layer_index=None,
+                             n_layers=None) -> str:
         """构建 PHREEQC 输入字符串
 
         参数:
@@ -1480,6 +1542,10 @@ class PhreeqcEngine:
                 None=用 state.volume (月级现状)。
             inject_water (v0.6.0): 是否注入入渗水 H2O (体积耦合时 False,
                 水量由 -water 体现; 降水化学/优先流化学仍注入)。
+            layer_index / n_layers (工单86, 2026-08-31): 分层 KNOBS 迭代 —
+                深层 (L3/L4) 用 KNOBS_ITERATIONS_DEEP (当前=500, 与工单85
+                逐位一致; 探针证伪 1000 负收益), 浅层/缺省保持 500。
+                None/None (单层或直接调用) 行为不变。
         """
         lines = []
 
@@ -1515,7 +1581,10 @@ class PhreeqcEngine:
         # 远起点大交换相平衡数值发散 Ca=2000/4000 垃圾解, 缺省 OK); 工单78
         # 引入此行是 v0.7.x 预平衡连续失败→永久降级 (spec82 '首月即降级')
         # 的真根因。PHREEQC 默认牛顿步长保持。
-        iterations = 1000 if self.enable_surface else KNOBS_ITERATIONS
+        # 工单86 (2026-08-31): 分层 KNOBS 迭代 — 深层 (L3/L4) 用
+        # KNOBS_ITERATIONS_DEEP (当前=500, 探针证伪 1000 负收益);
+        # 浅层/单层/直接调用保持 KNOBS_ITERATIONS (500) 逐位一致
+        iterations = self._pick_knobs_iterations(layer_index, n_layers)
         if knobs_iterations is not None:
             iterations = knobs_iterations
         tolerance = knobs_tolerance

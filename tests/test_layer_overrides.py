@@ -92,9 +92,9 @@ def test_multi_layer_pco2_injection(profile, soil_info, monkeypatch):
     captured = []
     orig = e.run_monthly_step
 
-    def spy(state, forcing, action, soil_profile):
+    def spy(state, forcing, action, soil_profile, **kwargs):
         captured.append(forcing.get("pCO2"))
-        return orig(state, forcing, action, soil_profile)
+        return orig(state, forcing, action, soil_profile, **kwargs)
 
     monkeypatch.setattr(e, "run_monthly_step", spy)
     e.run_monthly_multi_layer(states, FORCING, ACTION, profile,
@@ -110,9 +110,9 @@ def test_multi_layer_pco2s_fallback_global(profile, soil_info, monkeypatch):
     captured = []
     orig = e.run_monthly_step
 
-    def spy(state, forcing, action, soil_profile):
+    def spy(state, forcing, action, soil_profile, **kwargs):
         captured.append(forcing.get("pCO2"))
-        return orig(state, forcing, action, soil_profile)
+        return orig(state, forcing, action, soil_profile, **kwargs)
 
     monkeypatch.setattr(e, "run_monthly_step", spy)
     e.run_monthly_multi_layer(states, FORCING, ACTION, profile)
@@ -332,9 +332,9 @@ def test_multi_layer_bypass_injected_to_L2(profile, soil_info, monkeypatch):
     states = [e.build_initial_state(profile, soil_info, 0.015) for _ in range(2)]
     captured = []
 
-    def spy(state, forcing, action, soil_profile):
+    def spy(state, forcing, action, soil_profile, **kwargs):
         captured.append(forcing.get('bypass_water_L', None))
-        return orig(state, forcing, action, soil_profile)
+        return orig(state, forcing, action, soil_profile, **kwargs)
 
     orig = e.run_monthly_step
     monkeypatch.setattr(e, "run_monthly_step", spy)
@@ -368,9 +368,9 @@ def test_multi_layer_nitrification_L1_only(profile, soil_info, monkeypatch):
     states = [e.build_initial_state(profile, soil_info, 0.015) for _ in range(2)]
     captured = []
 
-    def spy(state, forcing, action, soil_profile):
+    def spy(state, forcing, action, soil_profile, **kwargs):
         captured.append(forcing.get('skip_nitrification', False))
-        return orig(state, forcing, action, soil_profile)
+        return orig(state, forcing, action, soil_profile, **kwargs)
 
     orig = e.run_monthly_step
     monkeypatch.setattr(e, "run_monthly_step", spy)
@@ -431,9 +431,9 @@ def test_multi_layer_hydrology_inflow_and_drain(profile, soil_info, monkeypatch)
     captured = []
     orig = e.run_monthly_step
 
-    def spy(state, forcing, action, soil_profile):
+    def spy(state, forcing, action, soil_profile, **kwargs):
         captured.append(forcing.get('inflow_water_L', None))
-        return orig(state, forcing, action, soil_profile)
+        return orig(state, forcing, action, soil_profile, **kwargs)
 
     monkeypatch.setattr(e, "run_monthly_step", spy)
     e.run_monthly_multi_layer(states, FORCING, ACTION, profile,

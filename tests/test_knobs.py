@@ -124,3 +124,118 @@ def test_knobs_convergence_warning_helpers(profile, soil_info):
     before = e._warning_count()
     assert e._has_new_convergence_warning(before) is False
 
+
+def test_knobs_layer_iterations_deep(profile, soil_info, monkeypatch):
+    """工单86 (2026-08-31): 深层 (L3/L4) KNOBS 迭代 = KNOBS_ITERATIONS_DEEP
+
+    分层迭代机制 (layer_index 透传 → 深层用 DEEP 常量)。当前 DEEP=500
+    (探针证伪 1000 负收益后回退, 与工单85 权威基线逐位一致); 机制验证:
+    上调 DEEP → 深层注入跟随, 浅层不受影响。
+    """
+    from src.constants import KNOBS_ITERATIONS_DEEP
+    import src.phreeqc_engine as pe
+    e = _engine()
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    for li in (2, 3):   # L3/L4 (索引 2/3)
+        inp = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile,
+                                     layer_index=li, n_layers=4)
+        assert f"-iterations {KNOBS_ITERATIONS_DEEP}" in inp
+    # 机制验证: DEEP 上调 → 深层注入跟随, 浅层保持
+    monkeypatch.setattr(pe, "KNOBS_ITERATIONS_DEEP", 1000)
+    inp2 = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile,
+                                  layer_index=3, n_layers=4)
+    assert "-iterations 1000" in inp2
+    inp3 = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile,
+                                  layer_index=0, n_layers=4)
+    assert "-iterations 500" in inp3
+
+
+def test_knobs_layer_iterations_shallow(profile, soil_info):
+    """工单86 (2026-08-31): 浅层 (L1/L2) KNOBS 迭代 = 500 (与基线一致)"""
+    from src.constants import KNOBS_ITERATIONS_SHALLOW
+    e = _engine()
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    for li in (0, 1):   # L1/L2 (索引 0/1)
+        inp = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile,
+                                     layer_index=li, n_layers=4)
+        assert f"-iterations {KNOBS_ITERATIONS_SHALLOW}" in inp
+
+
+def test_knobs_layer_none_default_unchanged(profile, soil_info):
+    """工单86 (2026-08-31): 不传层 (单层/直接调用/预平衡) 保持全局默认"""
+    e = _engine()
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    inp = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile)
+    assert f"-iterations {KNOBS_ITERATIONS}" in inp
+    # 单层 (n_layers=1) 护栏: 即使传 layer_index 也走默认, 不切深层
+    inp1 = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile,
+                                  layer_index=0, n_layers=1)
+    assert f"-iterations {KNOBS_ITERATIONS}" in inp1
+
+
+def test_knobs_surface_still_1000_with_layer(profile, soil_info):
+    """工单86 (2026-08-31): SURFACE 启用时 iterations 强制 1000 优先于分层"""
+    e = _engine(enable_surface=True)
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    inp = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile,
+                                 layer_index=3, n_layers=4)
+    assert "-iterations 1000" in inp
+
+
+def test_knobs_retry_follows_layer_iterations(profile, soil_info, monkeypatch):
+    """工单86 (2026-08-31): 重试迭代跟随实际分层首次迭代 × 倍数
+
+    当前深层=浅层=500 (探针证伪 1000 负收益后回退) → 重试均 1000
+    (与工单78~85 行为一致); 机制验证: DEEP 上调 → 深层重试跟随翻倍。
+    """
+    import src.phreeqc_engine as pe
+    e = _engine()
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    calls = []
+    monkeypatch.setattr(e.official, "RunString", lambda s: calls.append(s))
+    # 首次 RunString 后判定超限 (len==1 → True), 重试后收敛 (len==2 → False)
+    monkeypatch.setattr(e, "_has_new_convergence_warning",
+                        lambda before: len(calls) == 1)
+    monkeypatch.setattr(e, "_parse_official_output",
+                        lambda state, **kw: (state, None))
+    # 深层: 首次 500 (DEEP=500), 重试 1000
+    e._run_official_step(state, dict(FORCING), MonthlyAction(), profile,
+                         layer_index=3, n_layers=4)
+    assert len(calls) == 2
+    assert "-iterations 500" in calls[0]
+    assert "-iterations 1000" in calls[1]
+    # 机制验证: DEEP=800 → 深层首次 800, 重试 1600
+    monkeypatch.setattr(pe, "KNOBS_ITERATIONS_DEEP", 800)
+    calls.clear()
+    e._run_official_step(state, dict(FORCING), MonthlyAction(), profile,
+                         layer_index=3, n_layers=4)
+    assert len(calls) == 2
+    assert "-iterations 800" in calls[0]
+    assert "-iterations 1600" in calls[1]
+    # 浅层: 首次 500, 重试 1000 (不受 DEEP 影响)
+    calls.clear()
+    e._run_official_step(state, dict(FORCING), MonthlyAction(), profile,
+                         layer_index=0, n_layers=4)
+    assert len(calls) == 2
+    assert "-iterations 500" in calls[0]
+    assert "-iterations 1000" in calls[1]
+
+
+def test_knobs_multi_layer_passes_layer_index(profile, soil_info, monkeypatch):
+    """工单86 (2026-08-31): run_monthly_multi_layer 透传层索引 → 深层注入 1000
+
+    月级循环每层传 layer_index=i, n_layers=n; 深层 (L3/L4) 由 _build_phreeqc_input
+    用 KNOBS_ITERATIONS_DEEP 注入 (deep/shallow 注入串已由上面两个测试验证)。
+    """
+    e = _engine()
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    states = [state, state, state, state]
+    seen = []
+    monkeypatch.setattr(
+        e, "run_monthly_step",
+        lambda st, forcing, action, prof, **kw:
+            (seen.append((kw.get('layer_index'), kw.get('n_layers'))) or (st, None)))
+    e.run_monthly_multi_layer(states, dict(FORCING), MonthlyAction(), profile)
+    assert [li for li, _ in seen] == [0, 1, 2, 3]
+    assert all(nl == 4 for _, nl in seen)
+
