@@ -40,8 +40,10 @@ from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
                            KNOBS_ITERATIONS_SHALLOW,
                            KNOBS_ITERATIONS_DEEP,
                            KNOBS_DEEP_START_LAYER,
-                           KNOBS_RETRY_MULTIPLIER)
+                           KNOBS_RETRY_MULTIPLIER,
+                           AMORPHOUS_ALOH3_LOGK_DATABASE)
 from src.vgm import theta_to_water_L
+from src.utils import layer_aloh3_params
 from src.logging_config import get_logger
 from src.scenario_controller import MonthlyAction
 
@@ -382,7 +384,7 @@ class PhreeqcEngine:
             logger.warning("无可用 PHREEQC 引擎，使用简化模式")
 
     def build_initial_state(self, soil_profile, mineral_db_info,
-                            pCO2: float) -> SoilState:
+                            pCO2: float, layer_index=None) -> SoilState:
         """构建初始土壤状态
 
         使用 InitialConditionBuilder 生成与 phreeqc.dat 兼容的
@@ -393,6 +395,8 @@ class PhreeqcEngine:
             soil_profile: SoilProfile 对象
             mineral_db_info: 矿物数据库信息
             pCO2: 初始CO2分压 (atm)
+            layer_index (工单D): 分层 Al(OH)3(a) 参数透传 (fraction/scale/logk) —
+                None/单层 → 全局默认 (基线); 由 main 逐层传 i
 
         返回:
             SoilState 对象
@@ -400,7 +404,8 @@ class PhreeqcEngine:
         from src.initial_condition import InitialConditionBuilder
 
         builder = InitialConditionBuilder(soil_profile, mineral_db_info, pCO2,
-                                          initial_psi_cm=self.initial_psi_cm)
+                                          initial_psi_cm=self.initial_psi_cm,
+                                          layer_index=layer_index)
 
         state = SoilState()
         state.temperature = 25.0
@@ -1549,6 +1554,18 @@ class PhreeqcEngine:
         """
         lines = []
 
+        # 工单D (2026-08-31): 分层 Al(OH)3(a) log_k 覆盖 (深层铝缓冲标定)
+        # 仅当分层 logk != 数据库值 (10.8, phreeqc.dat:1086) 时注入 PHASES 覆盖 —
+        # 默认全 10.8 不注入 (逐位基线); L4 标定后注入 (8.8~10.8 微晶态窗口,
+        # M0 探针实测 9.8→4.42 / 9.3→4.25 / 8.8→4.08 全落 [4,5])。
+        aloh3 = layer_aloh3_params(layer_index, n_layers)
+        if aloh3['logk'] != AMORPHOUS_ALOH3_LOGK_DATABASE:
+            lines.append("PHASES")
+            lines.append("  Al(OH)3(a)")
+            lines.append("    Al(OH)3 + 3 H+ = Al+3 + 3 H2O")
+            lines.append(f"    -log_k {aloh3['logk']}")
+            lines.append("")
+
         # v0.7.0 (工单71, spec 69): 自定义保守惰性阴离子物种定义
         # (不碰 phreeqc.dat; 不参与氧化还原; 供伴随淋失 E_loss 等当量注入,
         #  进平衡前 REACTION 注入 → 电荷平衡驱动交换相盐基解吸, Gapon 自洽)
@@ -1651,7 +1668,13 @@ class PhreeqcEngine:
             if mineral in degrade_set:
                 continue
             if moles > 0:
-                scaled = moles * self.mineral_scale
+                if mineral == 'Al(OH)3(a)':
+                    # 工单D (2026-08-31): 分层 scale — 解开 MINERAL_SCALE 千斤顶
+                    # (L4 物理量缓冲; 默认 = MINERAL_SCALE 逐位基线, layer_aloh3_params)
+                    scaled = moles * layer_aloh3_params(
+                        layer_index, n_layers)['scale']
+                else:
+                    scaled = moles * self.mineral_scale
                 lines.append(f"  {mineral:<15} 0.0  {scaled:.6e}")
         lines.append("")
 

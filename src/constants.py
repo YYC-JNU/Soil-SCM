@@ -83,6 +83,44 @@ AMORPHOUS_ALOH3_MASS_FRACTION = 0.02
 # Al(OH)3 摩尔质量 (g/mol)
 AMORPHOUS_ALOH3_MOLAR_MASS = 78.0
 
+# ---- 工单D (2026-08-31): 深层铝缓冲标定分层参数 (L4 pH 5.885 已知偏差精修) ----
+# L4 pH 30y 终值 5.885 偏高 (红壤深层典型 4~5, 87 报告 §4.1): P0-C 修复后 L4
+# 长期低离子强度低酸源 → 接近纯水 CO₂ 平衡 (~5.6), 缺"把 pH 钉在 4~5"的 Al 缓冲。
+# 机制: ① 解开 MINERAL_SCALE "千斤顶" (现状 Al(OH)3(a) 有效量 = 物理量 ÷ 1000,
+#    M0 探针实测 1.549e3 mol vs 溶液 1.64e6 L ≈ 8e-4 mol/L 无缓冲);
+# ② log_k 缓冲窗微调 — phreeqc.dat:1084-1087 Al(OH)3(a) 非晶质 log_k=10.8,
+#    Gibbsite=8.11; 红壤深层铝氧化物为中间微晶态, 8.8~10.8 物理合理。
+# M0 探针 (probe_D0_phases_scale.py) 实测物理量 + log_k 覆盖下 L4 平衡 pH:
+#   10.8→4.78 / 9.8→4.42 / 9.3→4.25 / 8.8→4.08 (全 ∈ [4,5]); fraction 0.02~0.08
+#   不敏感 (缓冲窗由 log_k 决定, 量已充分)。定案值 = D 工单扫描 (3y 粗筛→30y 细验),
+#   自然先行铁律 (HANDOFF §6): natural 30y 达标后其他情景复跑。
+# 分层访问器: src.utils.layer_aloh3_params (单一来源, builder/engine 共用);
+# 默认全 = 基线 (fraction 0.02 / logk 10.8 不注入 / scale MINERAL_SCALE), 逐位一致
+# 由 tests/test_aloh3_layer.py 回归锁定; L1/L2 恒基线 (工单84 上游独立性护栏)。
+AMORPHOUS_ALOH3_LOGK_DATABASE = 10.8   # phreeqc.dat:1086 非晶质 Al(OH)3(a) 数据库值
+                                       #  (logk == 此值 → 引擎不注入 PHASES, 逐位基线)
+AMORPHOUS_ALOH3_4LAYER_FRACTIONS = [0.02, 0.02, 0.02, 0.02]   # 各层质量分数 (默认=基线)
+AMORPHOUS_ALOH3_4LAYER_LOGK = [10.8, 10.8, 10.8, 10.8]        # 各层 log_k (默认=数据库
+                                                               #  值不注入; 标定改 L4)
+AMORPHOUS_ALOH3_4LAYER_SCALE = [MINERAL_SCALE, MINERAL_SCALE,  # 各层 MINERAL_SCALE 豁免
+                                MINERAL_SCALE, MINERAL_SCALE]  #  (从 MINERAL_SCALE 派生
+                                                               #   防双轨; L4 标定后改 1.0)
+# ⚠️ 机制预留 (2026-08-31, 工单D 铝通道证伪): M3 探针 (probe_D2_30y.py 预平衡四查) 实测
+# 物理量 Al(OH)3(a) 在预平衡锚定下被耗尽 (AlOH3a=0, log_k 8.8~10.8 均成立) — 铝缓冲通道
+# (解开 scale + log_k 微调) 机制性受限, 转 C1 pCO₂ 通道。本组分层常量保持基线值
+# (fraction 0.02 / logk 10.8 / scale MINERAL_SCALE) 不启用, 代码保留为"机制预留"
+# (分层访问器 layer_aloh3_params + tests/test_aloh3_layer.py 均保留) — 供长期工单
+# "深层铝矿物转 KINETICS 速率控制" 根治预平衡抽干后复活铝缓冲。
+
+# ---- 工单D (C1, 2026-08-31): 分层 pCO₂ 覆盖 (深层碳酸缓冲标定) ----
+# 铝通道证伪后转 C1: 深层 pCO₂ 提高 → 碳酸缓冲把 L4 pH 从 ~5.9 压向 4~5
+# (红壤深层典型)。物理依据: 深层土壤 CO₂ 分压高于表层 (根系/微生物呼吸,
+# 0.02~0.05 atm 常见; 当前 L4 OM 调制后仅 0.0175 偏低)。阶段 0 探针
+# (probe_D3_pco2_gate.py): pCO₂ 0.0175~0.05 下 L4-like 静态平衡 pH=4.978
+# ∈[4,5] (GATE PASS)。默认全 None = 不覆盖 (v85 基线); 仅 L4 定案值非默认。
+# 访问器: src.utils.layer_pco2_override (单一来源 + 层数护栏 + 调用期读取)。
+PCO2_4LAYER_OVERRIDE = [None, None, None, None]   # 各层目标 pCO₂ (atm), None=基线不覆盖
+
 # ---- 观测锚定预平衡参数 (v0.5.0, grilling Q5=A) ----
 # 预平衡通过迭代反馈 (比例-阻尼) 使初始状态在观测 (pH + 交换离子) 约束下
 # 自洽: 每步注入修正 (pH→H+/OH-, 交换离子→对应阳离子), 直到观测偏差收敛。

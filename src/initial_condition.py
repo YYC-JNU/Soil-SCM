@@ -43,7 +43,7 @@ from src.constants import (MINERAL_SCALE, HFO_STRONG_SITE_DENSITY,
                            WEATHERED_GAP_AL_FRACTION,
                            WEATHERED_GAP_H_FRACTION,
                            INITIAL_PSI_CM)
-from src.utils import cmol_to_mol_per_kg
+from src.utils import cmol_to_mol_per_kg, layer_aloh3_params
 from src.vgm import vgm_theta_from_psi, get_vgm_params
 
 logger = get_logger("initial_condition")
@@ -74,7 +74,8 @@ class InitialConditionBuilder:
     # phreeqc.dat 无有机质表面物种而废弃 (见 WF3/WF4)。
 
     def __init__(self, soil_profile, mineral_db_info, pCO2: float,
-                 initial_psi_cm: float = INITIAL_PSI_CM):
+                 initial_psi_cm: float = INITIAL_PSI_CM,
+                 layer_index=None):
         """
         参数:
             soil_profile: SoilProfile 对象 (来自 input_reader.py)
@@ -82,11 +83,14 @@ class InitialConditionBuilder:
             pCO2: 初始 CO2 分压 (atm)
             initial_psi_cm: v0.5.3: 初始基质势 (cm, 负值, 默认 −100 田间持水量,
                 经 VGM 正算 θ_init 驱动初始溶液体积, D8/Q8)
+            layer_index (工单D): 分层 Al(OH)3(a) 参数 (fraction/scale/logk) 选择 —
+                None/单层/越界 → 全局默认 (基线); 由 main 逐层传 i
         """
         self.profile = soil_profile
         self.mineral_info = mineral_db_info
         self.pCO2 = pCO2
         self.initial_psi_cm = initial_psi_cm
+        self.layer_index = layer_index
 
         # 计算衍生量 (复用 SoilProfile 已有属性, 消除重复实现, T04)
         # 注意: porosity 必须先于 solution_volume 计算
@@ -428,8 +432,11 @@ class InitialConditionBuilder:
         # Al(OH)3(a) (非晶质, 更可溶), 交换 Al 被淋失时溶解补充 Al3+,
         # 配合 L2 矿物回填维持 Al 循环。v0.4.0 扫描证实单纯增大
         # MINERAL_SCALE 无效 (矿物化加速 Al 耗尽, 见 docs/reports/V0_3_0_FINAL_REPORT.md)。
+        # 工单D (2026-08-31): 分层质量分数 — layer_aloh3_params 单一来源
+        # (layer_index None/单层/越界 → 全局默认 AMORPHOUS_ALOH3_MASS_FRACTION)
+        aloh3_frac = layer_aloh3_params(self.layer_index)['fraction']
         minerals['Al(OH)3(a)'] = (self.soil_mass_kg
-                                  * AMORPHOUS_ALOH3_MASS_FRACTION
+                                  * aloh3_frac
                                   * 1000.0 / AMORPHOUS_ALOH3_MOLAR_MASS)
 
         return minerals

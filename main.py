@@ -40,6 +40,7 @@ from src.constants import (DEFAULT_4LAYER_DEPTHS, DEFAULT_4LAYER_CLAY_PCT,
                            WEATHERED_EXCH_NA, WEATHERED_EXCH_AL,
                            WEATHERED_EXCH_H, DAYS_IN_MONTH)
 from src.climate_forcing import apply_om_pco2
+from src.utils import layer_pco2_override
 
 
 def _extract_diagnostics(soil_state, diag, variables):
@@ -114,8 +115,13 @@ def _build_initial_layer_states(engine, reader, soil_profile, soil_info,
         # (层内有机质, 表层富集强化表层酸性; 温度独立, 专家★3)
         layer_pco2s = [apply_om_pco2(p, layer_profiles[i].organic_matter)
                        for i, p in enumerate(layer_pco2s)]
+        # 工单D (C1, 2026-08-31): 分层 pCO₂ 覆盖 — 深层碳酸缓冲标定
+        # (默认 PCO2_4LAYER_OVERRIDE 全 None = 不覆盖 v85 基线; 仅 L4 定案值非默认)
+        layer_pco2s = [layer_pco2_override(i, n_layers) or p
+                       for i, p in enumerate(layer_pco2s)]
         soil_states = [engine.build_initial_state(
-            layer_profiles[i], layer_mineral_infos[i], layer_pco2s[i])
+            layer_profiles[i], layer_mineral_infos[i], layer_pco2s[i],
+            layer_index=i)
             for i in range(n_layers)]
         return soil_states[0], soil_states, layer_pco2s, layer_profiles
 
@@ -154,8 +160,13 @@ def _build_initial_layer_states(engine, reader, soil_profile, soil_info,
         # v0.5.3 (Q4/Q10): OM 矿化加性调制 (表层富集 → pCO₂_eff 梯度)
         layer_pco2s = [apply_om_pco2(p, layer_profiles[i].organic_matter)
                        for i, p in enumerate(layer_pco2s)]
+        # 工单D (C1, 2026-08-31): 分层 pCO₂ 覆盖 — 深层碳酸缓冲标定
+        # (默认 PCO2_4LAYER_OVERRIDE 全 None = 不覆盖 v85 基线; 仅 L4 定案值非默认)
+        layer_pco2s = [layer_pco2_override(i, 4) or p
+                       for i, p in enumerate(layer_pco2s)]
         soil_states = [engine.build_initial_state(
-            layer_profiles[i], layer_mineral_infos[i], layer_pco2s[i])
+            layer_profiles[i], layer_mineral_infos[i], layer_pco2s[i],
+            layer_index=i)
             for i in range(4)]
         return soil_states[0], soil_states, layer_pco2s, layer_profiles
 
