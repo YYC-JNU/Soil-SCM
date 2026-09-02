@@ -45,6 +45,9 @@ from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
 from src.vgm import theta_to_water_L
 from src.utils import layer_aloh3_params
 from src.diagnostics import calc_base_saturation
+from src.geochemistry import (advance_nitrification, exchange_base_ratios,
+                              weathering_arrhenius_factor)
+from src.phreeqc_input import PhreeqcInputConfig, build_phreeqc_input
 from src.logging_config import get_logger
 from src.scenario_controller import MonthlyAction
 
@@ -81,48 +84,10 @@ class SoilState:
                                  # (规范状态, Q1/Q7; L/ha 由 vgm.theta_to_water_L 派生)
 
 
-def advance_nitrification(state: SoilState, action,
-                          k1: float = NITRIFICATION_K1,
-                          k2: float = NITRIFICATION_K2) -> Dict[str, float]:
-    """推进氮形态库存 (尿素 → NH4+ → NO3-, 简化一阶转化) [L4, v0.3.0]
-
-    独立模块级函数 (升级空间): 将来若升级为 PHREEQC KINETICS 动力学块,
-    只需替换本函数实现, 调用方 (引擎月度步) 与返回契约不变。
-
-    Q1=A (库存层): 氮形态 (尿素/NH4+/NO3-) 为纯模型状态, 不注入 PHREEQC
-    溶液平衡 — phreeqc.dat 的 N 氧化还原平衡会把注入的无机氮全部转为
-    N2(g) (实测: pe=0~12 下溶液 N(-3)/N(5) 均≈0)。NH4+ 吸附于交换位点
-    不易淋失, 为硝化的驱动源; NO3- 为累计硝化量 (诊断, Q4=A)。
-
-    月度推进顺序:
-      1. 施肥: N 以尿素形式入库存 (kg N → mol N)
-      2. 尿素水解: n_urea × k1 → NH4+ (k1=1.0 当月全水解)
-      3. 硝化: n_nh4 × k2 → NO3- (库存累计)
-
-    返回本月硝化产酸量 (mol H+): {'H+': 2×硝化量}
-    (Q3=A: 硝化产酸注入 REACTION, 酸化效应真实进入溶液)
-    """
-    # 1. 施肥: 尿素入库存 (kg N → mol N)
-    if action.apply_fertilizer and getattr(action, 'n_amount', 0.0) > 0:
-        state.n_urea += action.n_amount * N_MOL_PER_KG_N
-
-    # 2. 尿素水解: urea → NH4+ (k1)
-    hydrolyzed = state.n_urea * k1
-    state.n_urea -= hydrolyzed
-    state.n_nh4 += hydrolyzed
-
-    # 3. 硝化: NH4+ → NO3- (k2, 库存形态)
-    nitrified = state.n_nh4 * k2
-    state.n_nh4 -= nitrified
-    state.n_no3 += nitrified
-    # v0.7.0 (工单70): 硝化量同步进入淋失示踪池 (供逐场 lost_no3 消费)
-    state.n_no3_pool += nitrified
-
-    # v0.7.0 (工单70): 返回契约扩展 — nitrified/hydrolyzed 键供 D3 伴随淋失
-    # (工单71) 与 NH4+ 等效置换 (工单72) 消费; 'H+' 键契约不变 (向后兼容)
-    return {'H+': 2.0 * nitrified,
-            'nitrified': nitrified,
-            'hydrolyzed': hydrolyzed}
+# 迁移注 (2026-09-02, 候选3): advance_nitrification/exchange_base_ratios/
+# weathering_arrhenius_factor 已迁 src/geochemistry.py — 本模块经顶部
+# `from src.geochemistry import ...` re-export, 命名空间可见性与 monkeypatch
+# 锚点 (test_nitrification/test_layer_overrides) 均不变。
 
 
 def calc_no3_leaching(pool_mol: float, water_out_L: float,
@@ -175,40 +140,6 @@ def calc_base_leaching(base_eq: float, water_out_L: float,
     v = max(v_pool_L, 1.0)
     pool = base_eq - eq_floor
     return min(pool * (water_out_L / v), pool)
-
-
-def exchange_base_ratios(exchange: dict) -> Dict[str, float]:
-    """v0.7.0 (工单72): 交换相 Ca:Mg:K:Na 电荷占比 (置换注入配比)
-
-    按电荷量占比返回 {离子: 比例}, Σ=1; 空交换相 → 空 dict。
-    CaX2/MgX2 为二价 (×2), KX/NaX 为一价。物理依据: NH4+ 置换盐基时
-    各盐基按其在交换相中的电荷占比被置换出来 (简化近似, Gapon 加权留 v0.7.x)。
-    """
-    ca = exchange.get('CaX2', 0.0) * 2.0
-    mg = exchange.get('MgX2', 0.0) * 2.0
-    k = exchange.get('KX', 0.0)
-    na = exchange.get('NaX', 0.0)
-    total = ca + mg + k + na
-    if total <= 0.0:
-        return {}
-    return {'Ca+2': ca / total, 'Mg+2': mg / total,
-            'K+': k / total, 'Na+': na / total}
-
-
-def weathering_arrhenius_factor(temp_c: float,
-                                activation_energy_kJ: float,
-                                t_ref_k: float = 298.15) -> float:
-    """v0.7.0 (工单73): 矿物风化 Arrhenius 温度因子 (D2, 气候敏感性传导)
-
-    factor = exp(−Ea/R × (1/T − 1/T_ref)), T 为开尔文
-      - T = T_ref (25°C) → 1.0 (基准)
-      - Ea=40 kJ/mol 时: 30°C ≈ 1.30 (增温 5°C 风化 +30%);
-        20°C ≈ 0.77 (降温风化减缓) → 增温情景产生可观测风化响应 (疑点2)
-    """
-    r = 8.314
-    t_k = temp_c + 273.15
-    return math.exp(-activation_energy_kJ * 1000.0 / r
-                    * (1.0 / t_k - 1.0 / t_ref_k))
 
 
 @dataclass
@@ -1516,408 +1447,43 @@ class PhreeqcEngine:
                              inject_water=True, knobs_tolerance=None,
                              knobs_iterations=None, layer_index=None,
                              n_layers=None) -> str:
-        """构建 PHREEQC 输入字符串
+        """构建 PHREEQC 输入字符串 (候选3, 2026-09-02: 迁至深层模块)
 
-        参数:
-            n_reaction (L4, v0.3.0): 本月氮反应量 {'NH4+','NO3-','H+'} (mol),
-                由 advance_nitrification 计算。None 时内部计算 (直接调用场景,
-                如测试), 此时会就地推进 state 的氮库存。
-            solution_water_L (v0.6.0): 目标溶液体积 (L), 体积-θ 耦合用;
-                None=用 state.volume (月级现状)。
-            inject_water (v0.6.0): 是否注入入渗水 H2O (体积耦合时 False,
-                水量由 -water 体现; 降水化学/优先流化学仍注入)。
-            layer_index / n_layers (工单86, 2026-08-31): 分层 KNOBS 迭代 —
-                深层 (L3/L4) 用 KNOBS_ITERATIONS_DEEP (当前=500, 与工单85
-                逐位一致; 探针证伪 1000 负收益), 浅层/缺省保持 500。
-                None/None (单层或直接调用) 行为不变。
+        薄委托: 逻辑整体迁至 src/phreeqc_input.build_phreeqc_input
+        (纯函数、零引擎依赖、字符串断言可毫秒级测试)。本方法保留原签名,
+        构造配置快照 (PhreeqcInputConfig) 后转发, 既有测试引用零改动;
+        收敛迭代选择沿用引擎 _pick_knobs_iterations (KNOBS monkeypatch 锚点)。
         """
-        lines = []
+        cfg = PhreeqcInputConfig(
+            anion_defined=self.anion_defined,
+            pair_anion=self.pair_anion,
+            charge_pairing_enabled=self.charge_pairing_enabled,
+            companion_enabled=self.companion_enabled,
+            companion_cfg=self.companion_cfg,
+            base_leaching_enabled=self.base_leaching_enabled,
+            weathering_enabled=self.weathering_enabled,
+            weathering_cfg=self.weathering_cfg,
+            nitrification_k1=self.nitrification_k1,
+            nitrification_k2=self.nitrification_k2,
+            precip_infiltration=self.precip_infiltration,
+            precip_chem=self.precip_chem,
+            mineral_scale=self.mineral_scale,
+            enable_surface=self.enable_surface,
+            in_pre_equilibration=self._in_pre_equilibration,
+        )
+        # 迭代选择保留在引擎侧: test_knobs_retry_follows_layer_iterations 等
+        # monkeypatch 的是 phreeqc_engine 命名空间的 KNOBS_ITERATIONS_DEEP,
+        # 故必须经 self._pick_knobs_iterations (引擎方法) 解析而非 builder 默认
+        if knobs_iterations is None:
+            knobs_iterations = self._pick_knobs_iterations(
+                layer_index, n_layers)
+        return build_phreeqc_input(
+            state, forcing, action, profile, cfg,
+            n_reaction=n_reaction, solution_water_L=solution_water_L,
+            inject_water=inject_water, knobs_tolerance=knobs_tolerance,
+            knobs_iterations=knobs_iterations,
+            layer_index=layer_index, n_layers=n_layers)
 
-        # 工单D (2026-08-31): 分层 Al(OH)3(a) log_k 覆盖 (深层铝缓冲标定)
-        # 仅当分层 logk != 数据库值 (10.8, phreeqc.dat:1086) 时注入 PHASES 覆盖 —
-        # 默认全 10.8 不注入 (逐位基线); L4 标定后注入 (8.8~10.8 微晶态窗口,
-        # M0 探针实测 9.8→4.42 / 9.3→4.25 / 8.8→4.08 全落 [4,5])。
-        aloh3 = layer_aloh3_params(layer_index, n_layers)
-        if aloh3['logk'] != AMORPHOUS_ALOH3_LOGK_DATABASE:
-            lines.append("PHASES")
-            lines.append("  Al(OH)3(a)")
-            lines.append("    Al(OH)3 + 3 H+ = Al+3 + 3 H2O")
-            lines.append(f"    -log_k {aloh3['logk']}")
-            lines.append("")
-
-        # v0.7.0 (工单71, spec 69): 自定义保守惰性阴离子物种定义
-        # (不碰 phreeqc.dat; 不参与氧化还原; 供伴随淋失 E_loss 等当量注入,
-        #  进平衡前 REACTION 注入 → 电荷平衡驱动交换相盐基解吸, Gapon 自洽)
-        # 元素名 = companion.inert_anion (PHREEQC 要求单元素名, 默认 An),
-        # 物种 = 元素名 + '-'; gfW 取 Cl 原子量 (保守示踪)
-        # v0.7.x (工单77): 条件从 companion_enabled 解耦 — charge pairing
-        # (电荷平衡修复) 独立启用时同样需要该保守阴离子定义
-        if self.anion_defined:
-            an_name = self.pair_anion
-            an_species = f"{an_name}-"
-            lines.append("SOLUTION_MASTER_SPECIES")
-            lines.append(
-                f"    {an_name}    {an_species}    0.0    {an_name}    35.453")
-            lines.append("")
-            lines.append("SOLUTION_SPECIES")
-            lines.append(f"    {an_species} = {an_species}")
-            lines.append("    -log_k    0.0")
-            lines.append("")
-
-        # KNOBS: 提高收敛鲁棒性 (物理矿物量较大时数值更难收敛)
-        # 迭代数取 100 平衡速度与收敛 (500 会使长模拟显著变慢)
-        # WF4/WF5: SURFACE 增加非线性, 需更高迭代数收敛 (1000, 实测验证)
-        # v0.7.x (工单78): 迭代/容差参数化 (constants.KNOBS_*)。预平衡 (远平衡
-        # 起点) 用 KNOBS_TOLERANCE_PRE (1e-12, 宽松假收敛稳定; 1e-9 第一步迭代
-        # 超限返回垃圾解 CaX2=0); 模拟步 (预平衡状态近平衡) 用 KNOBS_TOLERANCE
-        # (1e-9, lime 高 pH 真收敛 10.18, 1e-12 静默假收敛 4.89)。见
-        # docs/analysis/KNOBS_CONVERGENCE.md。
-        # 工单82 (2026-08-25, 数据驱动): 不注入 -step_size — IPhreeqc 3.8.6
-        # 对 -step_size 行的存在本身敏感 (实测 0.2~0.001 均使预平衡第一步
-        # 远起点大交换相平衡数值发散 Ca=2000/4000 垃圾解, 缺省 OK); 工单78
-        # 引入此行是 v0.7.x 预平衡连续失败→永久降级 (spec82 '首月即降级')
-        # 的真根因。PHREEQC 默认牛顿步长保持。
-        # 工单86 (2026-08-31): 分层 KNOBS 迭代 — 深层 (L3/L4) 用
-        # KNOBS_ITERATIONS_DEEP (当前=500, 探针证伪 1000 负收益);
-        # 浅层/单层/直接调用保持 KNOBS_ITERATIONS (500) 逐位一致
-        iterations = self._pick_knobs_iterations(layer_index, n_layers)
-        if knobs_iterations is not None:
-            iterations = knobs_iterations
-        tolerance = knobs_tolerance
-        if tolerance is None:
-            tolerance = (KNOBS_TOLERANCE_PRE if self._in_pre_equilibration
-                         else KNOBS_TOLERANCE)
-        lines.append("KNOBS")
-        lines.append(f"  -iterations {iterations}")
-        lines.append(f"  -tolerance {tolerance:.1e}")
-        lines.append(f"  -convergence_tolerance {KNOBS_CONVERGENCE_TOLERANCE:.1e}")
-        lines.append("")
-
-        # v0.5.0 L9: 覆盖 AlX3 交换选择性 log_k (抑制盐基置换交换 Al)
-        # 仅在校准值 != 数据库默认值时输出 (默认不改变行为)
-        if ALX3_SELECTIVITY_LOGK != ALX3_DEFAULT_LOGK:
-            lines.append("EXCHANGE_SPECIES")
-            lines.append("Al+3 + 3 X- = AlX3")
-            lines.append(f"    -log_k {ALX3_SELECTIVITY_LOGK}")
-            lines.append("")
-
-        # v0.6.1 (spec 62 Q7): 注入 HX 交换物种 — phreeqc.dat 的
-        # "H+ + X- = HX" 被注释禁用 (第 1362 行), 必须自定义注入使模型可识别
-        # 交换性 H 酸库 (exch_h→HX, initial_condition.build_exchange)。
-        # log_k=HX_LOGK (v0.6.1 扫描标定 3.0 → v0.7.0 工单76 调优 B 改 2.8, 可标定)
-        lines.append("EXCHANGE_SPECIES")
-        lines.append("H+ + X- = HX")
-        lines.append(f"    -log_k {HX_LOGK}")
-        lines.append("")
-
-        # SOLUTION 块
-        # -water 指定土柱溶液体积 (L), 使溶液与交换/矿物摩尔量量级匹配
-        # v0.6.0 (Q5): 体积-θ 耦合时用目标溶液体积 (θ×depth×1e5)
-        lines.append("SOLUTION 1")
-        water_volume = solution_water_L if solution_water_L is not None \
-            else state.volume
-        lines.append(f"  -water      {water_volume:.6e}")
-        lines.append(f"  temp      {forcing['temp']}")
-        lines.append(f"  pH        {state.ph}")
-        lines.append(f"  pe        4.0")
-        lines.append(f"  units     mol/L")
-        for ion, conc in state.solution.items():
-            if ion not in ['temp', 'pH', 'pe', 'units']:
-                # v0.6.0: 离子浓度下限 1e-10 mol/L (事件级小水量数值稳定性,
-                # 防止浓度趋零触发 PHREEQC negative activity)
-                lines.append(f"  {ion:<8} {max(float(conc), 1e-10):.6e}")
-        lines.append("")
-
-        # EXCHANGE 块
-        lines.append("EXCHANGE 1")
-        for species, amount in state.exchange.items():
-            lines.append(f"  {species:<8} {amount:.6e}")
-        lines.append("")
-
-        # EQUILIBRIUM_PHASES 块 (v0.6.1: 恢复全矿物平衡相, KINETICS 已回退)
-        # 矿物量 = 物理摩尔量 × 缩放系数 (折中方案, 见 docs/analysis/Q1_plus_ANALYSIS.md):
-        # 物理值会导致碱性突变(pH~9.9), 10% 提供真实缓冲且 pH 合理(4.4-4.5)
-        # v0.7.0 (工单73): weathering.degrade_minerals 指定的矿物从平衡相降级
-        # (不写入本块 → 消除"矿物闪蒸"无限供碱, 疑点1 机制A); 状态仍保留
-        # (SELECTED_OUTPUT 矿物演化回填不破坏 — v0.3.0 证伪教训: 不切断回补)
-        lines.append("EQUILIBRIUM_PHASES 1")
-        degrade_set = set(self.weathering_cfg.degrade_minerals
-                          if self.weathering_enabled else [])
-        for mineral, moles in state.minerals.items():
-            if mineral in degrade_set:
-                continue
-            if moles > 0:
-                if mineral == 'Al(OH)3(a)':
-                    # 工单D (2026-08-31): 分层 scale — 解开 MINERAL_SCALE 千斤顶
-                    # (L4 物理量缓冲; 默认 = MINERAL_SCALE 逐位基线, layer_aloh3_params)
-                    scaled = moles * layer_aloh3_params(
-                        layer_index, n_layers)['scale']
-                else:
-                    scaled = moles * self.mineral_scale
-                lines.append(f"  {mineral:<15} 0.0  {scaled:.6e}")
-        lines.append("")
-
-        # GAS_PHASE 块 (CO2 分压来自气候强迫, F1 修复: 不再硬编码 0.015)
-        # 写法: 总压=CO2分压 + 纯CO2 (验证有效)
-        pco2 = forcing.get('pCO2', 0.015)
-        lines.append("GAS_PHASE 1")
-        lines.append("  -fixed_pressure")
-        lines.append(f"  -pressure     {pco2:.6f}")
-        lines.append("  CO2(g)        1.0")
-        lines.append("")
-
-        # SURFACE 块 (WF4: Hfo_s/Hfo_w 铁氧化物表面络合, 默认关闭)
-        # PHREEQC 语法: {name} {表面积m2} {比表面m2/g} {位点密度mol/m2}
-        #   -equilibrate with solution 1 (与溶液平衡)
-        # 位点量 = 面积 × 位点密度; 面积由 build_surface 按 HFO_TARGET_SITES 反算
-        if self.enable_surface and state.surface:
-            surface_area = state.surface.get('area_m2', 0.0)
-            if surface_area > 0:
-                lines.append("SURFACE 1")
-                lines.append(f"  Hfo_s  {surface_area:.6e}  "
-                             f"{HFO_SPECIFIC_AREA:.1f}  "
-                             f"{HFO_STRONG_SITE_DENSITY:.6e}")
-                lines.append("  -equilibrate with solution 1")
-                lines.append(f"  Hfo_w  {surface_area:.6e}  "
-                             f"{HFO_SPECIFIC_AREA:.1f}  "
-                             f"{HFO_WEAK_SITE_DENSITY:.6e}")
-                lines.append("  -equilibrate with solution 1")
-                lines.append("")
-
-        # 单一 REACTION 块: 降水入渗 + 施肥(尿素硝化) + 石灰(CaO水化)
-        # 注意:
-        #   1) PHREEQC 多 REACTION 块共存时仅第一个生效 (phreeqc 包行为),
-        #      故所有干预合并到同一 REACTION 块;
-        #   2) REACTION 物质名不支持括号价态写法(N(5)/H(1) 会 Parsing error),
-        #      必须用元素名或具体物种名 (见 docs/analysis/Q1_ANALYSIS.md);
-        #   3) 降水: mm → L → mol (1 L H2O ≈ 55.5 mol), 乘以入渗系数
-        precip_mm = forcing['precip']
-        reaction_lines = []
-
-        if precip_mm > 0 or forcing.get('inflow_water_L'):
-            # v0.5.0: 水文模式用该层注入水量 (inflow_water_L, L/ha), 否则用
-            # 降水×入渗系数; 水量为 0 时不注入
-            inflow_water_L = forcing.get('inflow_water_L')
-            if inflow_water_L is not None:
-                water_L = inflow_water_L
-            else:
-                water_L = precip_mm * 10000.0 * self.precip_infiltration
-            water_mol = water_L * 55.5  # 1 L H2O ≈ 55.5 mol
-            # v0.6.0 (Q5): 体积-θ 耦合 (inject_water=False) 时不注入 H2O,
-            # 水量由 SOLUTION -water 体现
-            if inject_water and water_mol > 0:
-                reaction_lines.append(f"  H2O    {water_mol:.6e}  # 降水入渗")
-            # Q7: 降水化学离子 (酸雨组分) 随入渗水进入溶液
-            if self.precip_chem is not None and water_L > 0:
-                amounts = self.precip_chem.reaction_amounts(water_L)
-                for sp, mol in amounts.items():
-                    if mol > 0:
-                        reaction_lines.append(
-                            f"  {sp:<8} {mol:.6e}  # 降水{sp}")
-
-            # v0.5.2: 大孔隙优先流 — 绕过表层积水 (未与表层平衡) 携带原始
-            # 降水化学注入深层; H2O 独立追加, 降水化学按 precip_chem 有无
-            bypass_water_L = forcing.get('bypass_water_L', 0.0)
-            if bypass_water_L > 0:
-                if inject_water:
-                    bypass_mol = bypass_water_L * 55.5
-                    reaction_lines.append(
-                        f"  H2O    {bypass_mol:.6e}  # 优先流")
-                if self.precip_chem is not None:
-                    b_amounts = self.precip_chem.reaction_amounts(bypass_water_L)
-                    for sp, mol in b_amounts.items():
-                        if mol > 0:
-                            reaction_lines.append(
-                                f"  {sp:<8} {mol:.6e}  # 优先流{sp}")
-
-        # WF2/Q2+Q7: 层间平流输入 — 上层排水溶质 (mol) 注入本层
-        # 由 run_monthly_multi_layer 计算上层 SELECTED_OUTPUT totals × 排水量
-        inflow_ions = forcing.get('inflow_ions')
-        if inflow_ions:
-            for ion, mol in inflow_ions.items():
-                if mol > 0:
-                    reaction_lines.append(
-                        f"  {ion:<8} {mol:.6e}  # 上层排水")
-
-        # L4 (v0.3.0): 氮形态两步 — 尿素水解 → NH4+ → NO3- (库存层, Q1=A)
-        # NH4+/NO3- 不注入 PHREEQC 溶液: phreeqc.dat 的 N 氧化还原平衡会将其
-        # 全部转为 N2(g) (实测 pe=0~12 下 N(-3)/N(5)≈0)。只注入硝化产酸
-        # H+ = 2×硝化量 (Q3=A: 酸化效应真实进入溶液, 与旧"一步产酸"守恒)
-        if n_reaction is None:
-            # v0.4.0: 兜底路径也使用引擎配置的硝化速率
-            n_reaction = advance_nitrification(
-                state, action,
-                k1=self.nitrification_k1, k2=self.nitrification_k2)
-        h_mol = n_reaction.get('H+', 0.0)
-        if h_mol > 0:
-            reaction_lines.append(f"  H+     {h_mol:.6e}  # 硝化产酸")
-            # v0.7.x (工单77): 电荷配对 — 裸 H+ 注入在 PHREEQC 中因电荷
-            # 平衡不酸化 (2026-08-21 实测); 伴随等当量保守惰性阴离子后
-            # 真实酸化 (模拟 HNO3 的伴随阴离子, N 不进溶液故用 An- 替代)
-            if self.charge_pairing_enabled:
-                reaction_lines.append(
-                    f"  {self.pair_anion}- {h_mol:.6e}  # 电荷配对")
-
-        # v0.7.0 (工单72, spec 69): NH4+ 等效置换 — 施肥月尿素水解后, NH4+
-        # 假想占据交换位点并置换等当量盐基到溶液 (按交换相电荷占比注入),
-        # 模拟农业"NH4+ 置换盐基→盐基淋失"酸化通道 (不触碰 L4 Q3=A:
-        # NH4+/NO3- 不进溶液; 与硝化 H+ 同场平衡, 净效应 H+ 主导酸化)。
-        # 再吸附由平衡自然回吸 (Q20 决策), NH4X_virtual 记账列观测净效率。
-        # 工单76 调优 A (2026-08-21): 置换当量从水解量 (857 eq/次) 改为
-        # 硝化量 (343 eq/次) — 实测 857 使肥料盐基流净 +180 eq/次 (置换注入
-        # 的盐基被 Gapon 回吞 > 产酸), 施肥仍碱化; 仅对实际参与硝化的 N
-        # 置换, 物理更准且抑制盐基过量注入。
-        if (self.companion_enabled and self.companion_cfg.nh4_exchange
-                and not forcing.get('skip_nitrification')
-                and n_reaction and n_reaction.get('nitrified', 0.0) > 0):
-            nh4_eq = n_reaction['nitrified']
-            ratios = exchange_base_ratios(state.exchange)
-            if ratios:
-                for ion, frac in ratios.items():
-                    eq = nh4_eq * frac
-                    reaction_lines.append(
-                        f"  {ion} {eq:.6e}  # NH4+ 置换")
-                    # v0.7.x (工单77): 电荷配对 — 裸阳离子注入在 PHREEQC 中
-                    # 因电荷平衡产生 OH- 伪碱化 (Ca+2 343 → pH 9.28, 复现
-                    # v0.7.0 fertilizer 碱化); 伴随等当量 An- 使置换盐基以
-                    # 电中性盐形式进入 (盐基效应由化学平衡/淋失决定)
-                    if self.charge_pairing_enabled:
-                        charge = 2 if ion in ('Ca+2', 'Mg+2') else 1
-                        reaction_lines.append(
-                            f"  {self.pair_anion}- {charge * eq:.6e}  # 电荷配对")
-
-        # v0.7.0 (工单71, spec 69): 伴随淋失注入 — 随 NO3- 移出的盐基当量
-        # E_loss (工单70 事件循环计算, 经 forcing 传入; 进平衡前注)
-        #   - companion_anion_eq>0: 注入惰性阴离子 CompAn- (电荷平衡驱动交换相解吸)
-        #   - companion_acid_eq>0: 酸化注入 H+ (BS<low 盐基枯竭模式)
-        companion_anion_eq = forcing.get('companion_anion_eq', 0.0)
-        companion_acid_eq = forcing.get('companion_acid_eq', 0.0)
-        if companion_anion_eq > 0 and self.companion_enabled:
-            an_species = f"{self.companion_cfg.inert_anion}-"
-            reaction_lines.append(
-                f"  {an_species} {companion_anion_eq:.6e}  # 伴随淋失")
-        if companion_acid_eq > 0:
-            reaction_lines.append(
-                f"  H+     {companion_acid_eq:.6e}  # 伴随淋失酸化")
-            # v0.7.x (工单77): 电荷配对 (同硝化产酸)
-            if self.charge_pairing_enabled:
-                reaction_lines.append(
-                    f"  {self.pair_anion}- {companion_acid_eq:.6e}  # 电荷配对")
-
-        # v0.7.x (工单80): 盐基淋失伴随注入 — 上一场 E_base (离开本层全部水的
-        # 溶液盐基当量, Q4=A) 分级后 (Q5=A) 注入等当量 An- → 平衡自洽拽出交换
-        # 相盐基 (Gapon); 独立于 charge_pairing (保守阴离子伴随, 不依赖配对开关)
-        base_anion_eq = forcing.get('base_anion_eq', 0.0)
-        if base_anion_eq > 0 and self.base_leaching_enabled:
-            reaction_lines.append(
-                f"  {self.pair_anion}- {base_anion_eq:.6e}  # 盐基淋失伴随")
-
-        # v0.7.0 (工单73, spec 69): 矿物风化集总碱度注入 (D2, 不用 KINETICS)
-        # 逐月注入风化碱度: Ca:Mg:K 按电荷占比 (默认 5:3:2) + HCO3- 等当量;
-        # Arrhenius 温度依赖 (rate(T) = rate_ref×exp(−Ea/R×(1/T−1/T_ref)))
-        # 替代瞬时平衡相的"无限供碱" (矿物闪蒸, 疑点1 机制A); 增温情景
-        # 风化↑ → 气候敏感性传导恢复 (疑点2)
-        if self.weathering_enabled:
-            wth = self.weathering_cfg
-            temp_c = forcing.get('temp', 25.0)
-            arrhenius = weathering_arrhenius_factor(
-                temp_c, wth.activation_energy_kJ)
-            monthly_molc = wth.rate_molc_ha_yr / 12.0 * arrhenius
-            # 各盐基注入摩尔量 (电荷占比 → mol, 二价 ×2)
-            ca_mol = monthly_molc * wth.ca_frac / 2.0
-            mg_mol = monthly_molc * wth.mg_frac / 2.0
-            k_mol = monthly_molc * wth.k_frac
-            if ca_mol > 0:
-                reaction_lines.append(f"  Ca+2   {ca_mol:.6e}  # 矿物风化")
-            if mg_mol > 0:
-                reaction_lines.append(f"  Mg+2   {mg_mol:.6e}  # 矿物风化")
-            if k_mol > 0:
-                reaction_lines.append(f"  K+     {k_mol:.6e}  # 矿物风化")
-            if monthly_molc > 0:
-                reaction_lines.append(
-                    f"  HCO3-  {monthly_molc:.6e}  # 矿物风化")
-
-        # v0.5.0: 预平衡观测锚定注入 (pH/交换离子修正, 见 pre_equilibrate)
-        injection = forcing.get('injection')
-        if injection:
-            for sp, mol in injection.items():
-                if abs(mol) > 1e-12:
-                    reaction_lines.append(
-                        f"  {sp:<8} {mol:.6e}  # 预平衡锚定")
-                    # v0.7.x (工单77): 电荷配对 — 锚定注入为阳离子 (Ca/Mg/K/
-                    # Na/Al), 裸注入会使预平衡 pH 伪碱化; 正注入伴随等当量 An-
-                    if (self.charge_pairing_enabled and mol > 0.0):
-                        charge = 3 if sp == 'Al+3' else (
-                            2 if sp in ('Ca+2', 'Mg+2') else 1)
-                        reaction_lines.append(
-                            f"  {self.pair_anion}- {charge * mol:.6e}  # 电荷配对")
-
-        if action.apply_fertilizer:
-            # 磷肥 (P2O5 → 2 H2PO4-)
-            p_mol = action.p2o5_amount * 1000.0 / 141.94 * 2.0
-            if p_mol > 0:
-                reaction_lines.append(f"  H2PO4- {p_mol:.6e}  # 磷肥")
-            # 钾肥 (K2O → 2 K+)
-            k_mol = action.k2o_amount * 1000.0 / 94.20 * 2.0
-            if k_mol > 0:
-                reaction_lines.append(f"  K+     {k_mol:.6e}  # 钾肥")
-                # v0.7.x (工单77): 电荷配对 (裸 K+ 轻度碱化, K+191 → pH 6.03)
-                if self.charge_pairing_enabled:
-                    reaction_lines.append(
-                        f"  {self.pair_anion}- {k_mol:.6e}  # 电荷配对")
-            # 镁肥 (MgO → Mg+2)
-            mg_mol = action.mgo_amount * 1000.0 / 40.30
-            if mg_mol > 0:
-                reaction_lines.append(f"  Mg+2   {mg_mol:.6e}  # 镁肥")
-                # v0.7.x (工单77): 电荷配对 (裸 Mg+2 轻度碱化)
-                if self.charge_pairing_enabled:
-                    reaction_lines.append(
-                        f"  {self.pair_anion}- {2.0 * mg_mol:.6e}  # 电荷配对")
-            # 硫酸锌 (ZnSO4 → Zn+2 + SO4-2)
-            zn_mol = action.znso4_amount * 1000.0 / 161.47
-            if zn_mol > 0:
-                reaction_lines.append(f"  Zn+2   {zn_mol:.6e}  # 硫酸锌")
-                reaction_lines.append(f"  SO4-2  {zn_mol:.6e}  # 硫酸锌")
-
-        if action.apply_lime:
-            # 生石灰 CaO: 水化产 Ca2+ + 2OH- (移除 2H)
-            lime_mol = action.lime_amount * 1000.0 / 56.08
-            if lime_mol > 0:
-                reaction_lines.append(f"  Ca     {lime_mol:.6e}  # 生石灰Ca2+")
-                reaction_lines.append(f"  H      {-2*lime_mol:.6e}  # 水化OH-")
-
-        if reaction_lines:
-            lines.append("REACTION 1")
-            lines.extend(reaction_lines)
-            lines.append("  1.0")
-            lines.append("")
-
-        # SELECTED_OUTPUT 块: 输出平衡后状态供解析回填
-        lines.append("SELECTED_OUTPUT 1")
-        lines.append("  -ph true")
-        lines.append("  -pe true")
-        lines.append("  -temp true")
-        lines.append("  -water true")
-        # L4 (Q1=A): 氮库存为模型状态 (不注入溶液), 无需 N(-3)/N(5) 回填;
-        # 总 N 保留供层间平流 (inflow_ions)
-        # v0.7.0 (工单71): companion 启用时 totals 追加惰性阴离子元素 (审计)
-        # v0.7.x (工单77): 条件扩展 — charge pairing 启用时同样需要 (配对
-        # 注入的 An- 进入溶液成分/淋失循环, 需在 totals 输出供回填审计)
-        totals_line = "  -totals Ca Mg K Na Al P Zn Cl C S N Si F"
-        if self.anion_defined:
-            totals_line += f" {self.pair_anion}"
-        lines.append(totals_line)
-        lines.append("  -molalities CaX2 MgX2 KX NaX AlX3 HX X-")
-        # L2: 输出矿物相摩尔量 (供矿物演化回填, 修复 Al 耗尽根因)
-        # 只列出非零矿物; 矿物名须与 phreeqc.dat PHASES 段一致
-        # L2: 输出矿物相摩尔量 (供矿物演化回填, 修复 Al 耗尽根因)
-        # 只列出非零矿物; 矿物名须与 phreeqc.dat PHASES 段一致
-        mineral_names = [m for m, v in state.minerals.items() if v > 0]
-        if mineral_names:
-            lines.append("  -equilibrium_phases " + " ".join(mineral_names))
-        lines.append("END")
-
-        return "\n".join(lines)
 
     def _run_simplified_step(self, state, forcing, action, profile):
         """简化模式 (无 PHREEQC 时的 fallback)
