@@ -915,17 +915,20 @@ class PhreeqcEngine:
         施肥/石灰 (action) 仅第一场事件注入 (月内一次性干预)。
         Q14: 每场每层淋失明细回填 hydrology['event_details'] (事件 CSV 用)。
 
+        v2026-09-02 (候选4): 记账规则迁 src/event_accounting.py —
+        领域循环只推进状态, 每层产出无后缀 ledger dict; 行拼接 (列名/换算)
+        与 First-Flush 峰值聚合由 build_event_row / first_flush_peaks 承担。
+
         返回:
             (List[SoilState], List[DiagnosticOutput]) — 最后一场事件后各层状态
         """
         from src.hydrology import RainEvent
+        from src.event_accounting import build_event_row, first_flush_peaks
         n = len(states)
         new_states = list(states)
         last_diags = [None] * n
-        # v0.6.0 (Q14): First-Flush 峰值 (当月 L1 最大单场淋失, mmol/ha)
-        flush_no3_peak = 0.0
-        flush_base_peak = 0.0
         event_details = []
+        layer0_rows = []   # L1 ledger 行列表 (First-Flush 峰值聚合源)
         # v0.7.0 (工单71): 各层"上一场淋失产生的伴随当量"待下场平衡前注入
         # (跨场保留: 本场淋失 → 下一场注入, 逐场滚动)
         pending_e_loss = [0.0] * n
@@ -937,10 +940,11 @@ class PhreeqcEngine:
             # v0.7.0 (工单70): 本场层间 NO3- 池下移/bypass 携带的传递量 (mol)
             pool_carry = 0.0
             event_action = action if ev_idx == 0 else MonthlyAction()
-            row = {'year': monthly_forcing.get('year', 0),
-                   'month': monthly_forcing.get('month', 0),
-                   'event': ev_idx + 1,
-                   'precip_mm': ev.get('precip_mm', 0.0)}
+            ev_meta = {'year': monthly_forcing.get('year', 0),
+                       'month': monthly_forcing.get('month', 0),
+                       'event': ev_idx + 1,
+                       'precip_mm': ev.get('precip_mm', 0.0)}
+            layer_rows = []
             for i in range(n):
                 # v0.7.0 (工单70): 吸收上层 drains 下移/bypass 携带的 NO3- 池
                 # (水库串联: 上层排出的池质量逐层下移, 先处理上层后下层)
@@ -1011,16 +1015,14 @@ class PhreeqcEngine:
                     layer_index=i, n_layers=n)
                 layer_states.append(new_state)
                 last_diags[i] = diag
-                # ---- v0.7.0 (工单70, spec 69): NO3- 示踪池水库串联淋失 ----
-                # 池随水移出 (垂直下移/侧向/基流/bypass), 全局不变量 pool≥0
-                # (calc_no3_leaching 内部 min(公式, pool) 防抽干, Q19)
+# ---- v0.7.0 (工单70): NO3- 示踪池水库串联淋失 (池随水移出, pool≥0) ----
                 leach_no3_i = 0.0
                 if self.companion_enabled:
                     v_pool = max(new_state.volume, 1.0)
                     drain_i = ev['drains'][i]
                     lat_out_L = (ev.get('lateral') or [0.0] * n)[i]
                     base_out_L = (ev.get('baseflow') or [0.0] * n)[i]
-                    # ① 垂直下移: drains 携带池 → 下一层 (水库串联)
+                    # ① 垂直下移: drains 携带池 → 下一层
                     mass_down = calc_no3_leaching(
                         new_state.n_no3_pool, drain_i, v_pool)
                     new_state.n_no3_pool -= mass_down
@@ -1032,7 +1034,7 @@ class PhreeqcEngine:
                         new_state.n_no3_pool, lat_out_L + base_out_L, v_pool)
                     new_state.n_no3_pool -= lost_out
                     leach_no3_i += lost_out
-                    # ③ bypass 携带: L1 池 NO3- 直通 L2 (默认模式, 深度分布留 v0.7.x)
+                    # ③ bypass 携带: L1 池 NO3- 直通 L2
                     if i == 0:
                         bypass_water = ev.get('bypass_water_L', 0.0)
                         if bypass_water > 0 and self.companion_bypass_no3_carry:
@@ -1041,14 +1043,7 @@ class PhreeqcEngine:
                             new_state.n_no3_pool -= m_bypass
                             leach_no3_i += m_bypass
                             pool_carry += m_bypass
-                # 记账列 (v0.7.0): 池存量 + 该场淋失量
-                row[f'n_no3_pool_L{i+1}'] = new_state.n_no3_pool
-                row[f'leach_no3_L{i+1}_mol'] = leach_no3_i
-                # v0.7.x (工单80): 盐基淋失 E_base — 仅对模型实际带走的盐基通道配对
-                # (lateral+baseflow 出系统, Q3 同通道; 排除 drains — 事件路径不搬
-                # 溶质, drains 项会形成"纯 An- 泵"正反馈: 注入拽盐基→盐基滞留→
-                # E_base 又涨→交换相耗尽→Al³⁺ 水解酸化崩盘, 2026-08-24 探针证伪
-                # Q4 全水道草案; 修正为出系统出口, 自限无正反馈)
+                # ---- v0.7.x (工单80): 盐基淋失 E_base (出系统出口, 自限) ----
                 base_loss_eq_i = 0.0
                 if self.base_leaching_enabled:
                     q_out_system = ((ev.get('lateral') or [0.0] * n)[i]
@@ -1061,18 +1056,7 @@ class PhreeqcEngine:
                         eq_floor=(self.base_leaching_cfg.c_floor_mmol_L
                                   * 1e-3 * v_pool))
                     pending_e_base[i] = base_loss_eq_i
-                row[f'base_loss_eq_L{i+1}'] = base_loss_eq_i
-                row[f'base_mode_L{i+1}'] = base_mode
-                row[f'e_base_anion_eq_L{i+1}'] = base_anion_eq
-                # 记账列 (v0.7.0, 工单71): 伴随淋失分级注入记录
-                # (本场注入 = 上一场淋失当量的分级结果; 本场淋失 → 下一场注入)
-                row[f'companion_mode_L{i+1}'] = companion_mode
-                row[f'companion_eq_L{i+1}'] = pending_e_loss[i]
-                row[f'inert_eq_L{i+1}'] = companion_anion_eq
-                row[f'acid_eq_L{i+1}'] = companion_acid_eq
-                pending_e_loss[i] = leach_no3_i
-                # 记账列 (v0.7.0, 工单72): NH4+ 置换当量 (施肥月 L1 硝化量×k2;
-                # 工单76 调优 A: 从水解量改为硝化量, 抑制盐基过量注入)
+                # ---- v0.7.0 (工单72): NH4+ 等价置换记账 (施肥月 L1) ----
                 nh4_exchanged_i = 0.0
                 if (self.companion_enabled
                         and self.companion_cfg.nh4_exchange
@@ -1081,28 +1065,15 @@ class PhreeqcEngine:
                     nh4_exchanged_i = (
                         getattr(action, 'n_amount', 0.0) * N_MOL_PER_KG_N
                         * self.nitrification_k1 * self.nitrification_k2)
-                row[f'nh4_exchanged_eq_L{i+1}'] = nh4_exchanged_i
-                # ---- 工单82 (Q5=A/Q2=A): 排水溶质摩尔绝对量扣除 + 体积落回 θ_out ----
-                # 事件平衡已在 V_mix = θ_out×depth×1e5 + 排水总量 (排水前混合体积)
-                # 上完成 (run_event_step 的 event_out_water_L)。雨水事件是"换水"
-                # (入渗+排水同时), 排水不浓缩残留水 — 摩尔绝对量守恒:
-                #   - drains 通道: mol_out = C×drain (i<n-1 进下层 inflow_ions;
-                #     L4 无下层 = 深层出系统)
-                #   - lateral+baseflow 通道: mol_out = C×(lat+base) (出系统)
-                #   - 残留溶质 = C×V_mix − Σmol_out; 残留体积 = θ_out×d×1e5
-                #   - 残留浓度 = 残留mol/残留体积 (≈ C, 物理"换水不浓缩")
-                # 修复旧 Q3 比例法 frac=min(Q_out/V,1) 在 q_out>V (L4 基流
-                # 99.6万L vs 48万L) 时钳到 1 → 溶质全清 C_MIN 的物理失真。
-                # 交换相不动靠后续平衡 Gapon 补偿 (spec 62 Q3 决策不变)。
+                # ---- 工单82: 排水溶质摩尔绝对量扣除 + 体积落回 θ_out ----
                 drain_water_L = ev['drains'][i]
                 lat_out_L = (ev.get('lateral') or [0.0] * n)[i]
                 base_out_L = (ev.get('baseflow') or [0.0] * n)[i]
                 q_out_system_L = lat_out_L + base_out_L
-                vol_mix = max(new_state.volume, 1.0)      # 平衡后体积 = V_mix
+                vol_mix = max(new_state.volume, 1.0)
                 theta_eff = theta_ev if theta_ev is not None else new_state.theta
-                water_after_L = max(
-                    theta_to_water_L(theta_eff,
-                                     soil_profile.effective_depth), 1e-6)
+                water_after_L = max(theta_to_water_L(
+                    theta_eff, soil_profile.effective_depth), 1e-6)
                 moved_ions = {}
                 q3_out_ions = {}
                 if drain_water_L > 0:
@@ -1125,6 +1096,7 @@ class PhreeqcEngine:
                     new_state.solution[ion] = max(
                         n_rem / water_after_L, C_MIN)
                 new_state.volume = water_after_L
+# 出口记账 → ledger (First-Flush 峰值/明细列由 event_accounting 聚合)
                 total_lateral_i = lat_out_L
                 total_base_i = base_out_L
                 flush_L = 0.0
@@ -1142,43 +1114,53 @@ class PhreeqcEngine:
                                 continue
                             new_state.solution[ion] = max(
                                 conc * (1.0 - frac_flush), C_MIN)
-                # 出口记账 → event_details + 月度诊断列
-                row[f'lateral_L{i+1}_L'] = total_lateral_i
-                row[f'baseflow_L{i+1}_L'] = total_base_i
-                row[f'flush_L{i+1}_L'] = flush_L
-                # 该场该层淋失明细 (Q14, mmol/ha = conc(mol/L)×drain(L)×1000)
+                # 该场该层淋失明细 (mmol/ha = conc(mol/L)×drain(L)×1000)
                 drain_i = ev['drains'][i]
-                row[f'leach_N_L{i+1}_mmol'] = \
-                    new_state.solution.get('N', 0.0) * drain_i * 1000.0
-                row[f'leach_base_L{i+1}_mmol'] = (
+                leach_n_mmol = (new_state.solution.get('N', 0.0)
+                                * drain_i * 1000.0)
+                leach_base_mmol = (
                     new_state.solution.get('Ca', 0.0)
                     + new_state.solution.get('Mg', 0.0)
                     + new_state.solution.get('K', 0.0)) * drain_i * 1000.0
-                row[f'ph_L{i+1}'] = new_state.ph
-                # First-Flush 记录: L1 该场淋失 (mmol/ha)
+                # 本场用于分级注入的伴随当量 (记账列 = 注入前的上一场淋失当量)
+                companion_eq_i = pending_e_loss[i]
+                ledger = {
+                    'n_no3_pool': new_state.n_no3_pool,
+                    'leach_no3_mol': leach_no3_i,
+                    'base_loss_eq': base_loss_eq_i,
+                    'base_mode': base_mode,
+                    'e_base_anion_eq': base_anion_eq,
+                    'companion_mode': companion_mode,
+                    'companion_eq': companion_eq_i,
+                    'inert_eq': companion_anion_eq,
+                    'acid_eq': companion_acid_eq,
+                    'nh4_exchanged_eq': nh4_exchanged_i,
+                    'lateral_L': total_lateral_i,
+                    'baseflow_L': total_base_i,
+                    'flush_L': flush_L,
+                    'leach_N_mmol': leach_n_mmol,
+                    'leach_base_mmol': leach_base_mmol,
+                    'ph': new_state.ph,
+                }
+                layer_rows.append(ledger)
                 if i == 0:
-                    no3_mmol = new_state.solution.get('N', 0.0) \
-                        * ev['drains'][0] * 1000.0
-                    base_mmol = (new_state.solution.get('Ca', 0.0)
-                                 + new_state.solution.get('Mg', 0.0)
-                                 + new_state.solution.get('K', 0.0)) \
-                        * ev['drains'][0] * 1000.0
-                    flush_no3_peak = max(flush_no3_peak, no3_mmol)
-                    flush_base_peak = max(flush_base_peak, base_mmol)
-                # 该场排水携带溶质 → 下层当场输入 (Q4 事件粒度, 工单82 Q2=A:
-                # 用平衡后 V_mix 浓度×drain 的摩尔绝对量 moved_ions, 与扣除同源)
+                    layer0_rows.append(ledger)
+                # 本场淋失 → 下一场注入 (跨场滚动, 原 v0.7.0 行为)
+                pending_e_loss[i] = leach_no3_i
+                # 该场排水携带溶质 → 下层当场输入 (Q4 事件粒度)
                 if i < n - 1 and drain_water_L > 0:
                     inflow_ions = moved_ions
             new_states = layer_states
-            event_details.append(row)
-        # Q14: 事件明细回填 (main 经 hydrology['event_details'] 写事件 CSV)
+            event_details.append(build_event_row(ev_meta, layer_rows))
+        # Q14: 事件明细回填 (候选4: 由 event_accounting 纯函数生成)
         if hydrology is not None:
             hydrology['event_details'] = event_details
         # First-Flush 峰值附加到 L1 诊断 (Q14, main 经 diag_objs 提取)
         diags_out = list(last_diags)
         if diags_out[0] is not None:
-            diags_out[0].flush_no3_peak_mmol = flush_no3_peak
-            diags_out[0].flush_base_peak_mmol = flush_base_peak
+            peaks = first_flush_peaks(layer0_rows)
+            diags_out[0].flush_no3_peak_mmol = peaks['flush_no3_peak_mmol']
+            diags_out[0].flush_base_peak_mmol = peaks['flush_base_peak_mmol']
         return new_states, diags_out
 
     def _warning_count(self) -> int:
