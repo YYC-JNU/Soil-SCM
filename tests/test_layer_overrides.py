@@ -559,13 +559,9 @@ def test_hydrology_diagnostics_extracted(profile, soil_info):
 
 
 # ==================== T5: 诊断实验逻辑 (impact_tag/depletion_year) ====================
-
-import sys
-from pathlib import Path
-_TOOLS_DIR = str(Path(__file__).parent.parent / "tools")
-if _TOOLS_DIR not in sys.path:
-    sys.path.insert(0, _TOOLS_DIR)
-from plot_L6_layer_overrides import impact_tag, depletion_year
+# 2026-09-02: 函数由 tools/plot_L6_layer_overrides.py (未版本化) 迁入 src/diagnostics.py
+# (删除 sys.path hack; 耗尽阈值定案于 constants.ALX3_DEPLETION_THRESHOLD_MOL)
+from src.diagnostics import impact_tag, depletion_year
 
 
 def test_depletion_year():

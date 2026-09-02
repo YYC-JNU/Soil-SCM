@@ -187,6 +187,12 @@ WEATHERED_GAP_CEC_THRESHOLD = 7.0    # CEC ≤ 7 cmol/kg → 视为风化层
 WEATHERED_GAP_AL_FRACTION = 0.6      # 风化层缺口 → AlX3 (三价)
 WEATHERED_GAP_H_FRACTION = 0.3       # 风化层缺口 → HX (一价酸)
 
+# ---- L6 诊断实验 (T5): 交换铝缓冲库耗尽判定阈值 ----
+# 某层交换性铝缓冲库 (AlX3) 首次跌破该绝对量 (mol) 的年份视为"耗尽年"
+# (等参基线 vs 真实剖面的疗效标注判据, 不参与引擎模拟物理; 原生于
+#  tools/plot_L6_layer_overrides.py, 该脚本未版本化, 阈值由此定案)
+ALX3_DEPLETION_THRESHOLD_MOL = 1000.0
+
 # ---- v0.5.3 VGM 水分特征 (D8, VGM参数化方案.txt) ----
 # 三级参数优先级: ①layer_overrides 显式 vgm_* ②clay_pct 连续回归
 # (Saxton & Rawls 2006 + 红壤修正) ③华南红壤兜底; l=0.5 固定 (Mualem);
