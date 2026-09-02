@@ -1,7 +1,7 @@
 # Soil-SCM 用户指南（USERGUIDE）
 
-> **适用版本**：**v0.7.3**（2026-08-31：工单 86 L4 收敛分层架构（探针证伪 A/D）+ 工单 D 深层铝缓冲标定 C2 兜底（铝/pCO₂ 通道证伪，L4 5.885 已接受偏差）；380 测试）+ v0.7.2（工单 83~87，含 30y 权威基线 + P0-C）+ v0.7.1（工单 82，30y 全量解锁）+ 地球化学深化（工单 77/78/80）
-> **配套文档**：项目总览与开发历史见 `README.md`；已知模型局限的科学细节见 `docs/reports/V0_3_0_FINAL_REPORT.md`。
+> **适用版本**：**v0.7.3**（380 测试）
+> **配套文档**：项目总览见 `README.md`。
 > 本文面向**使用该模型的科研人员**：讲解如何安装、配置、运行模拟并解读输出结果，末尾附常见问题排查与开发者速览。
 
 ---
@@ -30,8 +30,6 @@
 1. **单点模式**：模拟单位面积（ha）土柱的化学演变，**不含**空间分布、作物根系吸水与有机质分解（均在扩展规划中）。
 2. **施肥单层长期模拟存在已知局限**：单层排水会导致交换性铝（AlX₃）淋洗耗尽，`fertilizer`/`fertilizer_lime` 情景**约第 3~4 年 pH 突升至 ~10**（本指南第 6 章案例可复现）。**建议干预类情景使用 `n_layers: 4` 多分层**（详见第 5 章示例 2 与第 9 章 FAQ）。
 3. 矿物量采用缩放系数 `0.001`（折中方案），矿物缓冲容量被压缩——结果应作**趋势对比**而非绝对定量。
-
-> 📎 延伸阅读：上述局限的完整证据链与科学讨论见 `docs/reports/V0_3_0_FINAL_REPORT.md`（第六节）。
 
 ---
 
@@ -129,8 +127,8 @@ python main.py --config /path/to/your_config.yaml   # 任意自定义配置文�
 | `lateral` | `null` | v0.6.1: Darcy 侧向排水（逐层出口）；`null`=关闭，示例见 4.8 |
 | `companion` | 启用 | v0.7.0: NO₃⁻ 伴随淋失（D3：`n_no3_pool` 水库串联 + 惰性阴离子 `An⁻` 分级注入拽盐基）+ NH₄⁺ 等效置换；示例见 4.8 |
 | `weathering` | 启用* | v0.7.0: 原生矿物风化集总碱度注入（Arrhenius 温度依赖 + `degrade_minerals` 降级防"矿物闪蒸"）；*`config.yaml` 默认 `enable: true`，引擎层 `SimulationConfig` 构造器默认关闭——以 `config.yaml` 为准 |
-| `charge_pairing` | 启用 | **REACTION 电荷平衡**（v0.7.x 工单77）：净电荷注入（硝化产酸/置换盐基/钾镁肥/companion acid）按等当量伴随保守惰性阴离子 `An⁻`，消除裸注入的电荷伪碱化；`enable: false` 回退裸注入（仅对照实验，会复现"施肥伪碱化"） |
-| `base_leaching` | 启用 | **盐基淋失强化**（v0.7.x 工单80）：对每层每场，出系统出口水（`lateral+baseflow`）携带的溶液盐基当量 `E_base` 在下一场平衡前注入等当量保守 `An⁻` → 平衡自洽拽出交换相盐基（Gapon）→ 盐基被持续追赶带走（lime 回落 + fertilizer 盐基枯竭酸化）；BS 分级降权（`bs_high` 全量 / 中间线性衰减 / `bs_low` 以下归零不注酸）；`enable: false` = 工单 80 前基线（A/B 对照）；**`c_floor_mmol_L`**（工单87 P0-A）：溶液盐基保底浓度下限（mmol/L 当量），E_base 不把溶液盐基逼到该浓度以下（护栏，防深层极端酸化；`0`=关闭护栏，保持工单 80 行为） |
+| `charge_pairing` | 启用 | **REACTION 电荷平衡**：净电荷注入（硝化产酸/置换盐基/钾镁肥）按等当量伴随保守惰性阴离子 `An⁻`，消除裸注入的电荷伪碱化；`enable: false` 回退裸注入（仅对照实验） |
+| `base_leaching` | 启用 | **盐基淋失强化**：对每层每场，出系统出口水（`lateral+baseflow`）携带的溶液盐基当量在下一场平衡前注入等当量保守 `An⁻` → 平衡自洽拽出交换相盐基 → 盐基被持续追赶带走（lime 回落 + fertilizer 盐基枯竭酸化）；BS 分级降权（`bs_high` 全量 / 中间线性衰减 / `bs_low` 以下归零不注酸）；`enable: false` 为关闭态（A/B 对照）；**`c_floor_mmol_L`**：溶液盐基保底浓度下限（mmol/L 当量），`E_base` 不把溶液盐基逼到该浓度以下（护栏，防深层极端酸化；`0`=关闭护栏） |
 
 ### 4.2 `soil_data`：土壤数据
 
@@ -224,19 +222,18 @@ charge_pairing:
   enable: true        # REACTION 电荷平衡（裸注入伪碱化修复；false=回退裸注入，仅对照）
   anion: An           # 保守惰性阴离子元素名（与 companion.inert_anion 共享物种）
 base_leaching:
-  enable: true        # 盐基淋失强化（false=工单 80 前基线，A/B 对照）
+  enable: true        # 盐基淋失强化（false=关闭，A/B 对照）
   anion: An
   bs_high: 30.0       # BS≥30 全量 / 10~30 线性衰减 / <10 归零不注酸
   bs_low: 10.0
-  c_floor_mmol_L: 0.0 # 工单87 (P0-A): 溶液盐基保底浓度下限 (mmol/L 当量),
-                      #   0=关闭护栏 (保持工单80 行为); >0 时 E_base 不把溶液
+  c_floor_mmol_L: 0.0 # 溶液盐基保底浓度下限 (mmol/L 当量),
+                      #   0=关闭护栏; >0 时 E_base 不把溶液
                       #   盐基逼到该浓度以下 (防深层极端酸化)
 ```
 
 要点：
-- **v0.6.1 验收口径**（`verify_v0_6_1_numerical.py`）开启 `baseflow`+`lateral`——根治深层盐分累积（L4 浓度 <1 mol/L），建议研究场景显式开启。
-- **v0.7.0 验收口径**（sensitivity 脚本）：`companion` 启用、`weathering` 关闭（`--weather-rate 0`）；`config.yaml` 中 `weathering.enable: true` 为调优实验值——**两者不一致**，跑验收以 sensitivity 口径为准。
-- **电荷配对是物理正确性修复**：`enable: false` 会复现 v0.7.0 前的"施肥伪碱化"（裸 `Ca+2 343` → pH 9.28），**仅用于对照实验**。
+- 研究场景建议显式开启 `baseflow` + `lateral`（深层基流与侧向排水），可避免深层盐分累积导致的数值失稳。
+- **电荷配对是物理正确性修复**：`enable: false` 会复现"施肥伪碱化"（裸阳离子注入导致的 pH 虚高），**仅用于对照实验**。
 
 > 📎 延伸阅读：`config/config_example.yaml` 顶部为**完整参数速查表**（类型/默认值/单位/可选值），配置前建议通读。
 
@@ -330,9 +327,7 @@ simulation:
 >   baseflow: {D_max: 100.0, D_s: 0.10, n_base: 2.5, theta_c: auto}
 >   lateral: {f_slope: 0.10, k_lat: [0.04, 0.025, 0.015, 0.008]}
 > ```
-> VIC 深层基流 + Darcy 侧向排水是对治**深层盐分累积**（长期模拟 PHREEQC 数值失稳）的关键，v0.6.1 验收即以此口径跑通 30 年无降级（L4 最大浓度 <1 mol/L）。
-
-> 📎 延伸阅读：多分层的物理机制（级联下渗、一维平流守恒）与 SURFACE 表面络合的用法见 `docs/analysis/OPTIMIZATION_PLAN.md`（WF1~WF5）。
+> VIC 深层基流 + Darcy 侧向排水是对治**深层盐分累积**（长期模拟 PHREEQC 数值失稳）的关键，按此口径可稳定跑通 30 年无降级（L4 最大浓度 <1 mol/L）。
 
 ### 5.6 完整示例 3：真实剖面逐层参数覆盖（L6，研究应用）
 
@@ -364,7 +359,6 @@ simulation:
 - **层厚物理含义**：`effective_depth` 是层缓冲库容量的线性乘子（交换位点/矿物/溶液体积 ∝ 厚度），而排水量不随厚度缩放——层越薄淋失应力越大，层厚本身是模拟结果的重要参数。
 - **逐层 pCO₂**：月度 GAS_PHASE 固定分压按层注入（表层低/底层高的剖面梯度全程保持）。
 - **单层回归**：`n_layers=1` 时 `layer_overrides`/`layer_depths` 被忽略（控制台警告），既有单层行为不变。
-- **诊断实验**：`python tools/plot_L6_layer_overrides.py` 运行"真实剖面 vs 等参基线"对比，图片标注 good/bad influence（绿=缓冲增强/耗尽推迟，红=更早耗尽/酸化加剧），详见 `docs/analysis/L6_LAYER_OVERRIDES.md`。
 
 ---
 
@@ -380,7 +374,7 @@ simulation:
 | `precip_increase` | 降水每年递增 `precip_increase_rate` | 气候变化（降水）情景 |
 | `temp_increase` | 温度每年递增 `temp_increase_rate`（影响 pCO₂） | 气候变化（增温）情景 |
 
-> **扩展**：`tools/sensitivity_pH_30yr.py` 支持 **8 情景**（4 层事件驱动口径，`--scenario` 单个 / `--all` 全跑）：在 5 种之上增加 **`lime_low`（22.5 kg CaO/ha/次）/ `lime_mid`（45）/ `lime_high`（90）** 三档石灰量情景，用于石灰剂量敏感性研究。用法见第 7.6 节。
+> **扩展**：除上述 5 种外，可在 `config.yaml` 中自定义任意石灰施用量与施肥配方；石灰剂量敏感性研究可对比不同 `lime.amount_per_apply`（如 22.5 / 45 / 90 kg CaO/ha/次）的输出差异。
 
 ### 6.2 模拟案例：natural vs fertilizer_lime（30 年，单层）
 
@@ -403,9 +397,9 @@ simulation:
 | 首月 pH（平衡后） | 4.18 | 4.18 |
 | 30 年 pH 区间 | 3.61 ~ 4.47 | 4.18 ~ 10.40 |
 | 趋势 | 缓降后稳定（淋溶酸化） | 第 4 年起 pH 突升至 ~10 |
-| 结果解读 | 酸雨入渗持续消耗盐基，pH 低位稳定 | 石灰补充盐基 → pH 回升，但单层排水使交换性 Al 耗尽 → pH 突升（结构性局限，见 FAQ Q4 另注与 `docs/reports/V0_3_0_FINAL_REPORT.md` 第六节） |
+| 结果解读 | 酸雨入渗持续消耗盐基，pH 低位稳定 | 石灰补充盐基 → pH 回升，但单层排水使交换性 Al 耗尽 → pH 突升（结构性局限，见第 8 章 FAQ） |
 
-> ⚠️ 上表为**早期版本（v0.3.x 时代）实测数据**，用于演示单层局限。v0.7.x 当前状态请以第 6.4 节方向带为准（natural 4.5~5.0 缓降、fertilizer <4.0 已达）。
+> ⚠️ 上表为**早期版本实测数据**，用于演示单层局限。当前版本状态请以第 6.4 节方向带为准（natural 4.5~5.0 缓降、fertilizer <4.0）。
 
 **关键结论**：`natural` 呈现真实红壤淋溶酸化趋势（可用作基线）；`fertilizer_lime` 单层下 pH 突升是模型局限的复现——**同一配置改用 `n_layers: 4` 后 pH 突变推迟、并建立垂直梯度**（见 5.5 节示例 2）。
 
@@ -423,9 +417,9 @@ climate:
   pet_method: oudin            # v0.6.0: "oudin"|"fixed"|"hargreaves" (hargreaves_enhanced=v0.7.0 预留)
 ```
 
-### 6.4 方向带验收与科学诚实（v0.7.0 起）
+### 6.4 结果解读准则：方向带
 
-模型的**验收契约是"方向带"而非具体数值**（`tools/verify_v0_7_0_acceptance.py`，spec 69 Q14=A）——因简化模式的矿物缓冲容量被压缩（`MINERAL_SCALE=0.001`），承诺具体 pH 是科学谎言，承诺**方向**才可验证：
+因简化模式的矿物缓冲容量被压缩（`MINERAL_SCALE=0.001`），**建议以"方向带"（趋势/排序）而非具体 pH 数值解读结果**：
 
 | # | 方向带 | 含义 |
 |---|--------|------|
@@ -436,13 +430,10 @@ climate:
 | ⑤ | 全情景 30 年 `phreeqc_ok=1` | 无引擎降级 |
 | ⑥ | N 收支闭合 < 5% | 氮不凭空产生/消失 |
 
-**当前状态（2026-08-24，如实记录）**：
-- ✅ natural：30 年 5.08→4.90（工单 80 drains 传递修复后，方向带内缓降）
-- ✅ fertilizer：5 年 2.07 < 4.0（电荷配对修复 + 盐基淋失强化后）
-- ❌ lime 回落：未真实达成（工单 78 证伪"回落 5.59"为 `-tolerance 1e-12` 假收敛伪影；真实 `1e-9` 下 lime_low 10y 9.30 不回落）
-- ⚠️ 30 年 8 情景全量：被 PHREEQC 卡顿阻塞（L4 深层数值边界 → **工单 82**，P0）
-
-> 科学应用时请以**方向带**（趋势/排序）解读结果，而非绝对 pH 数值；并与 `docs/analysis/V0_7_0_ACCEPTANCE.md` 对照。
+**现状**：
+- ✅ natural：30 年缓降（方向带内）
+- ✅ fertilizer：< 4.0（盐基枯竭酸化方向达成）
+- ⚠️ lime 回落：当前收敛设置下尚未稳定复现 3~5 年回落；解读 lime 结果时请结合多分层与事件驱动配置
 
 ---
 
@@ -499,17 +490,15 @@ python main.py --config config/config_example.yaml    # 基于模板配置
 
 > **v0.6.1 起为事件级局部降级**：单场单层失败 → 保留上一正常状态跳过该场（不全局降级）；**连续 3 次失败**才永久降级（`FALLBACK_MAX_CONSECUTIVE=3`）。日志/CSV 的 `phreeqc_ok` 列指示是否已永久降级。
 
-### 7.6 验证与审计工具（tools/）
+### 7.6 绘图辅助工具（tools/）
 
-| 工具 | 用途 | 用法 |
+| 脚本 | 用途 | 用法 |
 |------|------|------|
-| `tools/water_salt_balance.py` | 水量/盐分闭合审计（水量 <1%、盐分 <5%） | `python tools/water_salt_balance.py [CSV]` |
-| `tools/verify_v0_6_1_numerical.py` | 数值稳定性验收（无降级 + L4 浓度 <1 mol/L + E1 预平衡复验） | `python tools/verify_v0_6_1_numerical.py --years 5` |
-| `tools/verify_v0_7_0_acceptance.py` | v0.7.0 方向带验收（6 项断言，PASS/FAIL 如实报告） | `python tools/verify_v0_7_0_acceptance.py` |
-| `tools/sensitivity_pH_30yr.py` | 30 年 8 情景表层 pH 敏感性实验（事件驱动，子进程超时护栏，CSV 断点续跑） | `python tools/sensitivity_pH_30yr.py --all --years 10` |
-| `tools/compare_natural_base_leaching.py` | natural 30y A/B 叠加对比（base_leaching on/off + 4.5~5.0 方向带参考带） | `python tools/compare_natural_base_leaching.py` |
+| `tools/plot_pH_scenarios.py` | 多情景土壤 pH 演化对比图 | `python tools/plot_pH_scenarios.py` |
+| `tools/plot_ion_concentrations.py` | pH + 离子浓度曲线 | `python tools/plot_ion_concentrations.py` |
+| `tools/plot_Q7_30yr.py` | 降水化学集成下 30 年 pH 与离子曲线 | `python tools/plot_Q7_30yr.py` |
 
-> 建议流程：模拟完成后先跑 `tools/water_salt_balance.py` 审计水量闭合；再做情景对比用 `tools/sensitivity_pH_30yr.py`；发布/验收用 `verify_v0_6_1_numerical.py` + `verify_v0_7_0_acceptance.py`。
+> 所有绘图脚本**需从项目根目录运行**；`output/` 目录下还自动生成 `pH_<scenario>.png` 主结果图。
 
 ---
 
@@ -565,12 +554,11 @@ python main.py --config config/config_example.yaml    # 基于模板配置
 
 - [ ] 初始首月 pH 与输入 `survey.ph` 偏差 < 0.5（若预平衡日志提示"偏离度超阈值"，检查输入观测值）
 - [ ] `natural` 情景 pH 趋势为缓降或稳定（v0.7.x：30 年 4.5~5.0 方向带内，如 5.08→4.90）
-- [ ] `fertilizer` 长期酸化方向（v0.7.x 工单 77/80 后 < 4.0 可达）；若出现**碱化**到 8~11，检查 `charge_pairing` 是否被误关（`enable: false` 会复现伪碱化）
-- [ ] `lime` 情景：短期提碱正确；若要求 3~5 年回落，注意当前版本**未真实达成**（工单 78 修正：真实收敛下 10y 9.30 不回落）
+- [ ] `fertilizer` 长期酸化方向（< 4.0）；若出现**碱化**到 8~11，检查 `charge_pairing` 是否被误关（`enable: false` 会复现伪碱化）
+- [ ] `lime` 情景：短期提碱正确；回落行为与收敛设置相关，长期模拟（30y）已观测到回落（见 FAQ Q13）
 - [ ] `fertilizer_lime` 单层 pH 突升 ≥ 9 → 属于已知局限（Al 淋洗耗尽），改用 `n_layers: 4`
-- [ ] 30 年全量若中途永久降级 → 当前已知 L4 深层数值边界（工单 82，P0）；短程 5~10y 不受影响
+- [ ] 30 年全量若中途永久降级 → 属深层数值边界已知问题；短程 5~10y 不受影响
 - [ ] `output/error.inp` 未出现（出现则本次运行已降级简化模式）
-- [ ] （可选）`python tools/water_salt_balance.py` 水量闭合残差 < 1%
 
 ---
 
@@ -593,10 +581,10 @@ python main.py --config config/config_example.yaml    # 基于模板配置
 ### 运行类
 
 **Q4：`fertilizer` 情景 pH 反而**碱化**到 8~11（与酸化直觉相反）**
-- 原因（v0.7.x 工单 77 探针证伪）：PHREEQC REACTION 注入**裸阳离子**（NH₄⁺ 置换的 Ca²⁺/K⁺/Mg²⁺、钾镁肥）时，电荷中性约束迫使水分解产生 OH⁻ → **伪碱化**（探针 `Ca+2 343` → pH 9.28 精确复现）；裸 `H+` 注入（硝化产酸）也被氧化还原缓冲吞没，从不酸化。
-- 解决：确保 `simulation.charge_pairing.enable: true`（默认启用）——所有净电荷注入按等当量伴随保守惰性阴离子 `An⁻`。修复后单层施肥月 pH 4.87 不碱化；4 层事件驱动 + 盐基淋失强化（工单 80）后 fertilizer 5y 末 pH 2.07 < 4.0（方向带达标）。
-- 历史说明：v0.6.1/v0.7.0 报告的 fertilizer 碱化（8.4~11.4）主要反映此伪碱化，**非真实土壤碱化**。
-- （另注：单层模型长期模拟的 AlX₃ 淋洗耗尽→pH 突升 ~10 是**另一独立的**结构性局限，见 `docs/reports/V0_3_0_FINAL_REPORT.md` 第六节。）
+- 原因：PHREEQC REACTION 注入**裸阳离子**（NH₄⁺ 置换的 Ca²⁺/K⁺/Mg²⁺、钾镁肥）时，电荷中性约束迫使水分解产生 OH⁻ → **伪碱化**；裸 `H+` 注入（硝化产酸）也被氧化还原缓冲吞没，从不酸化。
+- 解决：确保 `simulation.charge_pairing.enable: true`（默认启用）——所有净电荷注入按等当量伴随保守惰性阴离子 `An⁻`。启用后单层施肥不碱化；配合多分层 + 盐基淋失强化可达 < 4.0 方向带。
+- 历史说明：早期版本报告的 fertilizer 碱化（8.4~11.4）主要反映此伪碱化，**非真实土壤碱化**。
+- （另注：单层模型长期模拟的 AlX₃ 淋洗耗尽→pH 突升 ~10 是**另一独立的**结构性局限。）
 
 **Q5：日志出现 `PHREEQC 计算失败` 并生成 `output/error.inp`，后续结果异常**
 - 原因：某月化学平衡求解失败（矿物量/表面位点量级、或 PHREEQC 数值失稳），引擎已永久降级简化模式。
@@ -604,15 +592,12 @@ python main.py --config config/config_example.yaml    # 基于模板配置
 
 **Q6：`natural` 情景 pH 反而上升（脱酸）**
 - 原因：单层模型的 Al 淋洗/矿物缓冲行为导致；另需检查是否误设了 `precip_infiltration` 过小。
-- 建议：使用多分层配置重新运行，并将结果与 `docs/analysis/Q1_ANALYSIS.md` 的诊断对比。
+- 建议：使用多分层配置重新运行。
 
 **Q7：模拟耗时过长 / 卡住**
 - 原因：官方引擎每月做化学平衡，情景/分层数增加后耗时线性上升；SURFACE 开启时迭代数 1000；**lime 高 pH（~11）收敛慢**（单月 0.22s→1.59s，30 年 10~13 分钟/情景）；极端情况 PHREEQC `RunString` 不返回（卡顿）。
 - 防护（v0.6.1）：子进程超时护栏（`run_monthly_step_with_timeout`，卡顿自动终止不挂死）；fallback 事件级局部降级（连续 3 次失败才永久降级）。
-- 建议：先缩短 `n_years`；lime 类情景用 sensitivity 工具的 `--scenario` 分批；
-  **30 年全量已由工单 82 解锁**（2026-08-25：`-step_size` 行回归移除 + 事件平衡
-  体积/摩尔绝对量数值稳定化 + KNOBS_ITERATIONS=500）；1e-9 真收敛下 30y 单情景
-  ~30 分钟（深层高离子强度迭代频繁），用 `--timeout 5400` + 分批后台跑
+- 建议：先缩短 `n_years`；lime 类高 pH 情景分批运行。当前收敛设置（1e-9 真收敛）下 30y 单情景约需 ~30 分钟（深层高离子强度迭代频繁），建议用较长超时后台运行。
 
 ### 结果解读类
 
@@ -626,24 +611,21 @@ python main.py --config config/config_example.yaml    # 基于模板配置
 - 正常：输入 pH 是观测值，经 PHREEQC 三相平衡与预平衡锚定后首月即达稳态，偏离 < 0.5 视为合理；若偏差大且日志警示"输入参数可能不物理"，请核对 CEC 与交换性离子观测值。
 
 **Q11：模拟中途"永久降级"是什么？**
-- v0.6.1 起为**事件级局部降级**：单场单层 PHREEQC 失败 → 保留上一正常状态跳过该场；**连续 3 次失败**才永久降级（`FALLBACK_MAX_CONSECUTIVE=3`），之后该引擎全部走简化模式。
-- 已知边界（工单 82，P0，2026-08-25 已修复）：`-tolerance 1e-9` 真收敛下"首月降级"实为 **预平衡阶段** 因 `-step_size` 行回归导致的连续失败（详见 `docs/analysis/V0_7_x_L4_DEEP_SALT_STABILITY.md`）。**工单 82 修复后 natural/fertilizer/lime_low 30y `phreeqc_ok=1` 全程无降级**。
+- 当前版本为**事件级局部降级**：单场单层 PHREEQC 失败 → 保留上一正常状态跳过该场；**连续 3 次失败**才永久降级（`FALLBACK_MAX_CONSECUTIVE=3`），之后该引擎全部走简化模式。
+- 已知边界（当前版本已修复）：预平衡阶段远起点平衡可能因步长设置触发连续失败导致"首月即降级"；修复后 natural/fertilizer/lime 情景 30 年 `phreeqc_ok=1` 全程无降级。
 
 **Q12：PHREEQC"假收敛"是什么？为什么会误导结果？**
-- 工单 78 探针发现：`-tolerance 1e-12` 下 lime 高 pH 平衡"静默假收敛"——PHREEQC 认为收敛（无警告）但返回错误解（lime 月 pH 4.89 未碱化 vs 真收敛 `1e-9` 下 10.18）。曾导致工单 80"lime 回落 5.59"的错误结论。
-- 修复（v0.7.x 工单 78 + 82）：双 tolerance——预平衡 `1e-12`（远起点假收敛稳定）/ 模拟步 `1e-9`（真收敛）+ 收敛失败检测 + 自动重试；**工单 82 起废弃 `1e-12` 兜底**（提高迭代仍失败 → fallback 计数，绝不回落假收敛）。**≥v0.7.x 的模拟输出已走此策略**。
+- 现象：过松的收敛容差（如 `-tolerance 1e-12`）下，lime 高 pH 平衡可能"静默假收敛"——PHREEQC 认为收敛（无警告）但返回错误解（未碱化），曾导致对 lime 回落的错误判断。
+- 当前策略：双 tolerance——预平衡 `1e-12`（远起点平衡稳定）/ 模拟步 `1e-9`（真收敛）+ 收敛失败检测 + 自动重试；模拟输出已走此策略。
 
 **Q13：lime 情景是否回落？**
-- v0.7.x 工单 82（2026-08-25）**30y 实测**（1e-9 真收敛）：lime_low 峰值 ~8（y4）→ **y6~7 回落至 5~6 → y30 5.09——回落实际发生**。修正工单 78"10y 9.30 不回落"（10y 视角恰在碱化平台期，30y 才见回落；且 9.30 当时亦受预平衡降级后 simplified 影响）。
-- 方向带"lime 3~5 年回落"**基本达标**（y6~7 回落至 5~6）；回落机制 = E_base 盐基淋失（工单 80）+ 排水溶质摩尔绝对量扣除（工单 82 Q5/Q2）。
-
-> 📎 延伸阅读：模型局限的完整清单与科学讨论见 `docs/reports/V0_3_0_FINAL_REPORT.md` 第六节；气候/降水化学集成见 `docs/analysis/Q7_PRECIP_CHEMISTRY.md`；收敛调优见 `docs/analysis/KNOBS_CONVERGENCE.md`；电荷平衡修复见 `docs/analysis/V0_7_x_CHARGE_PAIRING.md`。
+- 30 年模拟（真收敛 1e-9）：lime 峰值 ~8（第 4 年）→ **第 6~7 年回落至 5~6 → 30 年 5.09**。回落机制为盐基淋失（`base_leaching`）+ 排水溶质摩尔绝对量扣除。短程（≤10 年）视角可能恰处于碱化平台期而观察不到回落，**解读 lime 回落请用 30 年时间尺度**。
 
 ---
 
 ## 十、开发者速览
 
-> 本节面向需要理解或扩展模型的开发者。模块级设计文档见 `docs/analysis/ROADMAP.md` 与 `docs/analysis/OPTIMIZATION_PLAN.md`。
+> 本节面向需要理解或扩展模型的开发者，提供模块级的数据流与核心机制索引（细节以源码注释为准）。
 
 ### 10.1 模块地图与数据流
 
@@ -672,7 +654,7 @@ config/precip_chemistry_default.json ──► PrecipChemistry
 | 月度化学平衡 | `phreeqc_engine._run_official_step` | 构建 PHREEQC 输入串 → 平衡求解 → SELECTED_OUTPUT 回填状态 |
 | 简化模式 | `_run_simplified_step` | 经验公式（降水淋溶降 pH / 施肥产酸 / 石灰提碱），仅兜底 |
 | 氮形态库存层 | `advance_nitrification` | 尿素→NH₄⁺→NO₃⁻ 一阶转化，硝化产酸 2H⁺/mol N 注入 REACTION（phreeqc.dat 会把溶液无机氮平衡为 N₂） |
-| 矿物演化回填 | `_parse_official_output` | `-equilibrium_phases` 读回矿物摩尔量（L2 修复：不冻结，Al 循环通道建立） |
+| 矿物演化回填 | `_parse_official_output` | `-equilibrium_phases` 读回矿物摩尔量（不冻结矿物，建立 Al 循环通道） |
 | 预平衡 | `pre_equilibrate` | 观测锚定迭代（交换离子比例-阻尼控制），使初始状态自洽 |
 | 多分层 | `run_monthly_multi_layer` | 每层独立状态，上层排水溶质级联注入下层（一维平流守恒） |
 | 表面络合 | `build_surface` / SURFACE 块 | Hfo_s/Hfo_w 铁氧化物位点，P/Zn 吸附（`enable_surface` 控制） |
@@ -684,10 +666,10 @@ config/precip_chemistry_default.json ──► PrecipChemistry
 | NO₃⁻ 伴随淋失 | `calc_no3_leaching` / CompAn 分级 | NO₃⁻ 示踪池水库串联 + 惰性阴离子分级注入拽盐基（v0.7.0） |
 | NH₄⁺ 等效置换 | `exchange_base_ratios` | 施肥月按交换占比注入置换盐基 + `NH4X_virtual` 记账（v0.7.0） |
 | 矿物风化集总 | `weathering_arrhenius_factor` | Arrhenius 温度依赖 + `degrade_minerals` 降级（v0.7.0） |
-| 电荷配对 | `_build_phreeqc_input`（`# 电荷配对`） | 净电荷注入伴随 `An⁻`（`self.pair_anion`），消除伪碱化（v0.7.x 工单77） |
-| 盐基淋失强化 | `calc_base_leaching` / `_grade_base_leaching` | E_base 伴随通道 + BS 分级降权（v0.7.x 工单80） |
-| KNOBS 收敛 | `_build_phreeqc_input` 双 tolerance | 预平衡 1e-12 / 模拟 1e-9 + 收敛失败检测重试（v0.7.x 工单78） |
-| 水量闭合审计 | `tools/water_salt_balance.py` | 水量 <1% / 盐分 <5% 逐月审计（v0.6.1） |
+| 电荷配对 | `_build_phreeqc_input`（`# 电荷配对`） | 净电荷注入伴随 `An⁻`（`self.pair_anion`），消除伪碱化 |
+| 盐基淋失强化 | `calc_base_leaching` / `_grade_base_leaching` | E_base 伴随通道 + BS 分级降权 |
+| KNOBS 收敛 | `_build_phreeqc_input` 双 tolerance | 预平衡 1e-12 / 模拟 1e-9 + 收敛失败检测重试 |
+| 水量闭合审计 | `calc_base_saturation` 等记账函数 | 水量/盐分闭合由月度状态记账列校验（`stored_water`/`drainage`/`baseflow` 等） |
 
 ### 10.3 扩展提示
 
