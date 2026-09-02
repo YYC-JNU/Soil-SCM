@@ -44,6 +44,7 @@ from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
                            AMORPHOUS_ALOH3_LOGK_DATABASE)
 from src.vgm import theta_to_water_L
 from src.utils import layer_aloh3_params
+from src.diagnostics import calc_base_saturation
 from src.logging_config import get_logger
 from src.scenario_controller import MonthlyAction
 
@@ -174,28 +175,6 @@ def calc_base_leaching(base_eq: float, water_out_L: float,
     v = max(v_pool_L, 1.0)
     pool = base_eq - eq_floor
     return min(pool * (water_out_L / v), pool)
-
-
-def calc_base_saturation(exchange: dict, include_hx: bool = False) -> float:
-    """v0.7.0 (工单71): 盐基饱和度 BS% — 与 main._extract_diagnostics 同公式
-
-    BS = (CaX2×2 + MgX2×2 + KX + NaX) / (盐基 + AlX3×3) × 100
-    (与既有 base_saturation 诊断列数值一致, 分级注入与输出可对照)
-
-    工单87 (P0-C): include_hx=True 时分母追加 HX (X- 位点上的 H, 一价电荷当量
-    = mol) ——修复"AlX3 耗尽后 BS→100% 度量伪影" (H0 归因: 伪影经 E_base/
-    companion 分级注入反馈放大泵)。引擎分级注入传 include_hx=True (物理口径),
-    输出诊断列保持 include_hx=False (历史口径兼容)。
-    """
-    base_charge = (exchange.get('CaX2', 0.0) * 2.0
-                   + exchange.get('MgX2', 0.0) * 2.0
-                   + exchange.get('KX', 0.0)
-                   + exchange.get('NaX', 0.0))
-    acid_charge = exchange.get('AlX3', 0.0) * 3.0
-    if include_hx:
-        acid_charge += exchange.get('HX', 0.0)
-    total = base_charge + acid_charge
-    return base_charge / total * 100.0 if total > 0 else 0.0
 
 
 def exchange_base_ratios(exchange: dict) -> Dict[str, float]:

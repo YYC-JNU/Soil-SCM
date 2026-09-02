@@ -233,7 +233,7 @@ def test_calc_base_saturation_include_hx():
     std 口径分母不含 HX, AlX3=0 时恒 100%; fix 口径分母含 HX, 大 HX → BS 显著
     降低 (物理口径), 使 E_base/companion 分级注入不再误判"高 BS 全量注入"。
     """
-    from src.phreeqc_engine import calc_base_saturation
+    from src.diagnostics import calc_base_saturation
     ex = {'CaX2': 1.0, 'MgX2': 0.0, 'KX': 0.0, 'NaX': 0.0,
           'AlX3': 0.0, 'HX': 100.0}
     # std: 分母 = 盐基 + AlX3×3 = 2 (无 HX) → 100%

@@ -41,6 +41,7 @@ from src.constants import (DEFAULT_4LAYER_DEPTHS, DEFAULT_4LAYER_CLAY_PCT,
                            WEATHERED_EXCH_H, DAYS_IN_MONTH)
 from src.climate_forcing import apply_om_pco2
 from src.utils import layer_pco2_override
+from src.diagnostics import calc_base_saturation, calc_cec_occupied
 
 
 def _extract_diagnostics(soil_state, diag, variables):
@@ -52,11 +53,10 @@ def _extract_diagnostics(soil_state, diag, variables):
         variables: 配置的输出变量列表 (Q11)
     """
     ex = soil_state.exchange
-    base_charge = (ex.get('CaX2', 0) * 2.0 + ex.get('MgX2', 0) * 2.0 +
-                   ex.get('KX', 0) + ex.get('NaX', 0))
-    total_charge = base_charge + ex.get('AlX3', 0) * 3.0
-    base_sat = (base_charge / total_charge * 100.0
-                if total_charge > 0 else 0.0)
+    # 2026-09-02 (候选2): BS% 与 CEC_occupied 委托 src.diagnostics 单一公式,
+    # 消除 main 内联重复实现 (历史口径 include_hx=False, 与引擎物理口径区分)
+    base_sat = calc_base_saturation(ex)
+    total_charge = calc_cec_occupied(ex)
     diagnostics = {
         'pH': soil_state.ph,
         'base_saturation': base_sat,

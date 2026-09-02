@@ -62,3 +62,47 @@ def impact_tag(base_alx3: List[float], real_alx3: List[float],
         if real_dep < base_dep:
             return 'bad'
     return 'neutral'
+
+
+def calc_cec_occupied(exchange: dict) -> float:
+    """CEC 占用电荷总量 (eq) — 输出诊断列 CEC_occupied 的单一公式源
+
+    total = 盐基电荷 (CaX2×2 + MgX2×2 + KX + NaX) + AlX3×3，不含 HX
+    (历史口径; 与 calc_base_saturation include_hx=False 的分母一致)。
+    """
+    base_charge = (exchange.get('CaX2', 0.0) * 2.0
+                   + exchange.get('MgX2', 0.0) * 2.0
+                   + exchange.get('KX', 0.0)
+                   + exchange.get('NaX', 0.0))
+    return base_charge + exchange.get('AlX3', 0.0) * 3.0
+
+
+def calc_base_saturation(exchange: dict, include_hx: bool = False) -> float:
+    """盐基饱和度 BS% — 输出诊断列与引擎分级注入的单一公式 (工单71)
+
+    BS = (CaX2×2 + MgX2×2 + KX + NaX) / (盐基 + AlX3×3) × 100
+    (与 main._extract_diagnostics 历史诊断列数值一致; 分母含 AlX3×3)。
+
+    工单87 (P0-C): include_hx=True 时分母追加 HX (X- 位点上的 H, 一价电荷
+    当量 = mol) —— 修复"AlX3 耗尽后 BS→100% 度量伪影" (H0 归因: 伪影经
+    E_base/companion 分级注入反馈放大泵)。引擎分级注入传 include_hx=True
+    (物理口径), 输出诊断列保持 include_hx=False (历史口径兼容)。
+
+    参数:
+        exchange: 交换相组成 dict (CaX2/MgX2/KX/NaX/AlX3/HX, mol)
+        include_hx: 分母是否追加 HX (一价当量)
+
+    返回:
+        BS% (0~100, 总电荷 ≤ 0 时返回 0.0)
+    """
+    base_charge = (exchange.get('CaX2', 0.0) * 2.0
+                   + exchange.get('MgX2', 0.0) * 2.0
+                   + exchange.get('KX', 0.0)
+                   + exchange.get('NaX', 0.0))
+    acid_charge = exchange.get('AlX3', 0.0) * 3.0
+    if include_hx:
+        acid_charge += exchange.get('HX', 0.0)
+    total = base_charge + acid_charge
+    if total <= 0.0:
+        return 0.0
+    return base_charge / total * 100.0
