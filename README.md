@@ -61,6 +61,32 @@ Soil-SCM/
 │   ├── input_reader.py         # 土壤普查/交换性离子数据读取
 │   ├── climate_forcing.py      # 气候强迫（降水/温度/pCO₂/PET）
 │   ├── hydrology.py            # 水文物理（Green-Ampt 入渗 + 层间级联）
+│   ├── scenario_controller.py  # 情景控制（施肥/石灰/气候变化）
+│   ├── phreeqc_engine.py       # PHREEQC 化学引擎（官方 + 简化降级）
+│   ├── output_writer.py        # 结果输出（CSV/NetCDF/绘图）
+│   ├── initial_condition.py    # 初始条件构建（溶液/交换/矿物/气相）
+│   ├── precip_chemistry.py     # 降水化学
+│   ├── vgm.py                  # van Genuchten-Mualem 水分特征
+│   ├── logging_config.py       # 日志
+│   ├── constants.py            # 全局常量
+│   └── utils.py                # 工具函数
+├── data/                       # 输入数据
+│   ├── soil_survey.csv         # 土壤普查数据
+│   └── exchangeable_ions.csv   # 交换性阳离子初始值
+├── tests/                      # pytest 单元测试
+│   ├── conftest.py
+│   └── test_*.py
+├── docs/images/                # 文档示例图（USERGUIDE 案例图）
+├── tools/                      # 分析/绘图辅助脚本（从项目根运行）
+│   ├── plot_pH_scenarios.py        # 4 情景 pH 对比图
+│   ├── plot_ion_concentrations.py  # 离子浓度曲线图
+│   └── plot_Q7_30yr.py             # 降水化学 30 年模拟图
+├── output/                     # 运行产物（gitignore，自动生成；含 output/error.inp 失败复现文件）
+├── main.py                     # 主程序入口
+├── requirements.txt            # Python 依赖
+├── USERGUIDE.md                # 用户指南（安装/配置/情景/输出解读/FAQ）
+└── README.md
+```
 
 ---
 
@@ -197,6 +223,28 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 > - NetCDF 格式需要安装 `netCDF4`；未安装时自动回退为 CSV。
 > - 多层模式（`n_layers=4`）下各变量按层输出，列名带层深度后缀；另含水文诊断列（infiltration/drainage/runoff/stored_water/AET 等）与事件淋失峰值列（`flush_NO3_peak_mmol`/`flush_base_peak_mmol`）。
 
+### 辅助分析与绘图脚本
+
+`tools/` 下的 `plot_*.py` 为分析/绘图辅助脚本（独立运行，不参与主流程；**需从项目根目录运行** `python tools/plot_xxx.py`）：
+
+| 脚本 | 说明 |
+|------|------|
+| `tools/plot_pH_scenarios.py` | 4 情景（natural / fertilizer / lime_only / fertilizer_lime）土壤 pH 演化对比图（5 年，官方引擎） |
+| `tools/plot_ion_concentrations.py` | fertilizer_lime 情景 30 年 pH + 11 种离子浓度曲线（PHREEQC 溶液输出，mol/kgw） |
+| `tools/plot_Q7_30yr.py` | 降水化学集成 + pCO₂ 传递后 natural 情景 30 年 pH 与全部离子浓度曲线 |
+
+`output/error.inp` 为 PHREEQC 计算失败时**自动生成**的完整输入复现文件：当官方引擎 `RunString` 抛出异常并降级时，完整输入字符串写入 `output/error.inp`，每次失败刷新；写入失败不影响主流程（记录日志后继续降级模拟）。可据此复现与调试。
+
+> **化学参数（位于 `src/constants.py`，非 config 字段）**：
+> - `NITRIFICATION_K1`：尿素水解速率（/month）
+> - `NITRIFICATION_K2`：硝化速率（/month）
+> - `HENRY_CO2` / `KA1_H2CO3` / `KA2_HCO3` / `KW_WATER`：碳酸体系常数（25°C），决定初始 HCO₃⁻（与 GAS_PHASE pCO₂ 联动）
+> - `CHARGE_BALANCE_CL_RESIDUAL`：Cl⁻ 背景残留
+> - `SOLUTION_TOTAL_CATION_CONC`：初始溶液总阳离子浓度（mol/L）
+> - `AMORPHOUS_ALOH3_MASS_FRACTION = 0.02`：非晶质氢氧化铝质量分数，`build_minerals()` 添加 `Al(OH)3(a)` 相（提供 Al 缓冲源）
+> - `GAP_AL_FRACTION`：CEC 缺口中 Al 占比
+> - `ALX3_SELECTIVITY_LOGK`：AlX₃ 交换 log_k（引擎 EXCHANGE_SPECIES 覆盖）
+
 ---
 
 ## 八、已知模型局限
@@ -236,52 +284,3 @@ pH,有机质_g_kg,CEC_cmol_kg,容重_g_cm3,耕地面积_ha,有效土层厚度_cm
 - Green W.H., Ampt G.A. Studies on soil physics: flow of air and water through soils. Journal of Agricultural Science, 1911, 4(1): 1-24.
 - Saxton K.E., Rawls W.J. Soil water characteristic estimates by texture and organic matter for hydrologic solutions. SSSAJ, 2006, 70(5): 1569-1578.
 - Dzombak D.A., Morel F.M.M. Surface Complexation Modeling: Hydrous Ferric Oxide. Wiley-Interscience, 1990.
-
-### 辅助分析与绘图脚本
-
-`tools/` 下的 `plot_*.py` 为分析/绘图辅助脚本（独立运行，不参与主流程；**需从项目根目录运行** `python tools/plot_xxx.py`）：
-
-| 脚本 | 说明 |
-|------|------|
-| `tools/plot_pH_scenarios.py` | 4 情景（natural / fertilizer / lime_only / fertilizer_lime）土壤 pH 演化对比图（5 年，官方引擎） |
-| `tools/plot_ion_concentrations.py` | fertilizer_lime 情景 30 年 pH + 11 种离子浓度曲线（PHREEQC 溶液输出，mol/kgw） |
-| `tools/plot_Q7_30yr.py` | 降水化学集成 + pCO₂ 传递后 natural 情景 30 年 pH 与全部离子浓度曲线 |
-
-`output/error.inp` 为 PHREEQC 计算失败时**自动生成**的完整输入复现文件：当官方引擎 `RunString` 抛出异常并降级时，完整输入字符串写入 `output/error.inp`，每次失败刷新；写入失败不影响主流程（记录日志后继续降级模拟）。可据此复现与调试。
-
-> **化学参数（位于 `src/constants.py`，非 config 字段）**：
-> - `NITRIFICATION_K1`：尿素水解速率（/month）
-> - `NITRIFICATION_K2`：硝化速率（/month）
-> - `HENRY_CO2` / `KA1_H2CO3` / `KA2_HCO3` / `KW_WATER`：碳酸体系常数（25°C），决定初始 HCO₃⁻（与 GAS_PHASE pCO₂ 联动）
-> - `CHARGE_BALANCE_CL_RESIDUAL`：Cl⁻ 背景残留
-> - `SOLUTION_TOTAL_CATION_CONC`：初始溶液总阳离子浓度（mol/L）
-> - `AMORPHOUS_ALOH3_MASS_FRACTION = 0.02`：非晶质氢氧化铝质量分数，`build_minerals()` 添加 `Al(OH)3(a)` 相（提供 Al 缓冲源）
-> - `GAP_AL_FRACTION`：CEC 缺口中 Al 占比
-> - `ALX3_SELECTIVITY_LOGK`：AlX₃ 交换 log_k（引擎 EXCHANGE_SPECIES 覆盖）
-
-│   ├── scenario_controller.py  # 情景控制（施肥/石灰/气候变化）
-│   ├── phreeqc_engine.py       # PHREEQC 化学引擎（官方 + 简化降级）
-│   ├── output_writer.py        # 结果输出（CSV/NetCDF/绘图）
-│   ├── initial_condition.py    # 初始条件构建（溶液/交换/矿物/气相）
-│   ├── precip_chemistry.py     # 降水化学
-│   ├── vgm.py                  # van Genuchten-Mualem 水分特征
-│   ├── logging_config.py       # 日志
-│   ├── constants.py            # 全局常量
-│   └── utils.py                # 工具函数
-├── data/                       # 输入数据
-│   ├── soil_survey.csv         # 土壤普查数据
-│   └── exchangeable_ions.csv   # 交换性阳离子初始值
-├── tests/                      # pytest 单元测试
-│   ├── conftest.py
-│   └── test_*.py
-├── docs/images/                # 文档示例图（USERGUIDE 案例图）
-├── tools/                      # 分析/绘图辅助脚本（从项目根运行）
-│   ├── plot_pH_scenarios.py        # 4 情景 pH 对比图
-│   ├── plot_ion_concentrations.py  # 离子浓度曲线图
-│   └── plot_Q7_30yr.py             # 降水化学 30 年模拟图
-├── output/                     # 运行产物（gitignore，自动生成；含 output/error.inp 失败复现文件）
-├── main.py                     # 主程序入口
-├── requirements.txt            # Python 依赖
-├── USERGUIDE.md                # 用户指南（安装/配置/情景/输出解读/FAQ）
-└── README.md
-```
