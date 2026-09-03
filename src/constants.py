@@ -20,6 +20,9 @@ PH_UPPER = 12.0
 # ---- 降水入渗系数 (T3 参数化, v0.2.2) ----
 PRECIP_INFILTRATION_DEFAULT = 0.05
 
+# ---- 降水化学离子键顺序 (v0.2.3; 2026-09-02 自 config_manager 迁入, 供校验/加载共享) ----
+PRECIP_ION_KEYS = ["Cl", "SO4", "NO3", "F", "Ca", "NH4", "Na", "Mg", "K", "H"]
+
 # ---- 矿物量缩放系数 (F2 统一, v0.1.4) ----
 # 折中方案说明见 docs/analysis/Q1_plus_ANALYSIS.md:
 # 物理值(1e6-1e7 mol)会导致碱性突变(pH~9.9), 需取较小值保留区分度
