@@ -467,11 +467,23 @@ def test_companion_grade_injection_boundaries():
     assert mode == 'hybrid' and anion == pytest.approx(50.0) and acid == 0.0
     anion, acid, mode = e._grade_companion_injection(100.0, 10.0)
     assert mode == 'hybrid' and anion == pytest.approx(0.0)
-    # BS < bs_low: 酸化注入 H+ = 全当量 (acid 模式)
+    # BS < bs_low: 酸化注入 (工单88 D4, 2026-09-09 起支持高 pH 降额护栏):
+    #   - 低 pH/缺省 (ph 未传): 保持 v88s 原行为 (全量注 H+ = E_loss)
+    #     — natural/fertilizer 等低 pH 情景逐位一致护栏 (判据甲)
+    #   - 高 pH (ph ≥ KNOBS_HIGH_PH_RETRY_THRESHOLD=9): H+ 随 BS 线性降额
+    #     (BS=0 → 0, mode 'zero') — 防 lime_high 强碱高 pH 态全量注酸与石灰
+    #     碱对冲触发 PHREEQC 收敛失败 → 状态冻结 (v88s y19~y30 锁死 10.848, D4)
     anion, acid, mode = e._grade_companion_injection(100.0, 9.9)
     assert mode == 'acid' and acid == pytest.approx(100.0) and anion == 0.0
     anion, acid, mode = e._grade_companion_injection(50.0, 0.0)
     assert mode == 'acid' and acid == pytest.approx(50.0)
+    # 高 pH 状态 → 降额护栏: 0<BS<bs_low 线性降额; BS=0 归零 (zero)
+    anion, acid, mode = e._grade_companion_injection(100.0, 9.9, ph=10.0)
+    assert mode == 'acid' and acid == pytest.approx(99.0) and anion == 0.0
+    anion, acid, mode = e._grade_companion_injection(50.0, 5.0, ph=10.0)
+    assert mode == 'acid' and acid == pytest.approx(25.0) and anion == 0.0
+    anion, acid, mode = e._grade_companion_injection(50.0, 0.0, ph=10.0)
+    assert mode == 'zero' and acid == 0.0 and anion == 0.0
 
 
 def test_companion_injection_across_events(profile, soil_info):

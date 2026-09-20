@@ -41,6 +41,8 @@ from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
                            KNOBS_ITERATIONS_DEEP,
                            KNOBS_DEEP_START_LAYER,
                            KNOBS_RETRY_MULTIPLIER,
+                           KNOBS_HIGH_PH_RETRY_THRESHOLD,
+                           KNOBS_HIGH_PH_RETRY_ITERATIONS,
                            AMORPHOUS_ALOH3_LOGK_DATABASE)
 from src.vgm import theta_to_water_L
 from src.utils import layer_aloh3_params
@@ -190,7 +192,8 @@ class PhreeqcEngine:
                  companion_cfg=None,
                  weathering_cfg=None,
                  charge_pairing_cfg=None,
-                 base_leaching_cfg=None):
+                 base_leaching_cfg=None,
+                 surface_acid_cfg=None):
         """
         参数:
             database: PHREEQC 热力学数据库
@@ -263,6 +266,15 @@ class PhreeqcEngine:
         self.base_leaching_cfg = base_leaching_cfg
         self.base_leaching_enabled = bool(base_leaching_cfg is not None
                                           and base_leaching_cfg.enable)
+        # 工单88 (4c, 2026-09-04): L1 表层产酸源 (默认关闭 = v85 逐位一致;
+        # main/sensitivity 从 config 传入, natural 碱化修复验收启用)
+        self.surface_acid_cfg = surface_acid_cfg
+        self.surface_acid_enabled = bool(surface_acid_cfg is not None
+                                         and surface_acid_cfg.enable)
+        self.surface_acid_monthly_eq = (
+            (surface_acid_cfg.rate_molc_ha_yr / 12.0)
+            if self.surface_acid_enabled else 0.0)
+        self.surface_acid_anion_defined = self.surface_acid_enabled
         # 配对阴离子名: companion 启用时与其 inert_anion 共享 (单一定义);
         # 否则用 charge_pairing.anion (默认 An); 否则 base_leaching.anion
         if companion_cfg is not None and companion_cfg.enable:
@@ -619,7 +631,8 @@ class PhreeqcEngine:
         return result
 
     def pre_equilibrate(self, state: SoilState, soil_profile,
-                        max_steps: int = 100) -> SoilState:
+                        max_steps: int = 100,
+                        layer_index=None) -> SoilState:
         """前处理预平衡: 观测锚定迭代, 使初始状态在观测约束下自洽 [v0.5.0]
 
         背景: 初始状态由溶液/交换/矿物三相独立估算拼合, 首次 PHREEQC 平衡
@@ -639,9 +652,10 @@ class PhreeqcEngine:
             state: 初始构建的状态
             soil_profile: 土壤剖面 (观测 pH/交换离子来源)
             max_steps: 最大迭代步数 (默认 100, Q5=A)
-
-        返回:
-            观测锚定后的状态
+            layer_index (工单88): 预平衡锚定 targets 与初始构建同口径 —
+                各层独立预平衡时 (main/sensitivity 逐层调用) 透传层索引,
+                保证 L1 表层物理化口径的 NaX 目标不被旧口径锚定拉回;
+                None/单层 → 全局默认 (基线)。
         """
         if self.mode == 'simplified' or self.backend != 'official':
             return state
@@ -650,12 +664,14 @@ class PhreeqcEngine:
         # 模拟步用 1e-9 (真收敛, lime 高 pH 不假收敛)。_build_phreeqc_input 读此标志。
         self._in_pre_equilibration = True
         try:
-            return self._pre_equilibrate_inner(state, soil_profile, max_steps)
+            return self._pre_equilibrate_inner(state, soil_profile, max_steps,
+                                               layer_index)
         finally:
             self._in_pre_equilibration = False
 
     def _pre_equilibrate_inner(self, state: SoilState, soil_profile,
-                               max_steps: int = 100) -> SoilState:
+                               max_steps: int = 100,
+                               layer_index=None) -> SoilState:
         """预平衡主体 (观测锚定迭代, 在 _in_pre_equilibration 标志下执行)"""
 
         from src.initial_condition import InitialConditionBuilder
@@ -663,7 +679,8 @@ class PhreeqcEngine:
         # 观测目标: 交换离子 (cmol/kg → mol, 与 build_exchange 换算一致)
         builder = InitialConditionBuilder(
             soil_profile, None,
-            pCO2=state.gas_phase.get('CO2(g)', 0.015))
+            pCO2=state.gas_phase.get('CO2(g)', 0.015),
+            layer_index=layer_index)
         targets = builder.build_exchange()
         target_ph = soil_profile.ph
 
@@ -826,6 +843,10 @@ class PhreeqcEngine:
             # v0.5.2: 硝化产酸仅 L1 (表层酸化源强化); 深层跳过氮过程
             if i > 0:
                 layer_forcing['skip_nitrification'] = True
+            # 工单88 (4c): L1 表层产酸源 — 仅 L1 且非预平衡 (月级路径每月一次)
+            if (i == 0 and self.surface_acid_enabled
+                    and not self._in_pre_equilibration):
+                layer_forcing['surface_acid_eq'] = self.surface_acid_monthly_eq
             # v0.5.0: 水文模式各层注入水量 (替代 precip×infiltration)
             if hydrology:
                 layer_forcing['inflow_water_L'] = hydrology['inflows'][i]
@@ -864,16 +885,26 @@ class PhreeqcEngine:
 
         return new_states, diags
 
-    def _grade_companion_injection(self, e_loss_eq: float, bs: float):
+    def _grade_companion_injection(self, e_loss_eq: float, bs: float,
+                                   ph: float = None):
         """v0.7.0 (工单71, spec 69): 伴随淋失分级注入 (Q18=A)
 
         按层盐基饱和度 BS 动态选择注入策略 (专家方案 D):
           - BS ≥ bs_high: 全量注入 CompAn- (交换相盐基充足, Gapon 正常驱动解吸)
           - bs_low ≤ BS < bs_high: CompAn- × 线性衰减 (BS−bs_low)/(bs_high−bs_low)
-          - BS < bs_low: 切换酸化注入 H+ = E_loss 当量 (交换相盐基枯竭,
-            继续 InertAnion 会拽 Al/H 异常压 pH; H+ 主导酸化更物理)
+          - 0 < BS < bs_low: 切换酸化注入 H+ (盐基枯竭过渡带)
+          - BS ≤ 0: 终止 (acid 当量 0)
 
-        返回: (anion_eq, acid_eq, mode) — mode ∈ inert/hybrid/acid
+        工单88 D4 (2026-09-09): **高 pH 状态降额护栏 (ph≥KNOBS_HIGH_PH_RETRY_THRESHOLD)** —
+        lime_high 强碱高 pH 态 (BS=0% + ph≈10.8) 若按旧逻辑全量注 H+ (=E_loss)
+        与石灰碱对冲 → PHREEQC 迭代超限收敛失败 → 单场跳过 → 状态链冻结
+        (v88s lime_high y19~y30 锁死 10.848, D4 伪影)。高 pH 状态时:
+          - 0 < BS < bs_low: H+ = E_loss × BS/bs_low (随 BS 线性降额, BS→0 终止)
+          - BS ≤ 0: H+ = 0 (mode 'zero', 与 E_base zero 语义对齐)
+        低 pH/缺省 (ph 未传或 < 阈值) 保持 v88s 原行为 (BS<bs_low 全量注酸)
+        — natural/fertilizer 等低 pH 情景逐位一致护栏 (判据甲)。
+
+        Returns: (anion_eq, acid_eq, mode) — mode ∈ inert/hybrid/acid/zero
         """
         bs_high = self.companion_cfg.bs_high
         bs_low = self.companion_cfg.bs_low
@@ -882,6 +913,16 @@ class PhreeqcEngine:
         if bs >= bs_low:
             frac = (bs - bs_low) / (bs_high - bs_low)
             return e_loss_eq * frac, 0.0, 'hybrid'
+        # BS < bs_low 盐基枯竭带
+        high_ph = (ph is not None
+                   and ph >= KNOBS_HIGH_PH_RETRY_THRESHOLD)
+        if high_ph:
+            # 高 pH 态 (lime_high 锁死路径): H+ 随 BS 线性降额, BS→0 归零
+            if bs > 0.0 and bs_low > 0.0:
+                frac_acid = bs / bs_low
+                return 0.0, e_loss_eq * frac_acid, 'acid'
+            return 0.0, 0.0, 'zero'
+        # 低 pH/缺省: v88s 原行为 (全量注酸, 判据甲兼容)
         return 0.0, e_loss_eq, 'acid'
 
     def _grade_base_leaching(self, e_base_eq: float, bs: float):
@@ -958,6 +999,12 @@ class PhreeqcEngine:
                 # v0.5.2: 硝化产酸仅 L1; 深层跳过氮过程
                 if i > 0:
                     layer_forcing['skip_nitrification'] = True
+                # 工单88 (4c): L1 表层产酸源 — 仅 L1, 当月第一场事件结算整月量
+                # (与施肥/石灰"月内一次性干预"惯例一致, ev_idx==0)
+                if (i == 0 and self.surface_acid_enabled
+                        and not self._in_pre_equilibration
+                        and ev_idx == 0):
+                    layer_forcing['surface_acid_eq'] = self.surface_acid_monthly_eq
                 # 事件级水量: 该场入渗/排水/优先流
                 layer_forcing['inflow_water_L'] = ev['inflows'][i]
                 if i == 1 and ev.get('bypass_water_L', 0.0) > 0:
@@ -974,7 +1021,8 @@ class PhreeqcEngine:
                     bs = calc_base_saturation(new_states[i].exchange,
                                               include_hx=True)
                     companion_anion_eq, companion_acid_eq, companion_mode = \
-                        self._grade_companion_injection(pending_e_loss[i], bs)
+                        self._grade_companion_injection(
+                            pending_e_loss[i], bs, ph=new_states[i].ph)
                     if companion_mode == 'acid':
                         logger.warning(
                             "v0.7.0 伴随淋失: 层 %d 盐基枯竭 (BS=%.1f%% < %.0f%%), "
@@ -1240,6 +1288,16 @@ class PhreeqcEngine:
                     int(self._pick_knobs_iterations(layer_index, n_layers)
                         * KNOBS_RETRY_MULTIPLIER),
                     500)
+                # 工单88 D4 (2026-09-09): 高 pH 强碱状态 (lime_high y18 后
+                # ph≈10.8) 默认重试预算不足 → 提高迭代仍不收敛 → 单场跳过
+                # 状态冻结 (v88s lime_high y19~y30 锁死 10.848)。物理上持续
+                # 施碱 pH 应阶梯上升 (判据 v2), 锁死为数值伪影; 高 pH 状态
+                # 提高重试预算 (1000→2000) 提高 1e-9 真收敛成功率。
+                # 仅 ph≥KNOBS_HIGH_PH_RETRY_THRESHOLD 时生效, 正常 pH 情景
+                # (natural/fertilizer 等) 不受影响 (v85 逐位一致护栏)。
+                if state.ph >= KNOBS_HIGH_PH_RETRY_THRESHOLD:
+                    retry_iters = max(retry_iters,
+                                      KNOBS_HIGH_PH_RETRY_ITERATIONS)
                 retry_string = self._build_phreeqc_input(
                     state, forcing, action, profile, n_reaction=n_reaction,
                     solution_water_L=solution_water_L, inject_water=inject_water,
@@ -1368,6 +1426,7 @@ class PhreeqcEngine:
             col = f"m_{sp}(mol/kgw)"
             if col in idx:
                 exchange[sp] = get(col) * water_mass
+
         new_state.exchange = exchange
 
         # 矿物相: L2 修复 — 从 SELECTED_OUTPUT 读取矿物摩尔量演化
@@ -1445,6 +1504,7 @@ class PhreeqcEngine:
             base_leaching_enabled=self.base_leaching_enabled,
             weathering_enabled=self.weathering_enabled,
             weathering_cfg=self.weathering_cfg,
+            surface_acid_enabled=self.surface_acid_enabled,
             nitrification_k1=self.nitrification_k1,
             nitrification_k2=self.nitrification_k2,
             precip_infiltration=self.precip_infiltration,

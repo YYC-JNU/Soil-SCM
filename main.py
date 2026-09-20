@@ -525,7 +525,9 @@ def run_simulation(config_path: str = "config/config.yaml"):
                            charge_pairing_cfg=getattr(cfg.simulation,
                                                       'charge_pairing', None),
                            base_leaching_cfg=getattr(cfg.simulation,
-                                                     'base_leaching', None))
+                                                      'base_leaching', None),
+                           surface_acid_cfg=getattr(cfg.simulation,
+                                                    'surface_acid', None))
 
     # 构建初始状态 (initial_pCO2 已在阶段 4 中计算)
     # WF2/Q1: 多分层时构建 List[SoilState]; L6 (v0.4.0): 支持逐层参数覆盖
@@ -545,9 +547,9 @@ def run_simulation(config_path: str = "config/config.yaml"):
         pre_steps = getattr(cfg.simulation, 'pre_equilibration_max_steps', 60)
         if layer_profiles is not None:
             soil_state = engine.pre_equilibrate(
-                soil_state, layer_profiles[0], pre_steps)
+                soil_state, layer_profiles[0], pre_steps, layer_index=0)
             soil_states = [engine.pre_equilibrate(
-                s, layer_profiles[i], pre_steps)
+                s, layer_profiles[i], pre_steps, layer_index=i)
                 for i, s in enumerate(soil_states)]
         else:
             soil_state = engine.pre_equilibrate(

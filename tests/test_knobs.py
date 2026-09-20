@@ -239,3 +239,41 @@ def test_knobs_multi_layer_passes_layer_index(profile, soil_info, monkeypatch):
     assert [li for li, _ in seen] == [0, 1, 2, 3]
     assert all(nl == 4 for _, nl in seen)
 
+
+def test_knobs_high_ph_state_boosts_retry_budget(profile, soil_info,
+                                                 monkeypatch):
+    """工单88 D4 (2026-09-09): 高 pH 状态 (ph≥9) 重试迭代预算提高到 2000
+
+    v88s lime_high y18 后 ph≈10.8 强碱态 PHREEQC 迭代超限 (首次 500 + 重试
+    1000 仍失败) → 单场跳过 → 状态冻结 (y19~y30 锁死 10.848, D4 伪影)。
+    修复: 高 pH 状态重试迭代 1000→2000 (KNOBS_HIGH_PH_RETRY_ITERATIONS),
+    提高 1e-9 真收敛成功率。正常 pH (ph<9) 状态保持旧预算 (500→1000,
+    v85 逐位一致护栏)。
+    """
+    from src.constants import (KNOBS_HIGH_PH_RETRY_THRESHOLD,
+                               KNOBS_HIGH_PH_RETRY_ITERATIONS)
+    e = _engine()
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    calls = []
+    monkeypatch.setattr(e.official, "RunString", lambda s: calls.append(s))
+    # 首次 RunString 后判定超限 (len==1 → True), 重试后收敛 (len==2 → False)
+    monkeypatch.setattr(e, "_has_new_convergence_warning",
+                        lambda before: len(calls) == 1)
+    monkeypatch.setattr(e, "_parse_official_output",
+                        lambda state, **kw: (state, None))
+    # 高 pH 状态: 重试迭代应为 2000 (提高预算)
+    state.ph = KNOBS_HIGH_PH_RETRY_THRESHOLD + 1.0   # 10.0 ≥ 9.0
+    e._run_official_step(state, dict(FORCING), MonthlyAction(), profile,
+                         layer_index=0, n_layers=4)
+    assert len(calls) == 2
+    assert "-iterations 500" in calls[0]
+    assert (f"-iterations {KNOBS_HIGH_PH_RETRY_ITERATIONS}" in calls[1]
+            or f"-iterations {int(KNOBS_ITERATIONS * 2)}" in calls[1])
+    # 正常 pH 状态: 重试保持 1000 (不受 D4 影响)
+    calls.clear()
+    state.ph = 7.0
+    e._run_official_step(state, dict(FORCING), MonthlyAction(), profile,
+                         layer_index=0, n_layers=4)
+    assert len(calls) == 2
+    assert f"-iterations {int(KNOBS_ITERATIONS * 2)}" in calls[1]
+

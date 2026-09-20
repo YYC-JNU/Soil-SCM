@@ -48,6 +48,8 @@ class PhreeqcInputConfig:
     # ---- 矿物风化注入 ----
     weathering_enabled: bool = False
     weathering_cfg: Optional[Any] = None
+    # ---- L1 表层产酸源 (工单88 4c, 2026-09-04) ----
+    surface_acid_enabled: bool = False
     # ---- 硝化 ----
     nitrification_k1: float = 1.0
     nitrification_k2: float = 0.4
@@ -304,6 +306,18 @@ def _collect_reaction_lines(state, forcing, action, cfg: PhreeqcInputConfig,
         if cfg.charge_pairing_enabled:
             reaction_lines.append(
                 f"  {cfg.pair_anion}- {h_mol:.6e}  # 电荷配对")
+
+    # ---- 工单88 (4c, 2026-09-04): L1 表层产酸源 (红壤 OM 矿化持续产酸) ----
+    # 每月 rate_molc_ha_yr/12 mol H+ 注入 L1 (layer_index=0 由引擎层循环
+    # 填充 surface_acid_eq 键), 电荷配对 An- 复用 charge_pairing 通道;
+    # 预平衡不注入 (引擎 pre_equilibrate forcing 无此键), v85 逐位一致护栏。
+    surface_acid_eq = forcing.get('surface_acid_eq', 0.0)
+    if surface_acid_eq > 0 and cfg.surface_acid_enabled:
+        reaction_lines.append(
+            f"  H+     {surface_acid_eq:.6e}  # 表层产酸源")
+        if cfg.charge_pairing_enabled:
+            reaction_lines.append(
+                f"  {cfg.pair_anion}- {surface_acid_eq:.6e}  # 电荷配对")
 
     # ---- NH4+ 等效置换 (工单72): 按交换相电荷占比注入盐基 ----
     if (cfg.companion_enabled and cfg.companion_cfg

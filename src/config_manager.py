@@ -166,6 +166,24 @@ class ChargePairingConfig:
 
 
 @dataclass
+class SurfaceAcidConfig:
+    """v0.7.x (工单88 4c, 2026-09-04): L1 表层产酸源配置
+
+    natural 中期碱化 (v85 y5~y15 ~8.3) 是 L1 交换盐基库释放伪影; 4a (GAP
+    物理化) 降至 y3 7.27 仍跨 7; 4b (观测约束) 探针证伪。4c = 新增 L1 初始
+    有机酸/H+ 产酸源 (红壤表层 OM 30g/kg 矿化持续产酸), 引入新的酸化自由度。
+    探针 probe_88_4c 扫描定档 250 molc/ha/yr: 全程压回 4.4~5.2, phreeqc_ok=1。
+
+    机制: 每月按 rate/12 mol H+ 注入 L1 (layer_index=0) — 事件路径当月第一场
+    REACTION 结算, 月级路径每月一次; 电荷配对 An- (复用 charge_pairing);
+    预平衡豁免 (不注入, 锚定目标不被酸源污染)。
+    默认关闭 (enable=False) = v85 逐位一致 (回归护栏)。
+    """
+    enable: bool = False
+    rate_molc_ha_yr: float = 1000.0
+
+
+@dataclass
 class SimulationConfig:
     """模拟控制参数"""
     n_years: int = 50
@@ -192,6 +210,7 @@ class SimulationConfig:
     weathering: WeatheringConfig = field(default_factory=WeatheringConfig)  # v0.7.0: 矿物风化集总注入
     charge_pairing: ChargePairingConfig = field(default_factory=ChargePairingConfig)  # v0.7.x: REACTION 电荷平衡
     base_leaching: BaseLeachingConfig = field(default_factory=BaseLeachingConfig)  # v0.7.x (工单80): 盐基淋失强化
+    surface_acid: SurfaceAcidConfig = field(default_factory=SurfaceAcidConfig)  # 工单88 (4c): L1 表层产酸源
 
 
 @dataclass
@@ -430,6 +449,18 @@ def _parse_base_leaching(raw):
         c_floor_mmol_L=raw.get('c_floor_mmol_L', 0.0))
 
 
+def _parse_surface_acid(raw):
+    """v0.7.x (工单88 4c): 解析 simulation.surface_acid 节点 (缺省 → 关闭)
+
+    rate_molc_ha_yr 默认 1000.0 (正式语义 30y 细验定案: y30=4.57 ∈ [4.5,5.5]).
+    """
+    if not isinstance(raw, dict):
+        raw = {}
+    return SurfaceAcidConfig(
+        enable=raw.get('enable', False),
+        rate_molc_ha_yr=raw.get('rate_molc_ha_yr', 1000.0))
+
+
 class ConfigManager:
     """配置管理器: 加载、验证、提供配置参数"""
 
@@ -511,7 +542,8 @@ class ConfigManager:
                 companion=_parse_companion(s.get('companion')),
                 weathering=_parse_weathering(s.get('weathering')),
                 charge_pairing=_parse_charge_pairing(s.get('charge_pairing')),
-                base_leaching=_parse_base_leaching(s.get('base_leaching'))
+                base_leaching=_parse_base_leaching(s.get('base_leaching')),
+                surface_acid=_parse_surface_acid(s.get('surface_acid'))
             )
             # v0.5.2: surface_infiltration_coeff 已废弃 (Green-Ampt 入渗替代
             # Horton), 残留配置显式报错 (breaking change 明示, 不静默忽略)

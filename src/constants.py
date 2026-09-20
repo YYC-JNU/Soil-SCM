@@ -290,6 +290,28 @@ HX_LOGK = 2.8               # HX 交换物种 log_k (工单76 调优 B: 3.0→2.
 GAP_H_FRACTION = 0.3        # 缺口 → HX 比例 (与 GAP_AL_FRACTION 并列, 余量 NaX)
 
 
+# ---- 工单88 (2026-09-03): L1 表层物理化口径 (natural 碱化去伪影) ----
+# v85 natural 中期碱化 (y5~y15 ~8.3) 归因定案 (工单84) = L1 自身交换盐基库
+# 释放: 预平衡 BS 85.9% → y1 末 AlX3 耗尽 → 纯水稀释解吸耗酸 → 升碱维持
+# ~15 年。L1 缺口 3.8 cmol/kg (CEC 12 − 观测六离子 8.2) 旧按 GAP_H 0.3 /
+# GAP_AL 0.3 / NaX 0.4 填充 → NaX 虚高 1.52 cmol/kg (盐基伪影燃料)。
+# 表层物理化口径 (WF6 决议 4a): 缺口偏 H/Al 酸缓冲, NaX 余量 ≤0.2 (红壤
+# 表层盐基饱和典型 BS∈[40,55]% ± 预平衡再分配)。仅 layer_index=0 (L1)
+# 生效, L2~L4 保持 v85 口径 (判据甲逐位一致)。定值走 9c 网格扫描
+# (GAP_H∈{0.3,0.4,0.5} × GAP_AL∈{0.3,0.4,0.5,0.6}, NaX=1−H−Al≤0.2)。
+SURFACE_GAP_H_FRACTION = 0.4      # L1 缺口 → HX (一价酸)
+SURFACE_GAP_AL_FRACTION = 0.4      # L1 缺口 → AlX3 (三价) (NaX 余 0.2)
+# ---- 工单88 (4c, 2026-09-07): L1 表层产酸源速率定档 (正式语义) ----
+# 注入语义: 每月 rate/12 mol H+ 注入 L1 (事件路径当月首场结算, 预平衡豁免)。
+# 探针 probe_88_4c 正式语义扫描 + 30y 细验定案:
+#   - 150 molc/ha/yr (旧探针误导档): 正式语义下产酸不足, y30=6.38 (偏高)
+#     (旧探针包装每次 build 注入致年注入放大 ~10倍, 与正式机制语义不一致)
+#   - 1000 molc/ha/yr: natural 30y 全程 [4.55, 5.58], y30=4.57 ∈ [4.5,5.5],
+#     phreeqc_ok=1 → 定案
+# 物理量级: 红壤表层 OM 30 g/kg × 3.6e6 kg/ha → 年矿化产酸 ~2.6e4-7.8e4 molc,
+# 1000 molc/ha/yr 为合理量级 (有机酸净产酸, 保守取低端)。
+SURFACE_ACID_RATE_MOLC_HA_YR = 1000.0
+
 # ---- v0.7.x (工单78): KNOBS 收敛参数 (高离子强度卡顿调优, 2026-08-24) ----
 # PHREEQC 偶发卡顿 (RunString 不返回) 在 HX=2.8 + 配对 An- 高离子强度 + lime 高 pH
 # 下更频繁; 扫描定案 (2026-08-24 探针): **-tolerance 1e-12 在 lime 高 pH 平衡
@@ -321,6 +343,20 @@ KNOBS_ITERATIONS_DEEP = 500      # 深层 (L3/L4) 基础迭代 (探针证伪 100
 KNOBS_DEEP_START_LAYER = 3       # 深层起始层号 (1-based): 3 → 索引 2 起 (L3/L4)
 KNOBS_RETRY_MULTIPLIER = 2.0     # 重试迭代倍数 (相对实际首次迭代数:
                                  #  浅层 500→1000, 深层 500→1000 = 工单78~85 一致)
+# ---- 工单88 D4 (2026-09-09): lime_high 高 pH 收敛锁死修复 ----
+# v88s lime_high y18 起 pH 锁死 10.848: 强碱高 pH + BS=0 高离子态 PHREEQC
+# 迭代超限 (模拟步首次 500 + 重试 1000 在 1e-9 真收敛下仍失败) → 单场跳过
+# 保留前状态 → 状态链冻结 (y19~y30 恒值)。err 日志 6 次 "保留前状态跳过"
+# 分布于 6 个情景 (第六个情景为 lime_high), 伴随 18352 次"提高迭代重试"、
+# 234 次 companion acid 切换 (H+ 0.5~191 eq)。物理上 lime 持续施碱应阶梯
+# 上升 (判据 v2), 锁死为数值伪影。修复:
+#   - B (本常量): 高 pH 强碱状态 (ph≥阈值) 重试迭代预算提高 (1000→2000),
+#     提高 PHREEQC 1e-9 真收敛在极端离子态下的成功率, 减少冻结概率;
+#   - A (companion acid BS≈0 降额护栏, 见 _grade_companion_injection):
+#     BS 枯竭后不再全量注 H+ 与石灰碱对冲。
+KNOBS_HIGH_PH_RETRY_THRESHOLD = 9.0    # 高 pH 阈值 (ph ≥ 触发提高重试预算)
+KNOBS_HIGH_PH_RETRY_ITERATIONS = 2000  # 高 pH 状态重试迭代预算 (默认步 1000)
+
 KNOBS_STEP_SIZE = 0.1       # 废弃 (工单82, 2026-08-25): 不注入 -step_size — IPhreeqc
                             #  3.8.6 对该行的存在本身敏感 (实测 0.2~0.001 均使预平衡
                             #  第一步远起点大交换相平衡数值发散 Ca=2000/4000 垃圾解,

@@ -42,6 +42,8 @@ from src.constants import (MINERAL_SCALE, HFO_STRONG_SITE_DENSITY,
                            WEATHERED_GAP_CEC_THRESHOLD,
                            WEATHERED_GAP_AL_FRACTION,
                            WEATHERED_GAP_H_FRACTION,
+                           SURFACE_GAP_H_FRACTION,
+                           SURFACE_GAP_AL_FRACTION,
                            INITIAL_PSI_CM)
 from src.utils import cmol_to_mol_per_kg, layer_aloh3_params
 from src.vgm import vgm_theta_from_psi, get_vgm_params
@@ -348,7 +350,15 @@ class InitialConditionBuilder:
         # 工单83 (2026-08-25): 深层风化层 (低 CEC) 缺口 GAP 偏 AlX3 —
         # 红壤风化层交换 Al 主导, 缺口主要补 AlX3 (三价) 而非 NaX (盐基),
         # 减少 NaX 虚高盐基饱和度 (BS); 非风化层保持原三通道 (0.3/0.3/0.4)。
-        if self.profile.cec <= WEATHERED_GAP_CEC_THRESHOLD:
+        # 工单88 (2026-09-03): L1 表层 (layer_index=0) 用物理化口径
+        # (SURFACE_GAP_*, NaX 余量 ≤0.2) — 去 v85 natural 中期碱化伪影;
+        # 仅 L1 首发, L2~L4 保持 v85 口径 (判据甲逐位一致)。
+        if self.layer_index == 0:
+            gap_h_cmol = gap_cmol * SURFACE_GAP_H_FRACTION
+            gap_al_cmol = gap_cmol * SURFACE_GAP_AL_FRACTION
+            gap_na_cmol = gap_cmol * (
+                1.0 - SURFACE_GAP_H_FRACTION - SURFACE_GAP_AL_FRACTION)
+        elif self.profile.cec <= WEATHERED_GAP_CEC_THRESHOLD:
             gap_h_cmol = gap_cmol * WEATHERED_GAP_H_FRACTION
             gap_al_cmol = gap_cmol * WEATHERED_GAP_AL_FRACTION
             gap_na_cmol = gap_cmol * (

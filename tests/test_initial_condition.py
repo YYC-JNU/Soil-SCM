@@ -202,3 +202,108 @@ def test_calc_exchange_site_total_includes_hx(profile, soil_info):
     total_with_hx = b._calc_exchange_site_total(exchange)
     total_without = total_with_hx - exchange.get('HX', 0.0)
     assert total_with_hx > total_without
+
+
+# ==================== 工单88 (2026-09-03): L1 初始盐基物理化 ====================
+
+# 理论值计算 (L1 观测数据 data/soil_survey.csv + exchangeable_ions.csv):
+#   CEC=12, 六离子 3.0+1.5+0.5+0.2+2.0+1.0 = 8.2 → 缺口 gap = 3.8 cmol/kg。
+#   旧三通道 (0.3/0.3/0.4): NaX 缺口 1.52 cmol/kg (盐基虚高伪影燃料)。
+#   物理化口径要求 NaX 余量 ≤ 0.2 且 H+Al ≥ 0.8 (spec 88 §3.2 网格约束)。
+
+
+def test_surface_gap_hplus_al_constraints():
+    """工单88 (4a): L1 表层物理化口径满足物理约束 — NaX 余量 ≤0.2, H+Al ≥0.8
+
+    避免 L1 缺口被高盐基 Na 填充 (v85 natural 中期碱化伪影燃料)。
+    """
+    from src.constants import (GAP_H_FRACTION, GAP_AL_FRACTION,
+                               SURFACE_GAP_H_FRACTION, SURFACE_GAP_AL_FRACTION)
+    # 旧全局口径: NaX 余量 0.4 (>0.2, 伪影来源)
+    assert 1.0 - GAP_H_FRACTION - GAP_AL_FRACTION > 0.20
+    # 新表层物理化口径 (9c 扫描网格约束): NaX ≤ 0.2 且 H+Al ≥ 0.8
+    na_frac = 1.0 - SURFACE_GAP_H_FRACTION - SURFACE_GAP_AL_FRACTION
+    assert 0.0 <= na_frac <= 0.20
+    assert SURFACE_GAP_H_FRACTION + SURFACE_GAP_AL_FRACTION >= 0.80
+
+
+def test_surface_gap_applies_to_layer0(profile, soil_info):
+    """工单88 (4a): layer_index=0 (L1 表层) 缺口分配用物理化口径 — NaX 虚高消除
+
+    L1 = 耕层表层 (CEC=12), 缺口 3.8 cmol/kg; 物理化后缺口 NaX ≤ 0.2×gap
+    (旧 0.4×gap=1.52 cmol/kg NaX 盐基伪影燃料), 偏 AlX3/HX 酸缓冲。
+    """
+    from src.constants import SURFACE_GAP_H_FRACTION, SURFACE_GAP_AL_FRACTION
+    b = InitialConditionBuilder(profile, soil_info, pCO2=0.015, layer_index=0)
+    exchange = b.build_exchange()
+    # CEC 总量守恒 (关键不变量)
+    total = b._calc_exchange_site_total(exchange)
+    assert abs(total - b.cec_total_mol) / b.cec_total_mol < 0.01
+    # 缺口 NaX 余量 ≤ 0.2 (旧 0.4): 用电荷当量计算
+    na_gap_charge_cmol = (exchange['NaX'] * 1.0 * 100.0 / b.soil_mass_kg
+                          - profile.exch_na)
+    gap_cmol = b.profile.cec - (profile.exch_ca + profile.exch_mg +
+                                profile.exch_k + profile.exch_na +
+                                profile.exch_al + profile.exch_h)
+    assert gap_cmol > 0
+    assert na_gap_charge_cmol / gap_cmol <= 0.20 + 1e-9
+    # H/Al 缺口通道显著 (H+Al ≥ 0.8)
+    al_gap_charge_cmol = (exchange['AlX3'] * 3.0 * 100.0 / b.soil_mass_kg
+                          - profile.exch_al)
+    h_gap_charge_cmol = (exchange['HX'] * 1.0 * 100.0 / b.soil_mass_kg
+                         - profile.exch_h)
+    assert (h_gap_charge_cmol + al_gap_charge_cmol) / gap_cmol >= 0.80 - 1e-9
+    # 常量生效一致性 (spec 88 §3.2 网格取值落在扫描范围)
+    assert SURFACE_GAP_H_FRACTION in (0.3, 0.4, 0.5)
+    assert SURFACE_GAP_AL_FRACTION in (0.3, 0.4, 0.5, 0.6)
+
+
+def test_surface_gap_keeps_deeper_layers_unchanged(profile, soil_info,
+                                                   monkeypatch):
+    """工单88 (判据甲): layer_index>0 (L2~L4) 缺口分配与 v85 逐位一致
+
+    L2 CEC=9 (非风化, 走旧三通道) 与 L3/L4 CEC≤7 (风化口径) 均不得因 L1
+    物理化波及 — 表层物理化仅对 layer_index=0 生效。
+    """
+    from src.input_reader import InputReader
+    from src.config_manager import LayerOverrideConfig
+    from src.constants import (WEATHERED_CEC_4LAYER, WEATHERED_EXCH_CA,
+                               WEATHERED_EXCH_MG, WEATHERED_EXCH_K,
+                               WEATHERED_EXCH_NA, WEATHERED_EXCH_AL,
+                               WEATHERED_EXCH_H)
+    reader = InputReader('data/soil_survey.csv', 'data/exchangeable_ions.csv')
+    base = reader.build_soil_profile()
+    # 构造 L2 profile (CEC=9) 与 L4 profile (CEC=4)
+    profiles = []
+    for idx in (1, 3):
+        lo = LayerOverrideConfig(
+            cec=WEATHERED_CEC_4LAYER[idx],
+            exch_ca=WEATHERED_EXCH_CA[idx], exch_mg=WEATHERED_EXCH_MG[idx],
+            exch_k=WEATHERED_EXCH_K[idx], exch_na=WEATHERED_EXCH_NA[idx],
+            exch_al=WEATHERED_EXCH_AL[idx], exch_h=WEATHERED_EXCH_H[idx])
+        profiles.append(reader.apply_layer_override(base, lo, 20.0))
+    for p, li in zip(profiles, (1, 3)):
+        b_surface = InitialConditionBuilder(p, soil_info, pCO2=0.015,
+                                            layer_index=li)
+        b_baseline = InitialConditionBuilder(p, soil_info, pCO2=0.015,
+                                             layer_index=None)
+        ex_surface = b_surface.build_exchange()
+        ex_baseline = b_baseline.build_exchange()
+        for ion in ('CaX2', 'MgX2', 'KX', 'NaX', 'AlX3', 'HX'):
+            assert ex_surface[ion] == ex_baseline[ion], (
+                f"layer_index={li} {ion}: 表层物理化不应波及深层")
+
+
+def test_surface_gap_params_monkeypatchable(profile, soil_info, monkeypatch):
+    """工单88 (9c 扫描): 表层 GAP 参数可 monkeypatch 扫描 (探针无侵入)"""
+    import src.initial_condition as ic
+    monkeypatch.setattr(ic, "SURFACE_GAP_H_FRACTION", 0.4)
+    monkeypatch.setattr(ic, "SURFACE_GAP_AL_FRACTION", 0.6)
+    b = InitialConditionBuilder(profile, soil_info, pCO2=0.015, layer_index=0)
+    exchange = b.build_exchange()
+    total = b._calc_exchange_site_total(exchange)
+    assert abs(total - b.cec_total_mol) / b.cec_total_mol < 0.01
+    # NaX 余量 = 1 - 0.4 - 0.6 = 0
+    na_gap_charge_cmol = (exchange['NaX'] * 100.0 / b.soil_mass_kg
+                          - profile.exch_na)
+    assert na_gap_charge_cmol <= 1e-9

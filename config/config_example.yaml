@@ -129,7 +129,9 @@ simulation:
     enable: true                 # 总开关 (false=完全回退 v0.6.1; D3 为 v0.7.0 主线, 默认启用)
     bypass_no3_carry: true       # bypass 优先流携带 L1 池 NO3- 直通 L2 (默认模式)
     bs_high: 30.0                # 分级注入高阈值 % (BS≥high 全量注入惰性阴离子)
-    bs_low: 10.0                 # 分级注入低阈值 % (BS<low 切换酸化注入 H+)
+    bs_low: 10.0                 # 分级注入低阈值 % (BS<low 切换酸化注入 H+; 工单88
+                                 #   D4: 高 pH 态 ph≥9 时 H+ 按 BS/bs_low 线性降额,
+                                 #   BS=0 归零, 防强碱态全量注酸触发收敛失败冻结)
     inert_anion: An              # 惰性阴离子元素名 (PHREEQC 要求单元素名, 物种=名+'-',
                                  #   引擎输入头段自定义, 不碰 phreeqc.dat)
     nh4_exchange: true           # NH4+ 等效置换 (施肥月水解后按交换占比注入盐基,
