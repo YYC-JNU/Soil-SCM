@@ -319,12 +319,19 @@ SURFACE_ACID_RATE_MOLC_HA_YR = 1000.0
 # 1e-9/1e-8 真实收敛 (pH 10.18)。1e-12 的 lime 回落 5.59 为数值伪影, 真实
 # (1e-9) lime 10y 9.30 不回落。定案: tolerance=1e-9 (1e-8 与 1e-9 结果一致,
 # 取更保守), iterations=100 保持 (fertilizer/lime 均无迭代不足)。扫描数据
-# 见 docs/analysis/KNOBS_CONVERGENCE.md。SURFACE 启用时 iterations 强制 1000。
-KNOBS_ITERATIONS = 500      # KNOBS -iterations (牛顿迭代上限; 多数月 500 内收敛;
-                            #  1e-9 真收敛下 250 首次仍常超限 (工单82 H5 数据:
-                            #  natural 30y 重试 1245 次, 30 分钟超时护栏被触发 →
-                            #  提高基础迭代至 500 消除大部分重试; PHREEQC 收敛即停,
-                            #  无性能损失); 超限自动提高重试 1000)
+# 见 docs/analysis/KNOBS_CONVERGENCE.md。SURFACE 启用时 iterations 强制 1000
+# (enable_surface 默认 False → 产线 8 情景不触发该分支)。
+#
+# ---- 工单90 (S4 产品化, 2026-09-20): 迭代预算降本 (状态中性) ----
+# 依据: S0/S1 步级保真度重放 (低 pH 域: 210/210 例状态一致、保真度 70/70、
+#   阴性对照 45/70 例有效) + S2 lime_high 21y 真实长链三臂 (状态级 0/84 差异格、
+#   锚点与 v88s2 逐位一致; 三个阳性对照 iters=1 / surface-acid 500 / tol 1e-12
+#   全部 DISSIMILAR ⇒ 状态级比对器灵敏度许可成立)。报告 PERF_LOCALIZATION.md §15。
+# 机制: "首次 500 + 重试 1000" 的重试多为**冗余双跑** (PHREEQC 告警但解已达标);
+#   降低首次预算 → 重试更便宜 (200 而非 1000), 总成本下降而状态链逐位不变;
+#   高 pH (ph≥9) 状态仍走高预算重试 (KNOBS_HIGH_PH_RETRY_ITERATIONS)。
+KNOBS_ITERATIONS = 100      # KNOBS -iterations (牛顿迭代上限 = 首次预算;
+                            #  重试预算 = 本值 × KNOBS_RETRY_MULTIPLIER; 工单90: 500→100)
 
 # ---- 工单86 (P2 性能, 2026-08-31): KNOBS 分层迭代 (L4 收敛性能优化) ----
 # 数据依据 (工单84 探针 B + COMPUTE_LOAD_ANALYSIS): 难步 (迭代超限) 82% 集中
@@ -337,12 +344,18 @@ KNOBS_ITERATIONS = 500      # KNOBS -iterations (牛顿迭代上限; 多数月 5
 # 双跑"假设不成立; 重试机制 (500→1000) 是该场景 PHREEQC 自然最优路径。
 # 故深层值保持 500 (与工单85 逐位一致), 分层架构 (layer_index 透传 + 本常量) 保留
 # 供未来条件数改善 (如 D 工单铝缓冲标定后) 再启用。
-KNOBS_ITERATIONS_SHALLOW = 500   # 浅层 (L1/L2) 基础迭代 (= 全局默认, 行为不变)
-KNOBS_ITERATIONS_DEEP = 500      # 深层 (L3/L4) 基础迭代 (探针证伪 1000 负收益,
-                                 #  保持 500 = 工单85 权威基线一致; 未来可调)
+# ⚠️ 工单90 (2026-09-20): SHALLOW/DEEP 已由 500 降至 100 (迭代预算降本, 状态中性
+# 由 S0/S1 + S2 证据支持); 上述"保持 500"为工单86 时代结论, 分层机制本身不变。
+KNOBS_ITERATIONS_SHALLOW = 100   # 浅层 (L1/L2) 基础迭代 (= 全局默认; 工单90 降本 500→100)
+KNOBS_ITERATIONS_DEEP = 100      # 深层 (L3/L4) 基础迭代 (工单90 降本 500→100;
+                                 #  工单86 探针已证伪 1000 负收益; 未来可调)
 KNOBS_DEEP_START_LAYER = 3       # 深层起始层号 (1-based): 3 → 索引 2 起 (L3/L4)
-KNOBS_RETRY_MULTIPLIER = 2.0     # 重试迭代倍数 (相对实际首次迭代数:
-                                 #  浅层 500→1000, 深层 500→1000 = 工单78~85 一致)
+KNOBS_RETRY_MULTIPLIER = 2.0     # 重试迭代倍数 (相对首次预算: 100→200 = 工单90 降本;
+                                 #  原 500→1000 = 工单78~85)
+KNOBS_RETRY_FLOOR = 0            # 重试迭代下限 (工单90: 0 = 不设下限 → 重试预算
+                                 #  完全 = MULTIPLIER × 首次预算, 即 S2 验证口径;
+                                 #  原为 _run_official_step 内字面量 500 → 重试
+                                 #  至少 500 迭代)
 # ---- 工单88 D4 (2026-09-09): lime_high 高 pH 收敛锁死修复 ----
 # v88s lime_high y18 起 pH 锁死 10.848: 强碱高 pH + BS=0 高离子态 PHREEQC
 # 迭代超限 (模拟步首次 500 + 重试 1000 在 1e-9 真收敛下仍失败) → 单场跳过

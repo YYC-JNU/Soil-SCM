@@ -40,7 +40,7 @@ from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
                            KNOBS_ITERATIONS_SHALLOW,
                            KNOBS_ITERATIONS_DEEP,
                            KNOBS_DEEP_START_LAYER,
-                           KNOBS_RETRY_MULTIPLIER,
+                           KNOBS_RETRY_MULTIPLIER, KNOBS_RETRY_FLOOR,
                            KNOBS_HIGH_PH_RETRY_THRESHOLD,
                            KNOBS_HIGH_PH_RETRY_ITERATIONS,
                            AMORPHOUS_ALOH3_LOGK_DATABASE)
@@ -1277,17 +1277,19 @@ class PhreeqcEngine:
             # (lime 高 pH 4.89 错 vs 1e-9 10.18 对) 已证伪; 提高迭代 (1e-9 真收敛)
             # 仍失败 → 直接判定收敛失败走 fallback 计数 (连续 N=3 才永久降级),
             # 绝不回落 1e-12 把假收敛写回状态链。
-            # 工单86 (2026-08-31): 重试迭代跟随实际分层首次迭代数 × 倍数
-            # (当前深层=浅层=500 → 重试 1000, 与工单78~85 一致; 探针证伪
-            # 深层 1000 负收益, D 工单后若启用分层再动态跟随)
+            # 工单86 (2026-08-31): 重试迭代跟随分层首次迭代数 × 倍数
+            # (工单90 降本后 深层=浅层=100 → 重试 200; 工单86 探针已证伪深层
+            # 1000 负收益, D 工单后若启用分层再动态跟随)
             if (self._has_new_convergence_warning(warn_before)
                     and not self._in_pre_equilibration):
                 logger.warning(
                     "PHREEQC 模拟步收敛失败 (迭代超限), 提高迭代重试")
+                # 工单90 (2026-09-20): 下限由字面量 500 改为 KNOBS_RETRY_FLOOR
+                # (= 0, 与 S2 验证口径一致: 重试预算 = 2 × 首次预算 = 200)。
                 retry_iters = max(
                     int(self._pick_knobs_iterations(layer_index, n_layers)
                         * KNOBS_RETRY_MULTIPLIER),
-                    500)
+                    KNOBS_RETRY_FLOOR)
                 # 工单88 D4 (2026-09-09): 高 pH 强碱状态 (lime_high y18 后
                 # ph≈10.8) 默认重试预算不足 → 提高迭代仍不收敛 → 单场跳过
                 # 状态冻结 (v88s lime_high y19~y30 锁死 10.848)。物理上持续
@@ -1463,14 +1465,16 @@ class PhreeqcEngine:
         """工单86 (2026-08-31): 分层 KNOBS 迭代选择 (L4 收敛性能优化)
 
         优先级: SURFACE 强制 1000 (既有行为, test_knobs_surface_iterations_1000)
-        > 深层 (L3/L4, KNOBS_ITERATIONS_DEEP) > 浅层/缺省 (500)。
+        > 深层 (L3/L4, KNOBS_ITERATIONS_DEEP) > 浅层/缺省
+        (KNOBS_ITERATIONS_SHALLOW)。
 
         数据依据 (工单84 探针 B): 难步 82% 集中 L3+L4 (L4 单层 71%), 重试步占
         84% 模拟时间。⚠️ 探针证伪 (probe_86_layer_iters.py, natural 1y):
         深层 500→1000 实测 +56.5% 更慢且重试不减少 — PHREEQC 对首次迭代预算
         非预期敏感 (首次 1000 的 L4 难步仍超限需重试 2000), 故当前
-        KNOBS_ITERATIONS_DEEP=500 与工单85 权威基线逐位一致; 分层架构保留,
-        D 工单 (铝缓冲标定) 改变 L4 条件数后可再启用。
+        KNOBS_ITERATIONS_DEEP=500 与工单85 权威基线逐位一致 (工单90 降本后
+        深层=浅层=100, 分层机制保留); D 工单 (铝缓冲标定) 改变 L4 条件数后可
+        再启用。
 
         layer_index / n_layers 为 None 时 (单层路径/直接调用/测试) 返回默认,
         行为不变。n_layers=1 时即使传 layer_index 也走默认 (单层回归护栏)。

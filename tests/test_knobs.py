@@ -9,14 +9,29 @@
   3. 收敛失败检测 + 宽松重试: 模拟步从远平衡起点 (未预平衡) 1e-9 超限 → 自动
      1e-12 重试 (防垃圾解污染状态链)
 SURFACE 启用时 iterations 强制 1000。
+
+工单90 (S4 产品化, 2026-09-20): 迭代预算降本 — 首次 500→100 (KNOBS_ITERATIONS /
+_SHALLOW / _DEEP), 重试下限由 _run_official_step 内字面量 500 → KNOBS_RETRY_FLOOR=0
+(重试预算 = max(首次 × KNOBS_RETRY_MULTIPLIER, 下限) = 200)。状态中性由 S0/S1
+(低 pH 域) + S2 (lime_high 21y 三臂, 状态级 0/84 差异格) 证据支持; 生产闸门 =
+natural 30y 逐位一致 + 8 情景迁移面 + 判据 v2。报告 PERF_LOCALIZATION.md §15。
+本文件同步更新: 硬编码 500/1000 断言改为常量/预算推导 (`_retry` 助手)。
 """
 
 import pytest
 
-from src.constants import (KNOBS_ITERATIONS, KNOBS_TOLERANCE,
+from src.constants import (KNOBS_ITERATIONS, KNOBS_ITERATIONS_SHALLOW,
+                           KNOBS_ITERATIONS_DEEP, KNOBS_RETRY_MULTIPLIER,
+                           KNOBS_RETRY_FLOOR, KNOBS_TOLERANCE,
                            KNOBS_TOLERANCE_PRE, KNOBS_CONVERGENCE_TOLERANCE)
 from src.phreeqc_engine import PhreeqcEngine
 from src.scenario_controller import MonthlyAction
+
+
+def _retry(first, floor=None):
+    """工单90: 重试预算推导 = max(首次 × KNOBS_RETRY_MULTIPLIER, 下限)"""
+    fl = KNOBS_RETRY_FLOOR if floor is None else floor
+    return max(int(first * KNOBS_RETRY_MULTIPLIER), fl)
 
 
 FORCING = {"precip": 100.0, "temp": 25.0, "pCO2": 0.015}
@@ -34,6 +49,13 @@ def test_knobs_constants_defined():
     assert 0.0 < KNOBS_CONVERGENCE_TOLERANCE < 1.0
     # 模拟 tolerance 应宽松于预平衡 (真收敛 vs 假收敛防护)
     assert KNOBS_TOLERANCE > KNOBS_TOLERANCE_PRE
+    # 工单90: 迭代预算降本 — 首次 100 (浅/深/全局一致), 重试下限 0
+    assert KNOBS_ITERATIONS_SHALLOW == KNOBS_ITERATIONS
+    assert KNOBS_ITERATIONS_DEEP == KNOBS_ITERATIONS
+    assert KNOBS_RETRY_MULTIPLIER >= 1.0
+    assert KNOBS_RETRY_FLOOR >= 0
+    # 重试预算须严格大于首次预算 (否则重试无意义)
+    assert _retry(KNOBS_ITERATIONS) > KNOBS_ITERATIONS
 
 
 def test_knobs_in_injection_string(profile, soil_info):
@@ -103,15 +125,22 @@ def test_knobs_sim_step_not_use_pre_tolerance(profile, soil_info):
 
 
 def test_knobs_monkeypatched_values(profile, soil_info, monkeypatch):
-    """v0.7.x (工单78): monkeypatch constants → 注入串跟随 (扫描机制验证)"""
+    """v0.7.x (工单78): monkeypatch constants → 注入串跟随 (扫描机制验证)
+
+    工单90 修正锚点: 引擎分层路径读 `pe.KNOBS_ITERATIONS_SHALLOW`, 容差读
+    `src.phreeqc_input.KNOBS_TOLERANCE` (按值导入 → pe.* 补丁失效)。
+    原测试 patch 的 `pe.KNOBS_ITERATIONS` / `pe.KNOBS_TOLERANCE` 均不生效,
+    仅因当时字面量巧合相同而通过。
+    """
     import src.phreeqc_engine as pe
-    monkeypatch.setattr(pe, "KNOBS_ITERATIONS", 500)
-    monkeypatch.setattr(pe, "KNOBS_TOLERANCE", 1e-9)
+    import src.phreeqc_input as pin
+    monkeypatch.setattr(pe, "KNOBS_ITERATIONS_SHALLOW", 250)
+    monkeypatch.setattr(pin, "KNOBS_TOLERANCE", 1e-8)
     e = _engine()
     state = e.build_initial_state(profile, soil_info, 0.015)
     inp = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile)
-    assert "-iterations 500" in inp
-    assert "-tolerance 1.0e-09" in inp
+    assert "-iterations 250" in inp
+    assert "-tolerance 1.0e-08" in inp
 
 
 def test_knobs_convergence_warning_helpers(profile, soil_info):
@@ -128,9 +157,8 @@ def test_knobs_convergence_warning_helpers(profile, soil_info):
 def test_knobs_layer_iterations_deep(profile, soil_info, monkeypatch):
     """工单86 (2026-08-31): 深层 (L3/L4) KNOBS 迭代 = KNOBS_ITERATIONS_DEEP
 
-    分层迭代机制 (layer_index 透传 → 深层用 DEEP 常量)。当前 DEEP=500
-    (探针证伪 1000 负收益后回退, 与工单85 权威基线逐位一致); 机制验证:
-    上调 DEEP → 深层注入跟随, 浅层不受影响。
+    分层迭代机制 (layer_index 透传 → 深层用 DEEP 常量)。工单90 降本后
+    深层=浅层=100; 机制验证: 上调 DEEP → 深层注入跟随, 浅层不受影响。
     """
     from src.constants import KNOBS_ITERATIONS_DEEP
     import src.phreeqc_engine as pe
@@ -147,11 +175,12 @@ def test_knobs_layer_iterations_deep(profile, soil_info, monkeypatch):
     assert "-iterations 1000" in inp2
     inp3 = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile,
                                   layer_index=0, n_layers=4)
-    assert "-iterations 500" in inp3
+    assert f"-iterations {KNOBS_ITERATIONS_SHALLOW}" in inp3
 
 
 def test_knobs_layer_iterations_shallow(profile, soil_info):
-    """工单86 (2026-08-31): 浅层 (L1/L2) KNOBS 迭代 = 500 (与基线一致)"""
+    """工单86/90: 浅层 (L1/L2) KNOBS 迭代 = KNOBS_ITERATIONS_SHALLOW
+    (工单90 降本后 = 100)"""
     from src.constants import KNOBS_ITERATIONS_SHALLOW
     e = _engine()
     state = e.build_initial_state(profile, soil_info, 0.015)
@@ -162,15 +191,19 @@ def test_knobs_layer_iterations_shallow(profile, soil_info):
 
 
 def test_knobs_layer_none_default_unchanged(profile, soil_info):
-    """工单86 (2026-08-31): 不传层 (单层/直接调用/预平衡) 保持全局默认"""
+    """工单86/90: 不传层 (单层/直接调用/预平衡) 走浅层默认
+
+    引擎分层路径的"默认"即 KNOBS_ITERATIONS_SHALLOW (工单90 前该值与全局
+    KNOBS_ITERATIONS 同为 500, 现同为 100 — 一致性由 constants 测试守卫)。
+    """
     e = _engine()
     state = e.build_initial_state(profile, soil_info, 0.015)
     inp = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile)
-    assert f"-iterations {KNOBS_ITERATIONS}" in inp
+    assert f"-iterations {KNOBS_ITERATIONS_SHALLOW}" in inp
     # 单层 (n_layers=1) 护栏: 即使传 layer_index 也走默认, 不切深层
     inp1 = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile,
                                   layer_index=0, n_layers=1)
-    assert f"-iterations {KNOBS_ITERATIONS}" in inp1
+    assert f"-iterations {KNOBS_ITERATIONS_SHALLOW}" in inp1
 
 
 def test_knobs_surface_still_1000_with_layer(profile, soil_info):
@@ -183,10 +216,10 @@ def test_knobs_surface_still_1000_with_layer(profile, soil_info):
 
 
 def test_knobs_retry_follows_layer_iterations(profile, soil_info, monkeypatch):
-    """工单86 (2026-08-31): 重试迭代跟随实际分层首次迭代 × 倍数
+    """工单86/90: 重试迭代跟随分层首次迭代 × 倍数 (+ 下限)
 
-    当前深层=浅层=500 (探针证伪 1000 负收益后回退) → 重试均 1000
-    (与工单78~85 行为一致); 机制验证: DEEP 上调 → 深层重试跟随翻倍。
+    工单90 后 深层=浅层=100 → 重试 200 (原 500→1000); 机制验证:
+    DEEP 上调 → 深层重试跟随翻倍。
     """
     import src.phreeqc_engine as pe
     e = _engine()
@@ -198,12 +231,12 @@ def test_knobs_retry_follows_layer_iterations(profile, soil_info, monkeypatch):
                         lambda before: len(calls) == 1)
     monkeypatch.setattr(e, "_parse_official_output",
                         lambda state, **kw: (state, None))
-    # 深层: 首次 500 (DEEP=500), 重试 1000
+    # 深层: 首次 = DEEP, 重试 = _retry(DEEP)
     e._run_official_step(state, dict(FORCING), MonthlyAction(), profile,
                          layer_index=3, n_layers=4)
     assert len(calls) == 2
-    assert "-iterations 500" in calls[0]
-    assert "-iterations 1000" in calls[1]
+    assert f"-iterations {KNOBS_ITERATIONS_DEEP}" in calls[0]
+    assert f"-iterations {_retry(KNOBS_ITERATIONS_DEEP)}" in calls[1]
     # 机制验证: DEEP=800 → 深层首次 800, 重试 1600
     monkeypatch.setattr(pe, "KNOBS_ITERATIONS_DEEP", 800)
     calls.clear()
@@ -212,13 +245,44 @@ def test_knobs_retry_follows_layer_iterations(profile, soil_info, monkeypatch):
     assert len(calls) == 2
     assert "-iterations 800" in calls[0]
     assert "-iterations 1600" in calls[1]
-    # 浅层: 首次 500, 重试 1000 (不受 DEEP 影响)
+    # 浅层: 首次 = SHALLOW, 重试 = _retry(SHALLOW) (不受 DEEP 影响)
     calls.clear()
     e._run_official_step(state, dict(FORCING), MonthlyAction(), profile,
                          layer_index=0, n_layers=4)
     assert len(calls) == 2
-    assert "-iterations 500" in calls[0]
-    assert "-iterations 1000" in calls[1]
+    assert f"-iterations {KNOBS_ITERATIONS_SHALLOW}" in calls[0]
+    assert f"-iterations {_retry(KNOBS_ITERATIONS_SHALLOW)}" in calls[1]
+
+
+def test_knobs_retry_floor_dominates(profile, soil_info, monkeypatch):
+    """工单90: 重试下限语义 (原硬编码字面量 500 → KNOBS_RETRY_FLOOR)
+
+    默认 FLOOR=0 ⇒ 重试预算完全由倍数决定 (100→200, 即 S2 验证口径);
+    下限高于倍数预算时以下限为准 (如 FLOOR=500 → 重试 500)。
+    """
+    import src.phreeqc_engine as pe
+    e = _engine()
+    state = e.build_initial_state(profile, soil_info, 0.015)
+    calls = []
+    monkeypatch.setattr(e.official, "RunString", lambda s: calls.append(s))
+    monkeypatch.setattr(e, "_has_new_convergence_warning",
+                        lambda before: len(calls) == 1)
+    monkeypatch.setattr(e, "_parse_official_output",
+                        lambda state, **kw: (state, None))
+    # 默认: 重试 = 2 × 100 = 200 (< 旧字面量 500)
+    e._run_official_step(state, dict(FORCING), MonthlyAction(), profile,
+                         layer_index=0, n_layers=4)
+    assert len(calls) == 2
+    assert f"-iterations {_retry(KNOBS_ITERATIONS_SHALLOW)}" in calls[1]
+    assert _retry(KNOBS_ITERATIONS_SHALLOW) == 200
+    assert KNOBS_RETRY_FLOOR == 0
+    # 下限抬高到 500 → 重试预算跟随下限
+    monkeypatch.setattr(pe, "KNOBS_RETRY_FLOOR", 500)
+    calls.clear()
+    e._run_official_step(state, dict(FORCING), MonthlyAction(), profile,
+                         layer_index=0, n_layers=4)
+    assert len(calls) == 2
+    assert "-iterations 500" in calls[1]
 
 
 def test_knobs_multi_layer_passes_layer_index(profile, soil_info, monkeypatch):
@@ -244,11 +308,10 @@ def test_knobs_high_ph_state_boosts_retry_budget(profile, soil_info,
                                                  monkeypatch):
     """工单88 D4 (2026-09-09): 高 pH 状态 (ph≥9) 重试迭代预算提高到 2000
 
-    v88s lime_high y18 后 ph≈10.8 强碱态 PHREEQC 迭代超限 (首次 500 + 重试
-    1000 仍失败) → 单场跳过 → 状态冻结 (y19~y30 锁死 10.848, D4 伪影)。
-    修复: 高 pH 状态重试迭代 1000→2000 (KNOBS_HIGH_PH_RETRY_ITERATIONS),
-    提高 1e-9 真收敛成功率。正常 pH (ph<9) 状态保持旧预算 (500→1000,
-    v85 逐位一致护栏)。
+    v88s lime_high y18 后 ph≈10.8 强碱态 PHREEQC 迭代超限 → 单场跳过 →
+    状态冻结 (y19~y30 锁死 10.848, D4 伪影)。修复: 高 pH 状态重试迭代预算
+    抬高至 KNOBS_HIGH_PH_RETRY_ITERATIONS = 2000, 提高 1e-9 真收敛成功率。
+    正常 pH (ph<9) 状态走倍数预算 (工单90 降本后 = 200)。
     """
     from src.constants import (KNOBS_HIGH_PH_RETRY_THRESHOLD,
                                KNOBS_HIGH_PH_RETRY_ITERATIONS)
@@ -266,14 +329,14 @@ def test_knobs_high_ph_state_boosts_retry_budget(profile, soil_info,
     e._run_official_step(state, dict(FORCING), MonthlyAction(), profile,
                          layer_index=0, n_layers=4)
     assert len(calls) == 2
-    assert "-iterations 500" in calls[0]
-    assert (f"-iterations {KNOBS_HIGH_PH_RETRY_ITERATIONS}" in calls[1]
-            or f"-iterations {int(KNOBS_ITERATIONS * 2)}" in calls[1])
-    # 正常 pH 状态: 重试保持 1000 (不受 D4 影响)
+    assert f"-iterations {KNOBS_ITERATIONS_SHALLOW}" in calls[0]
+    # 高 pH: 重试预算被 2000 抬高 (max(_retry(100)=200, 2000) = 2000)
+    assert f"-iterations {KNOBS_HIGH_PH_RETRY_ITERATIONS}" in calls[1]
+    # 正常 pH 状态: 重试按倍数预算 (工单90 后 200, 不受 D4 影响)
     calls.clear()
     state.ph = 7.0
     e._run_official_step(state, dict(FORCING), MonthlyAction(), profile,
                          layer_index=0, n_layers=4)
     assert len(calls) == 2
-    assert f"-iterations {int(KNOBS_ITERATIONS * 2)}" in calls[1]
+    assert f"-iterations {_retry(KNOBS_ITERATIONS_SHALLOW)}" in calls[1]
 
