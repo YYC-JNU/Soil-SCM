@@ -106,3 +106,52 @@ def calc_base_saturation(exchange: dict, include_hx: bool = False) -> float:
     if total <= 0.0:
         return 0.0
     return base_charge / total * 100.0
+
+
+def exchange_charge_sum(exchange: dict) -> float:
+    """交换相电荷总和 q (molc) — D4/D5 型"垃圾解"只读检测的单一公式源
+
+    q = CaX2×2 + MgX2×2 + KX + NaX + AlX3×3 + HX
+    (与 calc_base_saturation(include_hx=True) 的分母同构)
+
+    工单91 P2 (2026-09-22): 引擎用同层 q_in/q_out 比值识别 PHREEQC 在高 pH /
+    临界态静默返回的"质量不守恒解"(交换相六物种全灭, 见 KNOWN_DEVIATIONS
+    D4/D5)。**仅诊断观测** — 不参与任何状态判定、不写回状态。
+    """
+    if not exchange:
+        return 0.0
+    return (exchange.get('CaX2', 0.0) * 2.0
+            + exchange.get('MgX2', 0.0) * 2.0
+            + exchange.get('KX', 0.0)
+            + exchange.get('NaX', 0.0)
+            + exchange.get('AlX3', 0.0) * 3.0
+            + exchange.get('HX', 0.0))
+
+
+def exchange_mass_flag(q_in: float, q_out: float,
+                       collapse_thr: float = 0.5,
+                       min_q_in: float = 1.0) -> Optional[str]:
+    """交换相质量异常标记 (只读诊断; **不得**用于否决解/写回状态)
+
+    返回: None (正常) | 'ZEROING' (q_in>0 而 q_out≤0, 硬指纹)
+          | 'COLLAPSE' (q_out/q_in < collapse_thr)
+
+    阈值标定 (工单91 §10.2/§10.2a, 2026-09-22):
+      - 正常场内变化 |ratio-1| < 0.004 (natural 1y 380 步实测 0.9962~1.0000);
+      - 6 臂 × 5y × 4 层离线扫描下 collapse_thr ≤ 0.9 **零假阳性** (建议 0.5);
+      - **噪声门 min_q_in** (2026-09-22 实测新增): 某层一经零化, 其后续各场
+        q_in/q_out 落到 1e-6~1e-5 molc 量级 (相对原值 ~1e-11), 此时 ratio 是
+        纯噪声 (实测出现 1674× 与 5e-6), 必须与"首次塌陷 (q_in ~2e5)"区分。
+        正常交换相量级 ≥ 1e3 molc ⇒ 门限取 1.0 molc (分离度 5 个数量级两侧)。
+
+    历史教训 (R1 首实施, 2026-09-17, 已全部回退): 该标记一旦用于"拦截 +
+    写回旧状态"会**双向失败** — 计入失败预算 → 状态链永久降级; 独立计数 →
+    同一状态点空转 (610 次)。故本函数只产出标记, 语义由调用方限制为"记录"。
+    """
+    if q_in < min_q_in:
+        return None
+    if q_out <= 0.0:
+        return 'ZEROING'
+    if q_out / q_in < collapse_thr:
+        return 'COLLAPSE'
+    return None

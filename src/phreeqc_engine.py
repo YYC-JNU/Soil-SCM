@@ -46,7 +46,8 @@ from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
                            AMORPHOUS_ALOH3_LOGK_DATABASE)
 from src.vgm import theta_to_water_L
 from src.utils import layer_aloh3_params
-from src.diagnostics import calc_base_saturation
+from src.diagnostics import (calc_base_saturation, exchange_charge_sum,
+                             exchange_mass_flag)
 from src.geochemistry import (advance_nitrification, exchange_base_ratios,
                               weathering_arrhenius_factor)
 from src.phreeqc_input import PhreeqcInputConfig, build_phreeqc_input
@@ -158,6 +159,11 @@ class DiagnosticOutput:
     # v0.6.0 (Q14): First-Flush 峰值列 (当月 L1 最大单场淋失, mmol/ha)
     flush_no3_peak_mmol: float = 0.0
     flush_base_peak_mmol: float = 0.0
+    # 工单91 P2 (2026-09-22): 交换相质量守恒**只读**观测 (把 D4/D5 型静默垃圾解
+    # 变为可观测; 默认 0/'' = 既有行为与断言零变化)
+    exchange_q_in: float = 0.0
+    exchange_q_out: float = 0.0
+    exchange_mass_flag: str = ''
 
 
 def _monthly_step_worker(q, database, mode, enable_surface, precip_infiltration,
@@ -228,6 +234,9 @@ class PhreeqcEngine:
         self.nitrification_k2 = nitrification_k2  # 硝化速率 /月
         self._fallback_warned = False
         self._permanent_fallback = False
+        # 工单91 P2 (2026-09-22): 交换相质量异常**只读**计数 (D4/D5 型垃圾解);
+        # 仅计数 + 首次告警, 不参与降级/fallback 判定 (R1 双向证伪的教训)。
+        self.mass_anomaly_count = 0
         # v0.6.1 (spec 62 Q5): 事件级局部降级 — 连续失败计数 (事件/月级分开)
         self._consecutive_failures_event = 0
         self._consecutive_failures_monthly = 0
@@ -1457,7 +1466,22 @@ class PhreeqcEngine:
         # v0.7.0 (工单70): 淋失示踪池随状态延续 (advance 已就地推进, 此处复制)
         new_state.n_no3_pool = old_state.n_no3_pool
 
-        diag = DiagnosticOutput(ph=new_state.ph, pe=new_state.pe)
+        # 工单91 P2 (2026-09-22): 交换相质量守恒**只读**观测 —
+        # 记录本场 q_in/q_out 与异常标记; 绝不否决解、绝不写回旧状态、
+        # 绝不占用失败预算 (R1 双向证伪后的唯一可行语义; 见 exchange_mass_flag)。
+        q_in = exchange_charge_sum(getattr(old_state, 'exchange', None))
+        q_out = exchange_charge_sum(new_state.exchange)
+        flag = exchange_mass_flag(q_in, q_out)
+        if flag:
+            self.mass_anomaly_count += 1
+            if self.mass_anomaly_count == 1:
+                logger.warning(
+                    "交换相质量异常 (%s): q_in=%.1f → q_out=%.1f molc — "
+                    "疑似 PHREEQC 质量不守恒解 (D4/D5 型); 仅只读标记, "
+                    "不改变状态链", flag, q_in, q_out)
+        diag = DiagnosticOutput(ph=new_state.ph, pe=new_state.pe,
+                                exchange_q_in=q_in, exchange_q_out=q_out,
+                                exchange_mass_flag=flag or '')
         return new_state, diag
 
     def _pick_knobs_iterations(self, layer_index=None,
