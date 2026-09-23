@@ -1,6 +1,6 @@
 # Soil-SCM 用户指南（USERGUIDE）
 
-> **适用版本**：**v0.7.5**（400 测试）
+> **适用版本**：**v0.7.6**（412 测试）
 > **配套文档**：项目总览见 `README.md`。
 > 本文面向**使用该模型的科研人员**：讲解如何安装、配置、运行模拟并解读输出结果，末尾附常见问题排查与开发者速览。
 
@@ -620,6 +620,13 @@ python main.py --config config/config_example.yaml    # 基于模板配置
 
 **Q13：lime 情景是否回落？**
 - 30 年模拟（真收敛 1e-9）：lime 峰值 ~8（第 4 年）→ **第 6~7 年回落至 5~6 → 30 年 5.09**。回落机制为盐基淋失（`base_leaching`）+ 排水溶质摩尔绝对量扣除。短程（≤10 年）视角可能恰处于碱化平台期而观察不到回落，**解读 lime 回落请用 30 年时间尺度**。
+- ⚠️ 上列为 v1 判据时代（工单 85 前）记录，**与现行判据 v2 的"持续施碱阶梯上升"结论相悖**，遗留待工单 WF15（文档净化）统一，当前验收请以 `natural 缓降 / fertilizer <4.0 / lime 阶梯上升 + ≤8.5 护栏 / F<N<L / 无降级` 为准。
+
+**Q14：怎么发现"某一场次其实没有平衡解"（退化步）？**
+- 现象：PHREEQC 在高 pH / 临界态可能**中止反应步**、不写 `react` 行（`SELECTED_OUTPUT` 只剩 `i_soln` 初始解行）；引擎的"警告计数差"失败判定可能漏判（该计数按每次 `RunString` 重置），于是该场被静默接受 —— `phreeqc_ok=1` 也不报警。
+- 只读检出（v0.7.6）：`DiagnosticOutput.has_react_row`（False = 该场无平衡解）、`sel_row_states`（数据行标识，正常场 `i_soln,react`）、`solve_error`（`GetErrorString()` 原文）；引擎级只读计数 `engine.degenerate_step_count` + 首次告警日志（`PHREEQC 退化步 (NO_REACT_ROW)`）。
+- 交换相零化侧的对应字段（v0.7.5）：`DiagnosticOutput.exchange_q_in/exchange_q_out/exchange_mass_flag` + `engine.mass_anomaly_count`。
+- 语义约束（重要）：以上字段**仅只读观测** —— 不否决解、不写回旧状态、不占失败预算、不触发降级（"拦截 + 保留旧状态"的两种语义已双向证伪）。CO₂ 气相边界实现治理为独立议题，不在本护栏范围。
 
 ---
 
@@ -669,6 +676,7 @@ config/precip_chemistry_default.json ──► PrecipChemistry
 | 电荷配对 | `_build_phreeqc_input`（`# 电荷配对`） | 净电荷注入伴随 `An⁻`（`self.pair_anion`），消除伪碱化 |
 | 盐基淋失强化 | `calc_base_leaching` / `_grade_base_leaching` | E_base 伴随通道 + BS 分级降权 |
 | KNOBS 收敛 | `_build_phreeqc_input` 双 tolerance | 预平衡 1e-12 / 模拟 1e-9 + 收敛失败检测重试 |
+| 退化步只读护栏 | `diagnostics.has_react_row` / `degenerate_step_flag` / `exchange_mass_flag` | `SELECTED_OUTPUT` 无 `react` 行（该场无平衡解）或交换相零化 → **只读标记**（`DiagnosticOutput.has_react_row`/`sel_row_states`/`solve_error`）+ 计数 + 首次告警；**不否决解、不写回旧状态、不占失败预算**（v0.7.5~v0.7.6，D4/D5 可观测化） |
 | 水量闭合审计 | `calc_base_saturation` 等记账函数 | 水量/盐分闭合由月度状态记账列校验（`stored_water`/`drainage`/`baseflow` 等） |
 
 ### 10.3 扩展提示

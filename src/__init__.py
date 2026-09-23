@@ -5,5 +5,5 @@ Soil Physical-Chemical Model
 基于 PHREEQC 地球化学引擎的土壤单点模式
 """
 
-__version__ = "0.7.5"
+__version__ = "0.7.6"
 __author__ = "Soil-SCM Development Team"
