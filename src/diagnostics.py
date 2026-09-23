@@ -155,3 +155,45 @@ def exchange_mass_flag(q_in: float, q_out: float,
     if q_out / q_in < collapse_thr:
         return 'COLLAPSE'
     return None
+
+
+def has_react_row(row_states: Optional[List[str]]) -> bool:
+    """SELECTED_OUTPUT 数据行是否含 `react` 行 (只读诊断)
+
+    参数:
+        row_states: SELECTED_OUTPUT `state` 列的数据行取值 (按行序),
+                    如正常场 ``['i_soln', 'react']``、退化场 ``['i_soln']``
+
+    返回:
+        True (含 `react` 行, 或**未观测** = 空/None 时不判不报)
+        False (有数据行但无 `react` 行 = 该场无平衡解)
+
+    工单93 (2026-09-23): PHREEQC 在 `GAS_PHASE -fixed_pressure` 约束不可满足时
+    中止反应步、**不写 `react` 行** (SELECTED_OUTPUT 只剩表头 + `i_soln`初始解
+    行) ⇒ 解析读到初始解行 (`q_out=0`、`pH_out ≡ pH_in`)。实测 4/4 崩坏场
+    `row_states='i_soln'` vs 4779/4779 正常场 `'i_soln,react'` (零例外分离;
+    `dev-notes/D45_ROOTCAUSE_E1.md` §3)。
+    """
+    if not row_states:
+        return True
+    return any(str(s).strip().lower() == 'react' for s in row_states)
+
+
+def degenerate_step_flag(row_states: Optional[List[str]]) -> Optional[str]:
+    """退化步标记 (只读诊断; **不得**用于否决解/写回状态)
+
+    返回: None (正常 / 未观测) | 'NO_REACT_ROW' (有数据行但无 `react` 行)
+
+    语义: 'NO_REACT_ROW' = 该反应步**没有产出平衡解** (引擎 F2 只要求
+    `nrows > 1`, 于是把 `i_soln` 初始解行当有效解读入; F1 的"警告计数差"
+    判定又因 `GetWarningStringLineCount()` 是 per-RunString 重置语义而漏判,
+    使该步完全静默 —— 工单91 E1)。
+
+    历史教训 (同 `exchange_mass_flag`): 该标记一旦用于"拦截 + 写回旧状态"
+    会双向失败 (计入失败预算 → 状态链永久降级; 独立计数 → 同状态点空转
+    610 次, 2026-09-17 R1 首实施)。故本函数只产出标记, 调用方语义限制为
+    "记录" (工单93 选项 A: 只读标记 + 计数 + 首次告警)。
+    """
+    if has_react_row(row_states):
+        return None
+    return 'NO_REACT_ROW'

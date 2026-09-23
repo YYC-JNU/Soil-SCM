@@ -47,7 +47,7 @@ from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
 from src.vgm import theta_to_water_L
 from src.utils import layer_aloh3_params
 from src.diagnostics import (calc_base_saturation, exchange_charge_sum,
-                             exchange_mass_flag)
+                             exchange_mass_flag, degenerate_step_flag)
 from src.geochemistry import (advance_nitrification, exchange_base_ratios,
                               weathering_arrhenius_factor)
 from src.phreeqc_input import PhreeqcInputConfig, build_phreeqc_input
@@ -164,6 +164,14 @@ class DiagnosticOutput:
     exchange_q_in: float = 0.0
     exchange_q_out: float = 0.0
     exchange_mass_flag: str = ''
+    # 工单93 (2026-09-23, 选项A): 退化步**只读**观测 (F1/F2 的护栏缺口) —
+    # 默认值 = "无异常/未观测", 与既有行为及断言零变化:
+    #   has_react_row: True = 存在 `react` 行 或 未观测 (不告警)
+    #   sel_row_states: '' = 未观测 (SELECTED_OUTPUT 无 `state` 列时)
+    #   solve_error: '' = 无错误串 (引擎历史上从不读取 GetErrorString)
+    has_react_row: bool = True
+    sel_row_states: str = ''
+    solve_error: str = ''
 
 
 def _monthly_step_worker(q, database, mode, enable_surface, precip_infiltration,
@@ -237,6 +245,10 @@ class PhreeqcEngine:
         # 工单91 P2 (2026-09-22): 交换相质量异常**只读**计数 (D4/D5 型垃圾解);
         # 仅计数 + 首次告警, 不参与降级/fallback 判定 (R1 双向证伪的教训)。
         self.mass_anomaly_count = 0
+        # 工单93 (2026-09-23, 选项A): 退化步 (SELECTED_OUTPUT 无 `react` 行 =
+        # 该场无平衡解)**只读**计数 + 首次告警 — 与 mass_anomaly_count 同族
+        # 语义: 仅记录, 不参与降级/fallback/状态链任何判定。
+        self.degenerate_step_count = 0
         # v0.6.1 (spec 62 Q5): 事件级局部降级 — 连续失败计数 (事件/月级分开)
         self._consecutive_failures_event = 0
         self._consecutive_failures_monthly = 0
@@ -1249,6 +1261,42 @@ class PhreeqcEngine:
                 return True
         return False
 
+    def _read_error_string(self) -> str:
+        """只读: PHREEQC 错误串 (`GetErrorString()`, 折叠为单行)
+
+        工单93 (2026-09-23): 引擎历史上**从不读取**错误串 (F1) —— 因此
+        `GAS_PHASE -fixed_pressure` 约束不可满足之类的中止步完全静默
+        (证据 `dev-notes/D45_ROOTCAUSE_E1.md` §4)。本方法仅取值入只读字段,
+        **不参与任何判定**。
+        """
+        try:
+            raw = self.official.GetErrorString()
+        except Exception:
+            return ''
+        if not raw:
+            return ''
+        return str(raw).strip().replace('\n', ' | ')
+
+    def _read_row_states(self, nrows: int, idx: dict) -> list:
+        """只读: SELECTED_OUTPUT 数据行的 `state` 列取值 (按行序)
+
+        正常场 = `['i_soln', 'react']` (2 行数据); 退化场 = `['i_soln']`
+        (仅初始解行, 无 `react` 行 ⇒ 该场无平衡解; 工单93/工单91 E1)。
+        无 `state` 列时返回 `[]` = 未观测 (不判不报)。
+        """
+        col = idx.get('state')
+        if col is None:
+            return []
+        states = []
+        for r in range(1, nrows):
+            try:
+                states.append(str(self.official.GetSelectedOutputValue(r, col)))
+            except Exception:
+                # 读取失败 ⇒ 放弃本次观测 (返回 [] = 未观测) ——
+                # 绝不因 API 异常而假报退化步。
+                return []
+        return states
+
     def _run_official_step(self, state, forcing, action, profile,
                            solution_water_L=None, inject_water=True,
                            path='monthly', layer_index=None,
@@ -1479,9 +1527,28 @@ class PhreeqcEngine:
                     "交换相质量异常 (%s): q_in=%.1f → q_out=%.1f molc — "
                     "疑似 PHREEQC 质量不守恒解 (D4/D5 型); 仅只读标记, "
                     "不改变状态链", flag, q_in, q_out)
+        # 工单93 (2026-09-23, 选项A): 退化步**只读**观测 (F1/F2 的护栏缺口) —
+        # SELECTED_OUTPUT 是否含 `react` 行 (无 `react` 行 = 该场无平衡解, 由
+        # `GAS_PHASE -fixed_pressure` 约束不可满足所致, 见 D45_ROOTCAUSE_E1.md
+        # §4)。**严格只读**: 不改解析行选取 (末行仍是 `last`)、不否决解、不写回
+        # 旧状态、不占失败预算/降级 (与工单91 P2 同一硬约束)。
+        row_states = self._read_row_states(nrows, idx)
+        solve_error = self._read_error_string()
+        degen_flag = degenerate_step_flag(row_states)
+        if degen_flag:
+            self.degenerate_step_count += 1
+            if self.degenerate_step_count == 1:
+                logger.warning(
+                    "PHREEQC 退化步 (%s): SELECTED_OUTPUT 无 `react` 行 "
+                    "(row_states='%s', nrows=%d) — 该场无平衡解, 引擎按既有"
+                    "语义接受 (只读标记, 不改变状态链); solve_error='%s'",
+                    degen_flag, ','.join(row_states), nrows, solve_error)
         diag = DiagnosticOutput(ph=new_state.ph, pe=new_state.pe,
                                 exchange_q_in=q_in, exchange_q_out=q_out,
-                                exchange_mass_flag=flag or '')
+                                exchange_mass_flag=flag or '',
+                                has_react_row=(degen_flag is None),
+                                sel_row_states=','.join(row_states),
+                                solve_error=solve_error)
         return new_state, diag
 
     def _pick_knobs_iterations(self, layer_index=None,
