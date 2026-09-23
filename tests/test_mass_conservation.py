@@ -29,7 +29,7 @@ class _FakeOfficial:
                                                 'AlX3', 'HX')])
 
     def __init__(self, ex_per_kg, water_kg=1.0e6, ph=9.2734):
-        vals = {'sim': 1.0, 'state': 1.0, 'soln': 1.0, 'dist_x': 0.0,
+        vals = {'sim': 1.0, 'state': 'react', 'soln': 1.0, 'dist_x': 0.0,
                 'time': 0.0, 'step': 1.0, 'pH': ph, 'pe': 4.0,
                 'temp(C)': 25.0, 'Ca(mol/kgw)': 1.0e-3, 'mass_H2O': water_kg}
         for sp in ('CaX2', 'MgX2', 'KX', 'NaX', 'AlX3', 'HX'):
