@@ -399,4 +399,15 @@ KNOBS_TOLERANCE_PRE = 1e-12 # 预平衡用 -tolerance (从远平衡起点需宽�
 KNOBS_CONVERGENCE_TOLERANCE = 1e-8   # KNOBS -convergence_tolerance (解收敛判定)
 
 
+# ---- 工单96 (2026-09-28): 交换位点往返**只读**观测 (偏差 D9) ----
+# 交换相回写 (EXCHANGE 块) 只覆盖下列 6 个**占用物种**, 而 SELECTED_OUTPUT
+# 同时输出自由位点 `m_X-(mol/kgw)` 与其他交换物种 ⇒ 未被回写覆盖的位点
+# 每步被静默丢弃, 位点总数单调收缩 (实测 5y: L1 −0.09% → L4 −5.0%,
+# 两情景近乎相同 ⇒ 结构性, 与管理措施无关)。
+# 以下常量**仅用于只读告警/观测** (不参与状态判定/不写回/不占失败预算)。
+EXCHANGE_WRITEBACK_SPECIES = ('CaX2', 'MgX2', 'KX', 'NaX', 'AlX3', 'HX')
+EXCHANGE_SITE_DRIFT_WARN_FRAC = 0.005   # 单场位点漂移告警阈值 (0.5%)
+EXCHANGE_SITE_MIN_TOTAL = 1.0           # 噪声门: 位点总数 ≤ 此值时不判漂移 (molc)
+
+
 

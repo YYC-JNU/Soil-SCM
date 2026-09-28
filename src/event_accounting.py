@@ -35,6 +35,9 @@ _COLUMN_FORMATS = [
     ('leach_N_mmol',     'leach_N_L{}_mmol'),
     ('leach_base_mmol',  'leach_base_L{}_mmol'),
     ('ph',               'ph_L{}'),
+    # 工单96 (2026-09-28): 交换位点往返只读观测 (D9) — 位点总数 / 回写丢弃当量
+    ('site_total_molc',  'site_total_L{}_molc'),
+    ('site_gap_molc',    'site_gap_L{}_molc'),
 ]
 
 

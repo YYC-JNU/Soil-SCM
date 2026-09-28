@@ -7,9 +7,13 @@
        供测试与绘图工具共用。阈值见 constants.ALX3_DEPLETION_THRESHOLD_MOL。
 """
 
+import math
 from typing import List, Optional
 
-from src.constants import ALX3_DEPLETION_THRESHOLD_MOL
+from src.constants import (ALX3_DEPLETION_THRESHOLD_MOL,
+                           EXCHANGE_SITE_DRIFT_WARN_FRAC,
+                           EXCHANGE_SITE_MIN_TOTAL,
+                           EXCHANGE_WRITEBACK_SPECIES)
 
 
 def depletion_year(alx3_series: List[float],
@@ -197,3 +201,135 @@ def degenerate_step_flag(row_states: Optional[List[str]]) -> Optional[str]:
     if has_react_row(row_states):
         return None
     return 'NO_REACT_ROW'
+
+
+# ============ 工单96 (2026-09-28): 交换位点往返只读观测 (偏差 D9) ============
+# 背景: 交换相**回写** (phreeqc_input 的 EXCHANGE 块) 只覆盖 6 个占用物种
+# (constants.EXCHANGE_WRITEBACK_SPECIES), 而 SELECTED_OUTPUT 的 `-molalities`
+# 同时输出**自由位点** `m_X-(mol/kgw)` 与全部交换物种 ⇒ **未被回写覆盖的位点
+# 每步被静默丢弃** ⇒ 位点总数单调收缩 (实测 5y: L1 −0.09% → L4 −5.0%,
+# 两情景近乎相同 ⇒ 结构性)。下列函数为**只读**单一公式源:
+# 不参与状态判定、不写回状态、不占失败预算 (与 exchange_mass_flag /
+# degenerate_step_flag 同一硬约束 —— 见工单91 P2 / 工单93 双向证伪教训)。
+
+_SITE_FREE_NAMES = ('X-', 'X')
+_SITE_SUFFIX_VALENCE = (('X3', 3), ('X2', 2), ('X', 1))
+_MOLALITY_SUFFIX = '(mol/kgw)'
+
+
+def exchange_species_valence(name: str) -> Optional[int]:
+    """交换物种名的位点电荷数 — 后缀启发式 (X3→3 / X2→2 / X→1)
+
+    自由位点 ('X-' / 'X') 与**未识别名**一律返回 None — 调用方**必须**把未识别名
+    计入 unknown 并报告, **不得**静默按 0 计 (否则未知物种占位会被算丢,
+    重复 D9 的"静默性")。
+    """
+    if not name or name in _SITE_FREE_NAMES:
+        return None
+    for suffix, z in _SITE_SUFFIX_VALENCE:
+        if name.endswith(suffix):
+            return z
+    return None
+
+
+def parse_exchange_molalities(headers, values) -> dict:
+    """按 `m_` 前缀扫描 SELECTED_OUTPUT 的交换相 molality 列
+
+    列名约定形如 `m_CaX2(mol/kgw)` / `m_X-(mol/kgw)`(自由位点);
+    `-totals` 列 (`Ca(mol/kgw)` 等) **无 `m_` 前缀**, 天然排除。
+
+    参数:
+        headers: 列名序列;  values: 与之等长的取值序列
+
+    返回:
+        {'species': {name: molality},   # 占用物种 (自由位点除外)
+         'free': float|None,            # 自由位点 molality (缺列 → None)
+         'unknown': [name, ...]}        # 后缀未识别 (须报告)
+    """
+    species, unknown = {}, []
+    free = None
+    for c, h in enumerate(headers):
+        name = str(h)
+        if not name.startswith('m_') or not name.endswith(_MOLALITY_SUFFIX):
+            continue
+        sp = name[2:-len(_MOLALITY_SUFFIX)]
+        try:
+            val = float(values[c])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if not math.isfinite(val):
+            continue        # NaN/Inf 一律跳过 (防污染位点统计)
+        if sp in _SITE_FREE_NAMES:
+            free = val
+            continue
+        if exchange_species_valence(sp) is None:
+            unknown.append(sp)
+            continue
+        species[sp] = val
+    return {'species': species, 'free': free, 'unknown': unknown}
+
+
+def calc_site_occupied(species: dict, water_mass: float) -> float:
+    """占用位点电荷 (molc/ha) = Σ z·m_sp × 水质量(kg)
+
+    与 `exchange_charge_sum(state.exchange)` **在值上恒等**(同一换算) ⇒
+    两者之差只反映"**回写覆盖范围**", 不引入新的数值口径。
+    """
+    return sum(exchange_species_valence(sp) * float(m)
+               for sp, m in species.items()) * float(water_mass)
+
+
+def calc_site_total_observed(species: dict, free: Optional[float],
+                             water_mass: float) -> float:
+    """本场**观测**位点总数 (molc/ha) = 自由位点 + 全部占用物种
+
+    与 `calc_site_occupied` 之差 = 自由位点当量 ⇒ 是 D9 往返丢弃的**上界**。
+    """
+    occ = calc_site_occupied(species, water_mass)
+    if free is None:
+        return occ
+    return occ + max(0.0, float(free)) * float(water_mass)
+
+
+def calc_site_dropped(species: dict, free: Optional[float],
+                      water_mass: float,
+                      writeback=EXCHANGE_WRITEBACK_SPECIES) -> float:
+    """本场**回写丢弃**的位点当量 (molc/ha) = 自由位点 + 未列物种占用
+
+    判读 (工单96 ⭐ 判据, 2026-09-28):
+      > 0 且可归因于自由位点或未列物种 ⇒ **往返丢弃确证** (D9 机制成立);
+      ≈ 0 (自由位点≈0 且无未列物种) ⇒ 机制**证伪**, 须另找因。
+    """
+    dropped = 0.0
+    if free is not None:
+        dropped += max(0.0, float(free)) * float(water_mass)
+    for sp, m in species.items():
+        if sp in writeback:
+            continue
+        z = exchange_species_valence(sp)
+        if z is None:
+            continue
+        dropped += max(0.0, z * float(m)) * float(water_mass)
+    return dropped
+
+
+def exchange_site_drift_flag(site_in: float, site_out: float,
+                             warn_frac: float = EXCHANGE_SITE_DRIFT_WARN_FRAC,
+                             min_site_in: float = EXCHANGE_SITE_MIN_TOTAL
+                             ) -> Optional[str]:
+    """位点总数漂移标记 (**只读**; 不得用于否决解 / 写回状态)
+
+    返回: None (正常) | 'SITE_ZEROING' (site_out ≤ 0 且 site_in > 噪声门)
+          | 'SITE_DRIFT' (|site_out − site_in| / site_in > warn_frac)
+
+    阈值标定 (工单96, 2026-09-28): 现有护栏 `exchange_mass_flag` 只查**步内**
+    `q_out/q_in < 0.5` 的崩塌 ⇒ **检不到 ~1%/yr 的慢漂移**; 本函数补该盲区,
+    阈值取 **0.5%/场** (远高于正常场噪声, 远低于崩塌量级)。
+    """
+    if site_in <= min_site_in:
+        return None
+    if site_out <= 0.0:
+        return 'SITE_ZEROING'
+    if abs(site_out - site_in) / site_in > warn_frac:
+        return 'SITE_DRIFT'
+    return None

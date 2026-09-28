@@ -43,11 +43,17 @@ from src.constants import (MINERAL_SCALE, PRECIP_INFILTRATION_DEFAULT,
                            KNOBS_RETRY_MULTIPLIER, KNOBS_RETRY_FLOOR,
                            KNOBS_HIGH_PH_RETRY_THRESHOLD,
                            KNOBS_HIGH_PH_RETRY_ITERATIONS,
-                           AMORPHOUS_ALOH3_LOGK_DATABASE)
+                           AMORPHOUS_ALOH3_LOGK_DATABASE,
+                           EXCHANGE_WRITEBACK_SPECIES,
+                           EXCHANGE_SITE_DRIFT_WARN_FRAC,
+                           EXCHANGE_SITE_MIN_TOTAL)
 from src.vgm import theta_to_water_L
 from src.utils import layer_aloh3_params
 from src.diagnostics import (calc_base_saturation, exchange_charge_sum,
-                             exchange_mass_flag, degenerate_step_flag)
+                             exchange_mass_flag, degenerate_step_flag,
+                             parse_exchange_molalities,
+                             calc_site_occupied, calc_site_total_observed,
+                             calc_site_dropped, exchange_site_drift_flag)
 from src.geochemistry import (advance_nitrification, exchange_base_ratios,
                               weathering_arrhenius_factor)
 from src.phreeqc_input import PhreeqcInputConfig, build_phreeqc_input
@@ -172,6 +178,19 @@ class DiagnosticOutput:
     has_react_row: bool = True
     sel_row_states: str = ''
     solve_error: str = ''
+    # 工单96 (2026-09-28): 交换位点往返**只读**观测 (偏差 D9) — 默认 0/'' =
+    # 既有行为与断言**零变化**:
+    #   site_total_molc: 本场观测位点总数 (自由位点 + 全部占用物种, molc/ha)
+    #   site_dropped_molc: 本场**回写丢弃**的位点当量 (自由位点 + 未列物种)
+    #   site_free_molc: 自由位点当量 (m_X- × kgw)
+    #   site_unlisted: 未列/未识别交换物种名 (逗号分隔; '' = 无)
+    #   site_drift_flag: '' = 无异常 | 'SITE_DRIFT' | 'SITE_ZEROING'
+    #     (语义 = **步内**输入位点 vs 观测位点总数, 与站点漂移累计计数区分)
+    site_total_molc: float = 0.0
+    site_dropped_molc: float = 0.0
+    site_free_molc: float = 0.0
+    site_unlisted: str = ''
+    site_drift_flag: str = ''
 
 
 def _monthly_step_worker(q, database, mode, enable_surface, precip_infiltration,
@@ -249,6 +268,13 @@ class PhreeqcEngine:
         # 该场无平衡解)**只读**计数 + 首次告警 — 与 mass_anomaly_count 同族
         # 语义: 仅记录, 不参与降级/fallback/状态链任何判定。
         self.degenerate_step_count = 0
+        # 工单96 (2026-09-28): 交换位点往返漂移**只读**累计 (逐层持久; D9) —
+        # 与 mass_anomaly_count / degenerate_step_count 同族语义:
+        # 仅记录 + 首次告警, 不参与降级/fallback/状态链任何判定。
+        self.site_drift_count = 0
+        self._site_ref = {}            # {layer_index: 首次观测位点总数}
+        self._site_drift_cum = {}      # {layer_index: 累计丢弃当量 (molc/ha)}
+        self._site_drift_warned = set()
         # v0.6.1 (spec 62 Q5): 事件级局部降级 — 连续失败计数 (事件/月级分开)
         self._consecutive_failures_event = 0
         self._consecutive_failures_monthly = 0
@@ -1084,6 +1110,8 @@ class PhreeqcEngine:
                     layer_index=i, n_layers=n)
                 layer_states.append(new_state)
                 last_diags[i] = diag
+                # 工单96 (2026-09-28): 交换位点往返漂移只读累计 (逐层; D9)
+                self._observe_site_roundtrip(i, diag)
 # ---- v0.7.0 (工单70): NO3- 示踪池水库串联淋失 (池随水移出, pool≥0) ----
                 leach_no3_i = 0.0
                 if self.companion_enabled:
@@ -1210,6 +1238,12 @@ class PhreeqcEngine:
                     'leach_N_mmol': leach_n_mmol,
                     'leach_base_mmol': leach_base_mmol,
                     'ph': new_state.ph,
+                    # 工单96 (2026-09-28): 交换位点往返只读口径 (D9) —
+                    # 供工单 94/95 的预算表把"Δ位点总数"列为**显式项**
+                    'site_total_molc': float(
+                        getattr(diag, 'site_total_molc', 0.0) or 0.0),
+                    'site_gap_molc': float(
+                        getattr(diag, 'site_dropped_molc', 0.0) or 0.0),
                 }
                 layer_rows.append(ledger)
                 if i == 0:
@@ -1481,7 +1515,9 @@ class PhreeqcEngine:
         water_mass = get('mass_H2O') if 'mass_H2O' in idx \
             else new_state.volume
         exchange = {}
-        for sp in ['CaX2', 'MgX2', 'KX', 'NaX', 'AlX3', 'HX']:
+        # 工单96 (2026-09-28): 回写物种名单收敛到 constants **单一来源**
+        # (EXCHANGE_WRITEBACK_SPECIES; 与 diagnostics 的丢弃判据同源)
+        for sp in EXCHANGE_WRITEBACK_SPECIES:
             col = f"m_{sp}(mol/kgw)"
             if col in idx:
                 exchange[sp] = get(col) * water_mass
@@ -1543,13 +1579,76 @@ class PhreeqcEngine:
                     "(row_states='%s', nrows=%d) — 该场无平衡解, 引擎按既有"
                     "语义接受 (只读标记, 不改变状态链); solve_error='%s'",
                     degen_flag, ','.join(row_states), nrows, solve_error)
+        # 工单96 (2026-09-28): 交换位点往返**只读**观测 (偏差 D9) —
+        # SELECTED_OUTPUT 的 `-molalities` 同时输出**自由位点** `m_X-` 与全部
+        # 交换物种, 而上面的回写只覆盖 EXCHANGE_WRITEBACK_SPECIES ⇒
+        # "未被回写覆盖的位点"每步被静默丢弃 (位点总数单调收缩; 实测 5y:
+        # L1 −0.09% → L4 −5.0%, 两情景近乎相同)。**严格只读**: 不改 exchange、
+        # 不写回、不否决解、不占失败预算/降级 (与工单91 P2 / 工单93 同约束)。
+        _vals = []
+        for _c in range(ncols):
+            try:
+                _vals.append(p.GetSelectedOutputValue(last, _c))
+            except Exception:
+                # 单列读取失败 ⇒ 该列跳过 (带入 None, 由解析器忽略) ——
+                # 与 `_read_row_states` 同约定: 只读观测**绝不**中断模拟
+                # (既有 `test_row_state_read_failure_is_not_flagged` 正是该面)。
+                _vals.append(None)
+        _mols = parse_exchange_molalities(headers, _vals)
+        _site_total = calc_site_total_observed(_mols['species'],
+                                               _mols['free'], water_mass)
+        _site_dropped = calc_site_dropped(_mols['species'], _mols['free'],
+                                          water_mass)
+        _site_free = (max(0.0, _mols['free']) * water_mass
+                      if _mols['free'] is not None else 0.0)
+        _site_drift = exchange_site_drift_flag(q_in, _site_total) or ''
         diag = DiagnosticOutput(ph=new_state.ph, pe=new_state.pe,
                                 exchange_q_in=q_in, exchange_q_out=q_out,
                                 exchange_mass_flag=flag or '',
                                 has_react_row=(degen_flag is None),
                                 sel_row_states=','.join(row_states),
-                                solve_error=solve_error)
+                                solve_error=solve_error,
+                                site_total_molc=_site_total,
+                                site_dropped_molc=_site_dropped,
+                                site_free_molc=_site_free,
+                                site_unlisted=','.join(_mols['unknown']),
+                                site_drift_flag=_site_drift)
         return new_state, diag
+
+    def _observe_site_roundtrip(self, layer_index, diag):
+        """工单96 (2026-09-28): 交换位点**往返损失**只读累计 + 首次告警 (D9)
+
+        ⚠️ **口径修正（2026-09-28，量级归因结论）**：累计量由
+        `site_dropped_molc`（= 自由位点 + 未列物种）**改为 `Δq = q_in − q_out`**。
+        依据 `tools/probe_magnitude.py`（`output/PROBE_MAGNITUDE_mag.txt`）：
+        `ΣΔq` 与**观测位点漂移**比值 **−0.896 ~ −0.946**（⇒ Δq 即真损失量），
+        而 `Σsite_gap/ΣΔq` 在 0.04~116 间**无规律** ⇒ **"自由位点被丢弃"通道被证伪**
+        （自由位点为**瞬态存量**，非损失）。`site_gap` 仍保留为**诊断量**，但**不得**用于损失累计。
+
+        语义: 每场把 `q_in − q_out` 累加到该层; 首次超过参考位点总数的
+        `EXCHANGE_SITE_DRIFT_WARN_FRAC`(0.5%) 时告警一次。
+
+        **严格只读**: 不写回状态、不否决解、不占失败预算/降级
+        (与工单91 P2、工单93 选项A 同一硬约束 —— R1 双向证伪的教训)。
+        """
+        if diag is None:
+            return
+        q_in = float(getattr(diag, 'exchange_q_in', 0.0) or 0.0)
+        q_out = float(getattr(diag, 'exchange_q_out', 0.0) or 0.0)
+        if q_in <= EXCHANGE_SITE_MIN_TOTAL:
+            return
+        ref = self._site_ref.setdefault(layer_index, q_in)
+        cum = (self._site_drift_cum.get(layer_index, 0.0) + (q_in - q_out))
+        self._site_drift_cum[layer_index] = cum
+        if (layer_index not in self._site_drift_warned
+                and cum / ref > EXCHANGE_SITE_DRIFT_WARN_FRAC):
+            self._site_drift_warned.add(layer_index)
+            self.site_drift_count += 1
+            logger.warning(
+                "交换位点往返损失 (层 %d): 累计 Δq=%.1f / 参考位点总数 %.1f "
+                "molc = %.2f%% (> %.2f%%) — 逐场 q_in−q_out 系统性小亏损 (D9); "
+                "仅只读标记, 不改变状态链", layer_index + 1, cum, ref,
+                cum / ref * 100.0, EXCHANGE_SITE_DRIFT_WARN_FRAC * 100.0)
 
     def _pick_knobs_iterations(self, layer_index=None,
                                n_layers=None) -> int:
