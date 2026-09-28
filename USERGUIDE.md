@@ -1,6 +1,6 @@
 # Soil-SCM 用户指南（USERGUIDE）
 
-> **适用版本**：**v0.7.6**（412 测试）
+> **适用版本**：**v0.7.7**（435 测试）
 > **配套文档**：项目总览见 `README.md`。
 > 本文面向**使用该模型的科研人员**：讲解如何安装、配置、运行模拟并解读输出结果，末尾附常见问题排查与开发者速览。
 
@@ -533,6 +533,7 @@ python main.py --config config/config_example.yaml    # 基于模板配置
 | `baseflow_Li` / `lateral_Li` | VIC 基流 / Darcy 侧向出口 (L/ha) | v0.6.1 |
 | `n_no3_pool_Li` | 逐层 NO₃⁻ 示踪池 (mol) | v0.7.0 |
 | `base_loss_eq_Li` / `base_mode_Li` / `e_base_anion_eq_Li` | 盐基淋失记账（当量/分级模式/An⁻ 注入当量） | v0.7.x |
+| `site_total_Li_molc` / `site_gap_Li_molc` | 交换位点往返观测（工单96/D9）：**位点总数**（自由位点 + 全部占用物种）与**回写丢弃当量**（自由位点 `m_X-` + 未列物种）；**只读**，不参与状态判定 | v0.7.7 |
 
 > 注：`mineral_mass` / `solution_ions` 当 `config.output.variables` 包含时输出（JSON 序列化，回填自 SELECTED_OUTPUT）；时间列 `year/month/time_decimal` 始终输出。
 
@@ -678,6 +679,7 @@ config/precip_chemistry_default.json ──► PrecipChemistry
 | KNOBS 收敛 | `_build_phreeqc_input` 双 tolerance | 预平衡 1e-12 / 模拟 1e-9 + 收敛失败检测重试 |
 | 退化步只读护栏 | `diagnostics.has_react_row` / `degenerate_step_flag` / `exchange_mass_flag` | `SELECTED_OUTPUT` 无 `react` 行（该场无平衡解）或交换相零化 → **只读标记**（`DiagnosticOutput.has_react_row`/`sel_row_states`/`solve_error`）+ 计数 + 首次告警；**不否决解、不写回旧状态、不占失败预算**（v0.7.5~v0.7.6，D4/D5 可观测化） |
 | 水量闭合审计 | `calc_base_saturation` 等记账函数 | 水量/盐分闭合由月度状态记账列校验（`stored_water`/`drainage`/`baseflow` 等） |
+| **交换位点往返只读观测** | `diagnostics.parse_exchange_molalities` / `calc_site_total_observed` / `calc_site_dropped` / `exchange_site_drift_flag` | 按 `m_` 前缀扫描 `SELECTED_OUTPUT` 交换物种 + 自由位点 `m_X-`，给出**位点总数**与**自由位点当量**（**瞬态诊断量，非损失**；2026-09-28 量级归因证伪其因果性）+ **逐层累计 `Δq = q_in − q_out`**（真损失口径）与首次告警；**严格只读**（不写回、不否决解、不占失败预算；观测本身异常安全，单列读取失败即跳过）（v0.7.7，D9 可观测化） |
 
 ### 10.3 扩展提示
 

@@ -2,7 +2,7 @@
 
 基于 PHREEQC 地球化学引擎的土壤单点物理化学数值模式，用于模拟长期（数十年）施肥、酸化、淋溶与改良条件下的土壤化学演变（pH、盐基饱和度、交换性阳离子等）。
 
-> **当前版本**：**v0.7.6**（412 测试；含**只读退化步护栏** — `SELECTED_OUTPUT` 无 `react` 行 = 该场无平衡解（`has_react_row`/`sel_row_states`/`solve_error` 只读字段 + 首次告警，不改变状态链）；另含只读交换相质量守恒诊断（v0.7.5）与迭代预算降本 — KNOBS 首次迭代 500→100、重试下限 500→0，8 情景 30y 逐位一致）
+> **当前版本**：**v0.7.7**（435 测试；含**交换位点往返只读观测** — `DiagnosticOutput.site_total_molc`/`site_dropped_molc`/`site_free_molc`/`site_unlisted`/`site_drift_flag` + 事件明细 `site_total_Li_molc`/`site_gap_Li_molc` + 逐层累计漂移计数与首次告警（D9 可观测化，**不改变状态链**）；另含**只读退化步护栏**（v0.7.6 — `SELECTED_OUTPUT` 无 `react` 行 = 该场无平衡解（`has_react_row`/`sel_row_states`/`solve_error` 只读字段 + 首次告警）、只读交换相质量守恒诊断（v0.7.5）与迭代预算降本 — KNOBS 首次迭代 500→100、重试下限 500→0，8 情景 30y 逐位一致）
 > **快速上手**：见 [USERGUIDE.md](USERGUIDE.md)
 
 ---
