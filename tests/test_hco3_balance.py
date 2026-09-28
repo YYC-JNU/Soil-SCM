@@ -6,6 +6,8 @@
   - _check_charge_balance 用碳酸体系真实电荷 (HCO3- 1价 + CO3-2 2价)
 """
 
+import math
+
 import pytest
 
 from src.initial_condition import InitialConditionBuilder
@@ -63,10 +65,15 @@ def test_c4_above_pure_h2co3_saturation(profile, soil_info):
 
 
 def test_solution_consistent_with_gas_phase(profile, soil_info):
-    """SOLUTION 的 C(4) 与 GAS_PHASE pCO2 写在一起 (开放体系自洽)"""
+    """SOLUTION 的 C(4) 与 CO₂ 边界写在一起 (开放体系自洽)
+
+    工单92 (2026-09-24): 边界实现由 `GAS_PHASE -pressure` 改为
+    `EQUILIBRIUM_PHASES CO2(g) <log10 pCO₂> <相摩尔≥1e6>` (固定逸度)。
+    """
     b = _builder(profile, soil_info)
     inp = b.build_phreeqc_input(include_surface=False)
     sol = b.build_solution()
     assert "C(4)" in inp
-    assert f"-pressure     {b.pCO2:.6f}" in inp
+    assert "GAS_PHASE" not in inp
+    assert f"{math.log10(b.pCO2):.4f}" in inp   # log10(pCO₂) = 目标饱和指数
     assert sol['C(4)'] > 0

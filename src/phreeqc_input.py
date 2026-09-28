@@ -10,8 +10,13 @@
 配置契约: PhreeqcInputConfig 承载构建所需的全部引擎参数 (原 self.* 依赖面),
 由引擎 __init__ 构建一次, 每步构建输入时以快照传入 (局部可变字段如
 in_pre_equilibration 由调用方按需更新)。
+
+CO₂ 气相边界 (工单92, 2026-09-24 / WF17 D2 裁定 P3-a): 生产意图"固定 pCO₂"
+由 `EQUILIBRIUM_PHASES` 的 `CO2(g)` 相 (固定逸度 = 无限库, 见 co2_boundary_lines)
+实现, 替代原 `GAS_PHASE -fixed_pressure` + `CO2(g) 1.0` 的有限库写法。
 """
 
+import math
 from dataclasses import dataclass
 from typing import Any, List, Optional
 
@@ -19,6 +24,7 @@ from src.constants import (KNOBS_ITERATIONS, KNOBS_ITERATIONS_DEEP,
                            KNOBS_DEEP_START_LAYER,
                            KNOBS_TOLERANCE, KNOBS_TOLERANCE_PRE,
                            KNOBS_CONVERGENCE_TOLERANCE,
+                           CO2_BOUNDARY_PHASE_MOLES,
                            ALX3_SELECTIVITY_LOGK, ALX3_DEFAULT_LOGK,
                            HX_LOGK,
                            AMORPHOUS_ALOH3_LOGK_DATABASE,
@@ -79,6 +85,27 @@ def _pick_knobs_iterations(cfg: PhreeqcInputConfig,
             and layer_index + 1 >= KNOBS_DEEP_START_LAYER):
         return KNOBS_ITERATIONS_DEEP
     return KNOBS_ITERATIONS
+
+
+def co2_boundary_lines(pco2: float) -> List[str]:
+    """CO₂ 气相边界行 (工单92 / WF17 D2 裁定 P3-a=C1): 固定逸度语义
+
+    返回**追加到调用方 `EQUILIBRIUM_PHASES 1` 块内**的 CO2(g) 相行
+    (不含块头与块尾空行) —— 两处写入点 (引擎月度/事件步 + 初始条件/预平衡)
+    共用本函数, 保证口径与格式一致。
+
+    PHREEQC 手册 (GAS_PHASE 页): "A GAS_PHASE data block is not needed if
+    fixed partial pressures of gas components are desired; use
+    EQUILIBRIUM_PHASES instead." ⇒ 原 `GAS_PHASE -fixed_pressure` +
+    `CO2(g) 1.0` 实为**有限气相库**, 在临界态 (碳酸盐需求 ≫ 1 mol) 约束不可
+    满足 ⇒ 该场无平衡解 (D4/D5 机制, 见 D45_ROOTCAUSE_E1.md §1)。
+    改 `EQUILIBRIUM_PHASES CO2(g) <log10 p> <相摩尔≥1e6>` = 固定逸度 (≈无限库)。
+
+    参数:
+        pco2: CO₂ 分压 (atm); 取 log10 作为相的目标饱和指数 (气相语义)
+    """
+    log_p = math.log10(max(float(pco2), 1e-12))
+    return [f"  {'CO2(g)':<15} {log_p:.4f}  {CO2_BOUNDARY_PHASE_MOLES:.6e}"]
 
 
 def build_phreeqc_input(state, forcing, action, profile, cfg: PhreeqcInputConfig,
@@ -186,14 +213,9 @@ def build_phreeqc_input(state, forcing, action, profile, cfg: PhreeqcInputConfig
             else:
                 scaled = moles * cfg.mineral_scale
             lines.append(f"  {mineral:<15} 0.0  {scaled:.6e}")
-    lines.append("")
-
-    # GAS_PHASE 块 (CO2 分压来自气候强迫, F1 修复: 不再硬编码 0.015)
+    # 工单92 (WF17 D2 P3-a): CO₂ 气相边界 = 固定逸度 (追加行, 勿覆盖矿物相)
     pco2 = forcing.get('pCO2', 0.015)
-    lines.append("GAS_PHASE 1")
-    lines.append("  -fixed_pressure")
-    lines.append(f"  -pressure     {pco2:.6f}")
-    lines.append("  CO2(g)        1.0")
+    lines.extend(co2_boundary_lines(pco2))
     lines.append("")
 
     return _build_tail(lines, state, forcing, action, cfg, n_reaction,
@@ -203,8 +225,8 @@ def build_phreeqc_input(state, forcing, action, profile, cfg: PhreeqcInputConfig
 def _build_tail(lines, state, forcing, action, cfg, n_reaction, inject_water):
     """构建尾部: SURFACE → REACTION → SELECTED_OUTPUT (2026-09-02 拆分)
 
-    承接 build_phreeqc_input 的 GAS_PHASE 之后; REACTION 注入通道规则集中在
-    _collect_reaction_lines, 便于逐通道独立测试。
+    承接 build_phreeqc_input 的 EQUILIBRIUM_PHASES (含工单92 CO₂ 边界相) 之后;
+    REACTION 注入通道规则集中在 _collect_reaction_lines, 便于逐通道独立测试。
     """
     # SURFACE 块 (WF4: Hfo_s/Hfo_w 铁氧化物表面络合, 默认关闭)
     # PHREEQC 语法: {name} {表面积m2} {比表面m2/g} {位点密度mol/m2}

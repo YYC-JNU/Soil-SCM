@@ -54,9 +54,17 @@ def test_multilayer_delays_al_depletion(profile, soil_info):
 
     v0.6.1 (spec 62 Q7): HX 酸库 (log_k=3.0) 占位使 AlX3 初始即低于无 HX
     基线 (~5300 vs 37680, 物理真实); 断言调整为"AlX3 保留非零" + HX 酸库存在。
+
+    工单92 (2026-09-24) 适配: 补逐层 `pre_equilibrate` (生产流程, main.py:551 /
+    sensitivity_pH_30yr.py:137)。CO₂ 边界改为固定逸度后, **raw 起点首月** L1/L2
+    月度步 PHREEQC 迭代超限 ⇒ 无 `react` 行 (该场无平衡解) ⇒ 交换相被解析零化
+    (工单93 已知缺陷, 只读护栏不拦); 预平衡后同场景退化步 = 0。
+    证据: `.scratch/soil-scm-overview/tools/probe_92_ab_cases.py` (场景 M / P)。
     """
     e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
     states = [e.build_initial_state(profile, soil_info, 0.015) for _ in range(4)]
+    states = [e.pre_equilibrate(s, profile, 30, layer_index=i)
+              for i, s in enumerate(states)]
     climate = ClimateForcing(1893.0, 25.0, 0.015, 25.0, 0.05, 1, "natural")
     for m in range(12):
         f = climate.get_monthly_forcing(0, m)

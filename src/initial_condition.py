@@ -11,7 +11,7 @@
   3. 交换性阳离子 → EXCHANGE 块
   4. 矿物质量分数 → EQUILIBRIUM_PHASES 块
   5. 溶液初始浓度估算 → SOLUTION 块
-  6. CO2 分压 → GAS_PHASE 块
+  6. CO2 分压 → EQUILIBRIUM_PHASES 的 CO2(g) 相 (工单92: 固定逸度 = 无限库)
   7. 有机质/铁铝氧化物 → SURFACE 块 (可选)
 
 参考文献:
@@ -46,6 +46,7 @@ from src.constants import (MINERAL_SCALE, HFO_STRONG_SITE_DENSITY,
                            SURFACE_GAP_AL_FRACTION,
                            INITIAL_PSI_CM)
 from src.utils import cmol_to_mol_per_kg, layer_aloh3_params
+from src.phreeqc_input import co2_boundary_lines
 from src.vgm import vgm_theta_from_psi, get_vgm_params
 
 logger = get_logger("initial_condition")
@@ -452,7 +453,7 @@ class InitialConditionBuilder:
         return minerals
 
     # ============================================================
-    # GAS_PHASE 块: 气相
+    # 气相 (状态字典; 输入串的 CO₂ 边界见 EQUILIBRIUM_PHASES, 工单92)
     # ============================================================
 
     def build_gas_phase(self) -> Dict[str, float]:
@@ -549,13 +550,9 @@ class InitialConditionBuilder:
             if moles > 0:
                 scaled = moles * MINERAL_SCALE
                 lines.append(f"  {mineral:<15} 0.0  {scaled:.6e}")
-        lines.append("")
-
-        # ---- GAS_PHASE 块 (CO2 分压 = 初始 pCO2, F1 修复: 不再硬编码) ----
-        lines.append("GAS_PHASE 1")
-        lines.append("  -fixed_pressure")
-        lines.append(f"  -pressure     {self.pCO2:.6f}")
-        lines.append("  CO2(g)        1.0")
+        # 工单92 (2026-09-24 / WF17 D2 P3-a): CO₂ 气相边界 = 固定逸度
+        # (追加行, 勿覆盖矿物相; 与引擎月度/事件步共用 co2_boundary_lines)
+        lines.extend(co2_boundary_lines(self.pCO2))
         lines.append("")
 
         # ---- SURFACE 块 (可选) ----

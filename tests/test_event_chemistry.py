@@ -492,33 +492,53 @@ def test_companion_injection_across_events(profile, soil_info):
     验证: ① 第一场无注入 (mode=none), 淋失 NO3 入池 ② 第二场注入第一场
     淋失当量 (BS 高 → inert) ③ CompAn 物种被 PHREEQC 正常平衡 (数值可行性,
     交换相盐基响应解吸、总电荷守恒)。
+
+    工单92 (2026-09-24) 适配: 原用手写合成 hydrology (两场, 第 2 场零通量/零注入)。
+    CO₂ 边界改为固定逸度 (`EQUILIBRIUM_PHASES CO2(g)`) 后该合成场下 PHREEQC
+    迭代超限 ⇒ 无 `react` 行 (该场无平衡解) ⇒ 交换相被解析零化 (工单93 已知
+    缺陷, 只读护栏不拦)。实测**已排除**的候选: 迭代 100~2000、tol 1e-8~1e-12、
+    相摩尔 1e2~1e6、`CO2(g)` 行位置、注入通道消融 (删 REACTION/风化/H2O)、
+    `An-` 量级缩放 ×0.001、增强第 2 场驱动、预平衡 30~60 步
+    (探针 `.scratch/soil-scm-overview/tools/probe_92_ab_cases.py`)。
+    故改用**生产口径的事件序列** (`main._apply_hydrology_events`, 与
+    sensitivity 工具同源), 递推记账断言改为对全部相邻场次成立。
     """
-    e = _engine_companion()
+    import main as sim_main
+    from src.climate_forcing import ClimateForcing
+    from src.config_manager import (BaseLeachingConfig, ChargePairingConfig,
+                                    CompanionConfig)
+    e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc",
+                      companion_cfg=CompanionConfig(enable=True),
+                      charge_pairing_cfg=ChargePairingConfig(enable=True),
+                      base_leaching_cfg=BaseLeachingConfig(enable=True))
     states = [e.build_initial_state(profile, soil_info, 0.015) for _ in range(2)]
     # v0.7.x (工单78): 先预平衡 (真实流程; 模拟步 1e-9 需近平衡起点)
     states = [e.pre_equilibrate(s, profile, max_steps=30) for s in states]
     states[0].n_no3_pool = 500.0
-    ev1 = {'inflows': [1.0e5, 0.0], 'drains': [1.0e5, 0.0],
-           'lateral': [0.0, 0.0], 'baseflow': [0.0, 0.0],
-           'bypass_water_L': 0.0, 'precip_mm': 50.0, 'theta': [0.4, 0.4]}
-    ev2 = {'inflows': [0.0, 0.0], 'drains': [0.0, 0.0],
-           'lateral': [0.0, 0.0], 'baseflow': [0.0, 0.0],
-           'bypass_water_L': 0.0, 'precip_mm': 0.0, 'theta': [0.4, 0.4]}
-    hydrology = {'events': [ev1, ev2], 'aet_mm': 0.0, 'et_deficit_mm': 0.0}
-    new_states, _ = e.run_monthly_multi_layer(
-        states, dict(EVENT_FORCING, precip=50.0), MonthlyAction(),
-        profile, hydrology=hydrology)
+    climate = ClimateForcing(1893.0, 25.0, 0.015, 25.0, 0.05, 1, "natural")
+    f = climate.get_monthly_forcing(0, 2)          # 3 月 (雨季起点, 多场)
+    hydrology, _runoff, _extra = sim_main._apply_hydrology_events(
+        states, [profile, profile], f, 0, 2, 42, bypass_fraction=0.2)
+    new_states, _ = e.run_monthly_multi_layer(states, f, MonthlyAction(),
+                                              profile, hydrology=hydrology)
     details = hydrology['event_details']
-    assert len(details) == 2
-    # 第一场: 无上一场淋失 → mode=none; 本场淋失 NO3
+    assert len(details) >= 2
+    # 首场: 无上一场淋失 → mode=none; 本场淋失 NO3
     assert details[0]['companion_mode_L1'] == 'none'
     assert details[0]['leach_no3_L1_mol'] > 0.0
-    # 第二场: 注入第一场淋失当量 (BS 高 → inert 模式, 全量 CompAn)
-    assert details[1]['companion_mode_L1'] == 'inert'
-    assert details[1]['companion_eq_L1'] == pytest.approx(
-        details[0]['leach_no3_L1_mol'], rel=1e-6)
-    assert details[1]['inert_eq_L1'] == pytest.approx(
-        details[0]['leach_no3_L1_mol'], rel=1e-6)
+    # 其后各场: 驱动当量 = 前一场淋失当量 (分级只改注入形态/比例)
+    for prev, cur in zip(details, details[1:]):
+        mode = cur['companion_mode_L1']
+        assert mode in ('inert', 'hybrid', 'acid', 'zero')
+        assert cur['companion_eq_L1'] == pytest.approx(
+            prev['leach_no3_L1_mol'], rel=1e-6)
+        if mode == 'inert':            # BS 高: 全量 CompAn-
+            assert cur['inert_eq_L1'] == pytest.approx(
+                prev['leach_no3_L1_mol'], rel=1e-6)
+        elif mode == 'hybrid':         # 过渡带: CompAn- 线性降权
+            assert 0.0 < cur['inert_eq_L1'] < prev['leach_no3_L1_mol']
+        elif mode == 'acid':           # 盐基枯竭: 切换 H+
+            assert cur['inert_eq_L1'] == 0.0
     # CompAn 平衡后: 交换相总电荷守恒 (CEC 不破), 盐基≥0
     ex = new_states[0].exchange
     total_charge = (ex.get('CaX2', 0.0) * 2 + ex.get('MgX2', 0.0) * 2

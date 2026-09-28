@@ -1,3 +1,5 @@
+import math
+
 import pytest
 from src.phreeqc_engine import PhreeqcEngine
 from src.scenario_controller import MonthlyAction
@@ -29,11 +31,17 @@ def test_build_initial_state(profile, soil_info):
 
 
 def test_input_uses_forcing_pco2(profile, soil_info):
+    """工单92 (2026-09-24): 月度输入串的 CO₂ 边界跟随 forcing['pCO2']
+
+    断言由 `-pressure` (GAS_PHASE 有限库, 已替换) 改为平衡相 CO2(g) 的
+    目标饱和指数 log10(pCO₂)。
+    """
     e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc")
     state = e.build_initial_state(profile, soil_info, 0.015)
     forcing = dict(FORCING, pCO2=0.020)
     inp = e._build_phreeqc_input(state, forcing, MonthlyAction(), profile)
-    assert "-pressure     0.020000" in inp
+    assert "GAS_PHASE" not in inp
+    assert f"{math.log10(0.020):.4f}" in inp
 
 
 def test_input_contains_precip_ions(profile, soil_info, precip_chem):
@@ -431,7 +439,12 @@ def test_weathering_degrade_minerals_from_equilibrium(profile, soil_info):
     state = e.build_initial_state(profile, soil_info, 0.015)
     inp = e._build_phreeqc_input(state, FORCING, MonthlyAction(), profile)
     # EQUILIBRIUM_PHASES 无 gibbsite
-    eq_block = inp.split("EQUILIBRIUM_PHASES")[1].split("GAS_PHASE")[0]
+    # (工单92: 原以 "GAS_PHASE" 作块尾哨兵; CO₂ 边界改为平衡相 CO2(g) 行后,
+    #  改用后继块头作哨兵)
+    eq_block = inp.split("EQUILIBRIUM_PHASES")[1]
+    for sentinel in ("SURFACE 1", "REACTION 1", "SELECTED_OUTPUT"):
+        if sentinel in eq_block:
+            eq_block = eq_block.split(sentinel)[0]
     assert "gibbsite" not in eq_block
     # 其他矿物仍在
     assert "kaolinite" in eq_block
@@ -445,6 +458,14 @@ def test_weathering_phreeqc_balance_with_degrade(profile, soil_info):
     验证: 风化碱度 REACTION (Ca/Mg/K/HCO3) 与降级后的平衡相 (gibbsite/
     kaolinite 移除) 在真实 PHREEQC 平衡中收敛, Al 循环通道不断 (AlX3 仍
     在交换相), pH 有效。
+
+    工单92 (2026-09-24) 适配: 补 `pre_equilibrate` (真实流程, 与同族
+    test_charge_pairing / test_mineral_evolution 一致)。CO₂ 边界改为固定逸度
+    (`EQUILIBRIUM_PHASES CO2(g)`, 见 tests/test_co2_boundary.py) 后, **未预平衡
+    的远起点单步**在本配置 (风化注入 + 矿物降级) 下 PHREEQC 迭代超限 ⇒ 无
+    `react` 行 (该场无平衡解); 实测扫 iters 100/500/2000、tol 1e-8~1e-12、
+    相摩尔 1e2~1e6 **均不改善**, 而同输入串在预平衡后正常收敛。
+    探针: `.scratch/soil-scm-overview/tools/probe_92_raw_step.py`。
     """
     from src.config_manager import WeatheringConfig
     e = PhreeqcEngine(database="phreeqc.dat", mode="phreeqc",
@@ -452,6 +473,7 @@ def test_weathering_phreeqc_balance_with_degrade(profile, soil_info):
                           enable=True, rate_molc_ha_yr=500.0,
                           degrade_minerals=['gibbsite', 'kaolinite']))
     state = e.build_initial_state(profile, soil_info, 0.015)
+    state = e.pre_equilibrate(state, profile, max_steps=30)
     new_state, diag = e.run_monthly_step(state, FORCING, MonthlyAction(),
                                          profile)
     assert new_state.ph > 0.0

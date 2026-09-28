@@ -243,6 +243,25 @@ K_OM_PCO2 = 0.0005          # OM → ΔpCO₂ 系数 (atm per g/kg): L1 30g/kg �
 PCO2_MAX = 0.05             # 层内 pCO₂ 上限钳制 (atm)
 OM_PROFILE_4LAYER = [30.0, 15.0, 8.0, 5.0]   # 4 层内置默认有机质 (g/kg, 表层富集)
 
+# ---- 工单92 (2026-09-24): CO₂ 气相边界实现治理 (WF17 D2 裁定 P3-a = C1) ----
+# 原实现: 每层每步注入 `GAS_PHASE 1 / -fixed_pressure / -pressure <pCO₂> /
+#   CO2(g) 1.0` 表达"固定 pCO₂"; 但 PHREEQC 手册 GAS_PHASE 页逐字指出
+#   "A GAS_PHASE data block is not needed if fixed partial pressures of gas
+#    components are desired; use EQUILIBRIUM_PHASES instead."
+#   ⇒ `CO2(g) 1.0` 语义是**有限气相库** (隐含气相体积 ~816~1398 L/层/步, 比
+#   层内真实气态孔隙小 ~2 个数量级)。临界态下碳酸盐需求 ≫ 1 mol ⇒ 该约束
+#   不可满足 ⇒ 该场**无平衡解** ⇒ 引擎缺陷 (F1 判定失效 + F2 解析无防护) 把
+#   初始解行当有效解读入 ⇒ D4 (lime_high pH 锁死 10.848) / D5 (交换相逐层
+#   全灭)。根因链见工单 91 §12.6、`dev-notes/D45_ROOTCAUSE_E1.md` §1/§7.3。
+# 裁定实现 (P3-a = C1): 改为 `EQUILIBRIUM_PHASES 1 / CO2(g) <log10 pCO₂> <本常量>`
+#   = **固定逸度** (≈无限库), 与生产意图 (`USERGUIDE.md:360`「固定分压」) 及
+#   物理 (真实土壤须靠呼吸/扩散再补给 CO₂) 三方一致。
+# 相摩尔下限: **必须 ≥1e6** —— 1e3 在 L1/L3 不足, 会退化为"无 CO₂ 交换"的假解
+#   (S3-c 实测); 1e6 = 1e8 = 1e10 = 1e12 得到同一唯一极限解, 故取最小可靠值。
+# 回退: 恢复 `GAS_PHASE` 写法 (两处写入点: src/phreeqc_input.py 与
+#   src/initial_condition.py, 共用 src/phreeqc_input.co2_boundary_lines)。
+CO2_BOUNDARY_PHASE_MOLES = 1.0e6
+
 # ============================================================
 # v0.6.1 数值稳定性根治 (spec 62, /grilling Q1~Q10 定案, 2026-08-20)
 # ============================================================

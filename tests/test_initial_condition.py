@@ -112,9 +112,16 @@ def test_mineral_scale_constant():
 
 
 def test_gas_phase_uses_pco2(profile, soil_info):
+    """工单92 (2026-09-24): CO₂ 边界 = EQUILIBRIUM_PHASES CO2(g) 固定逸度
+
+    原断言 `-pressure <pCO2>` (GAS_PHASE 有限气相库写法, 工单92 已替换);
+    现断言 log10(pCO₂) 写进平衡相块, 且全文无 GAS_PHASE 块。
+    """
     b = _builder(profile, soil_info)
     inp = b.build_phreeqc_input(include_surface=False)
-    assert f"-pressure     {b.pCO2:.6f}" in inp
+    assert "GAS_PHASE" not in inp
+    assert f"{math.log10(b.pCO2):.4f}" in inp   # 目标饱和指数 = log10(pCO₂)
+    assert "CO2(g)" in inp
 
 
 def test_validate_passes(profile, soil_info):
