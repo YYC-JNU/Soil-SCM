@@ -183,7 +183,7 @@ python main.py --config /path/to/your_config.yaml   # 任意自定义配置文�
 | `directory` | `./output` | 输出目录 |
 | `format` | `csv` | 输出格式：`csv` / `netcdf` |
 | `variables` | `[pH, base_saturation, ...]` | 输出变量列表（第 8 章详述） |
-| `event_output` | `false` | v0.6.0: 逐场事件明细 CSV（`event_leaching_<scenario>.csv`：日期/场次/降水/各层淋失/pH）；默认关闭 |
+| `event_output` | `false` | v0.6.0: 逐场事件明细 CSV（`event_leaching_<scenario>.csv`：日期/场次/降水/各层淋失/pH；v0.7.8 起含阴离子列 `leach_cl/s/an_Li_mol` 与 `E_loss` 通道分离列 `leach_no3_export/transfer_Li_mol`）；默认关闭 |
 
 ### 4.8 高级水文与地球化学参数详解（v0.5.x~v0.7.x）
 
@@ -533,6 +533,7 @@ python main.py --config config/config_example.yaml    # 基于模板配置
 | `baseflow_Li` / `lateral_Li` | VIC 基流 / Darcy 侧向出口 (L/ha) | v0.6.1 |
 | `n_no3_pool_Li` | 逐层 NO₃⁻ 示踪池 (mol) | v0.7.0 |
 | `base_loss_eq_Li` / `base_mode_Li` / `e_base_anion_eq_Li` | 盐基淋失记账（当量/分级模式/An⁻ 注入当量） | v0.7.x |
+| `leach_cl_Li_mol` / `leach_s_Li_mol` / `leach_an_Li_mol` / `leach_no3_export_Li_mol` / `leach_no3_transfer_Li_mol` | 阴离子收支记账（工单94/D8）：逐层逐场**阴离子淋失量**（Cl⁻ / SO₄²⁻ / 配对惰性阴离子 `An⁻`，mol/ha；两通道之和 = 层间下移 + 出系统）与 **`E_loss` 通道分离**（`export` = lateral+baseflow 出系统 / `transfer` = drains 下移 + bypass 携带）；**只读**，不参与状态判定、不改变 `pending_e_loss` 注入基准 | v0.7.8 |
 | `site_total_Li_molc` / `site_gap_Li_molc` | 交换位点往返观测（工单96/D9）：**位点总数**（自由位点 + 全部占用物种）与**回写丢弃当量**（自由位点 `m_X-` + 未列物种）；**只读**，不参与状态判定 | v0.7.7 |
 
 > 注：`mineral_mass` / `solution_ions` 当 `config.output.variables` 包含时输出（JSON 序列化，回填自 SELECTED_OUTPUT）；时间列 `year/month/time_decimal` 始终输出。
@@ -680,6 +681,7 @@ config/precip_chemistry_default.json ──► PrecipChemistry
 | 退化步只读护栏 | `diagnostics.has_react_row` / `degenerate_step_flag` / `exchange_mass_flag` | `SELECTED_OUTPUT` 无 `react` 行（该场无平衡解）或交换相零化 → **只读标记**（`DiagnosticOutput.has_react_row`/`sel_row_states`/`solve_error`）+ 计数 + 首次告警；**不否决解、不写回旧状态、不占失败预算**（v0.7.5~v0.7.6，D4/D5 可观测化） |
 | 水量闭合审计 | `calc_base_saturation` 等记账函数 | 水量/盐分闭合由月度状态记账列校验（`stored_water`/`drainage`/`baseflow` 等） |
 | **交换位点往返只读观测** | `diagnostics.parse_exchange_molalities` / `calc_site_total_observed` / `calc_site_dropped` / `exchange_site_drift_flag` | 按 `m_` 前缀扫描 `SELECTED_OUTPUT` 交换物种 + 自由位点 `m_X-`，给出**位点总数**与**自由位点当量**（**瞬态诊断量，非损失**；2026-09-28 量级归因证伪其因果性）+ **逐层累计 `Δq = q_in − q_out`**（真损失口径）与首次告警；**严格只读**（不写回、不否决解、不占失败预算；观测本身异常安全，单列读取失败即跳过）（v0.7.7，D9 可观测化） |
+| **阴离子收支记账** | `event_accounting.anion_leach_columns` / `leach_flux_mol`（_COLUMN_FORMATS **单一来源**）+ `DiagnosticOutput.pair_anion_conc` | 逐层逐场**阴离子淋失列**（Cl⁻/SO₄²⁻/`An⁻`，mol/ha；两通道 = 层间下移 + 出系统，取值点 = 溶质扣除**之前**，与 `moved_ions`/`q3_out_ions` 同源）+ **`E_loss` 通道分离**（`export`/`transfer`，`leach_no3_mol` 与 `pending_e_loss` 逐位不变）；`An` **不入 `solution`**（仅只读标量，避免经层间注入改变物理）；**严格只读**（不写回、不否决解、不占失败预算；负值/NaN/单列读取失败 → 0.0）（v0.7.8，D8 可判读化） |
 
 ### 10.3 扩展提示
 
