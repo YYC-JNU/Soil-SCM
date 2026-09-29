@@ -191,6 +191,13 @@ class DiagnosticOutput:
     site_free_molc: float = 0.0
     site_unlisted: str = ''
     site_drift_flag: str = ''
+    # 工单94 (2026-09-28): 阴离子收支**只读**观测 (D8 预算可判读化) —
+    # 默认 0.0 = 未观测/未定义 ⇒ 既有行为与断言**零变化**:
+    #   pair_anion_conc: 配对惰性阴离子 (`An(mol/kgw)`) 溶液总浓度 (mol/L)。
+    #     ⚠️ `An` **不在** `_parse_official_output` 的元素解析列表内
+    #     (solution 仍无 `An` 键) ⇒ 必须独立读取; 若把 `An` 加进 `solution`
+    #     会经层间 `inflow_ions` 注入下一层 = **物理行为改变** (工单94 §5 禁止)。
+    pair_anion_conc: float = 0.0
 
 
 def _monthly_step_worker(q, database, mode, enable_surface, precip_infiltration,
@@ -1011,7 +1018,8 @@ class PhreeqcEngine:
             (List[SoilState], List[DiagnosticOutput]) — 最后一场事件后各层状态
         """
         from src.hydrology import RainEvent
-        from src.event_accounting import build_event_row, first_flush_peaks
+        from src.event_accounting import (anion_leach_columns, build_event_row,
+                                          first_flush_peaks)
         n = len(states)
         new_states = list(states)
         last_diags = [None] * n
@@ -1114,6 +1122,13 @@ class PhreeqcEngine:
                 self._observe_site_roundtrip(i, diag)
 # ---- v0.7.0 (工单70): NO3- 示踪池水库串联淋失 (池随水移出, pool≥0) ----
                 leach_no3_i = 0.0
+                # 工单94 (2026-09-28): **E_loss 通道分离只读记账** (D8 预算可判读化)
+                #   transfer = 层间下移 (drains ① + bypass 携带 ③)
+                #   export   = 出系统   (lateral + baseflow ②)
+                # ⚠️ 三项**各自独立累加** ⇒ `leach_no3_i` 逐位不变
+                # ( `pending_e_loss` 注入基准零变化; 工单94 §5 硬约束)。
+                no3_transfer_mol = 0.0
+                no3_export_mol = 0.0
                 if self.companion_enabled:
                     v_pool = max(new_state.volume, 1.0)
                     drain_i = ev['drains'][i]
@@ -1124,6 +1139,7 @@ class PhreeqcEngine:
                         new_state.n_no3_pool, drain_i, v_pool)
                     new_state.n_no3_pool -= mass_down
                     leach_no3_i += mass_down
+                    no3_transfer_mol += mass_down
                     if i < n - 1:
                         pool_carry += mass_down
                     # ② 出系统: lateral + baseflow 带走池余额
@@ -1131,6 +1147,7 @@ class PhreeqcEngine:
                         new_state.n_no3_pool, lat_out_L + base_out_L, v_pool)
                     new_state.n_no3_pool -= lost_out
                     leach_no3_i += lost_out
+                    no3_export_mol += lost_out
                     # ③ bypass 携带: L1 池 NO3- 直通 L2
                     if i == 0:
                         bypass_water = ev.get('bypass_water_L', 0.0)
@@ -1139,6 +1156,7 @@ class PhreeqcEngine:
                                 new_state.n_no3_pool, bypass_water, v_pool)
                             new_state.n_no3_pool -= m_bypass
                             leach_no3_i += m_bypass
+                            no3_transfer_mol += m_bypass
                             pool_carry += m_bypass
                 # ---- v0.7.x (工单80): 盐基淋失 E_base (出系统出口, 自限) ----
                 base_loss_eq_i = 0.0
@@ -1185,6 +1203,16 @@ class PhreeqcEngine:
                             continue
                         if conc > 0:
                             q3_out_ions[ion] = conc * q_out_system_L
+                # 工单94 (2026-09-28): 阴离子收支记账 (只读) — 必须在下面溶质扣除
+                # **之前**取值: 与 `moved_ions` / `q3_out_ions` **同一来源**
+                # (平衡后浓度 × 通道水量) ⇒ 阴离子账与 NO₃⁻ 账可在同表对账。
+                # `An` 不在 `solution` 中 ⇒ 取 `DiagnosticOutput.pair_anion_conc`
+                # (只读标量; 不入状态, 见工单94 §5)。
+                _anion_leach = anion_leach_columns(
+                    {'Cl': new_state.solution.get('Cl', 0.0),
+                     'S': new_state.solution.get('S', 0.0),
+                     'An': float(getattr(diag, 'pair_anion_conc', 0.0) or 0.0)},
+                    drain_water_L, q_out_system_L)
                 for ion, conc in list(new_state.solution.items()):
                     if ion in ('temp', 'pH', 'pe', 'units'):
                         continue
@@ -1244,6 +1272,11 @@ class PhreeqcEngine:
                         getattr(diag, 'site_total_molc', 0.0) or 0.0),
                     'site_gap_molc': float(
                         getattr(diag, 'site_dropped_molc', 0.0) or 0.0),
+                    # 工单94 (2026-09-28): 阴离子收支 + E_loss 通道分离 (只读;
+                    # 供工单 94 §3.3 的 P3 阴离子侧闭合度复算)
+                    'leach_no3_export_mol': no3_export_mol,
+                    'leach_no3_transfer_mol': no3_transfer_mol,
+                    **_anion_leach,
                 }
                 layer_rows.append(ledger)
                 if i == 0:
@@ -1602,6 +1635,19 @@ class PhreeqcEngine:
         _site_free = (max(0.0, _mols['free']) * water_mass
                       if _mols['free'] is not None else 0.0)
         _site_drift = exchange_site_drift_flag(q_in, _site_total) or ''
+        # 工单94 (2026-09-28): 配对惰性阴离子 (`An(mol/kgw)`) **只读**观测 —
+        # ⚠️ `An` **不入** `solution` (解析元素列表不含 `An`): 若入 solution 会经
+        # 层间 `inflow_ions = moved_ions` 被注入下一层 = **物理行为改变** (§5 禁止)。
+        # 仅取标量供阴离子记账列 (`leach_an_mol`) 使用; 异常/NaN/负值 → 0.0 (未观测)。
+        _pair_conc = 0.0
+        _pair_col = f"{self.pair_anion}(mol/kgw)"
+        if _pair_col in idx:
+            try:
+                _pair_conc = float(p.GetSelectedOutputValue(last, idx[_pair_col]))
+            except Exception:
+                _pair_conc = 0.0     # 单列读取失败 ⇒ 放弃本观测 (异常安全)
+            if not math.isfinite(_pair_conc) or _pair_conc < 0.0:
+                _pair_conc = 0.0     # NaN/Inf/负值 → 未观测 (只读护栏)
         diag = DiagnosticOutput(ph=new_state.ph, pe=new_state.pe,
                                 exchange_q_in=q_in, exchange_q_out=q_out,
                                 exchange_mass_flag=flag or '',
@@ -1612,7 +1658,8 @@ class PhreeqcEngine:
                                 site_dropped_molc=_site_dropped,
                                 site_free_molc=_site_free,
                                 site_unlisted=','.join(_mols['unknown']),
-                                site_drift_flag=_site_drift)
+                                site_drift_flag=_site_drift,
+                                pair_anion_conc=_pair_conc)
         return new_state, diag
 
     def _observe_site_roundtrip(self, layer_index, diag):
