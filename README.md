@@ -2,7 +2,7 @@
 
 基于 PHREEQC 地球化学引擎的土壤单点物理化学数值模式，用于模拟长期（数十年）施肥、酸化、淋溶与改良条件下的土壤化学演变（pH、盐基饱和度、交换性阳离子等）。
 
-> **当前版本**：**v0.7.8**（446 测试；含**阴离子收支记账** — 事件明细新增 `leach_cl/s/an_Li_mol`（阴离子淋失，两通道和）+ **`E_loss` 通道分离** `leach_no3_export/transfer_Li_mol` + `DiagnosticOutput.pair_anion_conc`（配对惰性阴离子 `An` **不入 `solution`**）：把 D8 的"阴离子配对"分支从定性变为**逐层逐场可对账**（**严格只读** — `leach_no3_mol` 与 `pending_e_loss` 注入基准逐位不变，轨迹零变更：natural `max|Δ| = 0.000000`、**8 情景 30y `max|Δ| = 0.0000`**）；另含**交换位点往返只读观测**（v0.7.7 — `DiagnosticOutput.site_total_molc`/`site_dropped_molc`/`site_free_molc`/`site_unlisted`/`site_drift_flag` + 事件明细 `site_total_Li_molc`/`site_gap_Li_molc` + 逐层累计漂移计数与首次告警（D9 可观测化，**不改变状态链**））、**只读退化步护栏**（v0.7.6 — `SELECTED_OUTPUT` 无 `react` 行 = 该场无平衡解（`has_react_row`/`sel_row_states`/`solve_error` 只读字段 + 首次告警）、只读交换相质量守恒诊断（v0.7.5）与迭代预算降本 — KNOBS 首次迭代 500→100、重试下限 500→0，8 情景 30y 逐位一致）
+> **当前版本**：**v0.7.9**（456 测试；含**CO₂ 去气通量观测** — 事件明细新增碳账 6 列（`c4_storage_delta/inflow/drain_out/out_system/flush_Li_mol` + **`co2_gas_exchange_Li_mol`** = 入流 − 存量增量 − 流出 − 冲洗，**正 = 去气**）：把 D8 的"开体系 CO₂ 汇"从不可观测变为**逐层逐场可对账**（**严格只读** — 轨迹零变更：natural `max|Δ| = 0.000000`、**8 情景 30y `max|Δ| = 0.0000`**）；另含**阴离子收支记账**（v0.7.8 — `leach_cl/s/an_Li_mol` + `E_loss` 通道分离 `leach_no3_export/transfer_Li_mol` + `DiagnosticOutput.pair_anion_conc`）、**交换位点往返只读观测**（v0.7.7 — `DiagnosticOutput.site_*` 5 字段 + 事件明细 `site_total_Li_molc`/`site_gap_Li_molc` + 逐层累计漂移计数（D9 可观测化））、**只读退化步护栏**（v0.7.6 — `SELECTED_OUTPUT` 无 `react` 行 = 该场无平衡解（`has_react_row`/`sel_row_states`/`solve_error` 只读字段 + 首次告警）、只读交换相质量守恒诊断（v0.7.5）与迭代预算降本 — KNOBS 首次迭代 500→100、重试下限 500→0，8 情景 30y 逐位一致）
 > **快速上手**：见 [USERGUIDE.md](USERGUIDE.md)
 
 ---

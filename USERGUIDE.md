@@ -183,7 +183,7 @@ python main.py --config /path/to/your_config.yaml   # 任意自定义配置文�
 | `directory` | `./output` | 输出目录 |
 | `format` | `csv` | 输出格式：`csv` / `netcdf` |
 | `variables` | `[pH, base_saturation, ...]` | 输出变量列表（第 8 章详述） |
-| `event_output` | `false` | v0.6.0: 逐场事件明细 CSV（`event_leaching_<scenario>.csv`：日期/场次/降水/各层淋失/pH；v0.7.8 起含阴离子列 `leach_cl/s/an_Li_mol` 与 `E_loss` 通道分离列 `leach_no3_export/transfer_Li_mol`）；默认关闭 |
+| `event_output` | `false` | v0.6.0: 逐场事件明细 CSV（`event_leaching_<scenario>.csv`：日期/场次/降水/各层淋失/pH；v0.7.8 起含阴离子列 `leach_cl/s/an_Li_mol` 与 `E_loss` 通道分离列 `leach_no3_export/transfer_Li_mol`；v0.7.9 起含碳账列 `c4_*_Li_mol` 与 `co2_gas_exchange_Li_mol`）；默认关闭 |
 
 ### 4.8 高级水文与地球化学参数详解（v0.5.x~v0.7.x）
 
@@ -533,6 +533,7 @@ python main.py --config config/config_example.yaml    # 基于模板配置
 | `baseflow_Li` / `lateral_Li` | VIC 基流 / Darcy 侧向出口 (L/ha) | v0.6.1 |
 | `n_no3_pool_Li` | 逐层 NO₃⁻ 示踪池 (mol) | v0.7.0 |
 | `base_loss_eq_Li` / `base_mode_Li` / `e_base_anion_eq_Li` | 盐基淋失记账（当量/分级模式/An⁻ 注入当量） | v0.7.x |
+| `c4_storage_delta_Li_mol` / `c4_inflow_Li_mol` / `c4_drain_out_Li_mol` / `c4_out_system_Li_mol` / `c4_flush_Li_mol` / `co2_gas_exchange_Li_mol` | CO₂ 去气通量（工单95/D8）：逐层逐场**碳（C(4)）收支**五分量（层内存量变化 / 层间入流 / drains 出 / 出系统 / 冲洗带出，mol/ha）与**闭合残差 `co2_gas_exchange_Li_mol`**（= 入流 − 存量增量 − 流出 − 冲洗；**正 = 去气、负 = 吸收**）；本模型无碳酸盐矿物/碳 KINETICS ⇒ 残差即气相交换量；**只读**，不参与状态判定 | v0.7.9 |
 | `leach_cl_Li_mol` / `leach_s_Li_mol` / `leach_an_Li_mol` / `leach_no3_export_Li_mol` / `leach_no3_transfer_Li_mol` | 阴离子收支记账（工单94/D8）：逐层逐场**阴离子淋失量**（Cl⁻ / SO₄²⁻ / 配对惰性阴离子 `An⁻`，mol/ha；两通道之和 = 层间下移 + 出系统）与 **`E_loss` 通道分离**（`export` = lateral+baseflow 出系统 / `transfer` = drains 下移 + bypass 携带）；**只读**，不参与状态判定、不改变 `pending_e_loss` 注入基准 | v0.7.8 |
 | `site_total_Li_molc` / `site_gap_Li_molc` | 交换位点往返观测（工单96/D9）：**位点总数**（自由位点 + 全部占用物种）与**回写丢弃当量**（自由位点 `m_X-` + 未列物种）；**只读**，不参与状态判定 | v0.7.7 |
 
@@ -682,6 +683,7 @@ config/precip_chemistry_default.json ──► PrecipChemistry
 | 水量闭合审计 | `calc_base_saturation` 等记账函数 | 水量/盐分闭合由月度状态记账列校验（`stored_water`/`drainage`/`baseflow` 等） |
 | **交换位点往返只读观测** | `diagnostics.parse_exchange_molalities` / `calc_site_total_observed` / `calc_site_dropped` / `exchange_site_drift_flag` | 按 `m_` 前缀扫描 `SELECTED_OUTPUT` 交换物种 + 自由位点 `m_X-`，给出**位点总数**与**自由位点当量**（**瞬态诊断量，非损失**；2026-09-28 量级归因证伪其因果性）+ **逐层累计 `Δq = q_in − q_out`**（真损失口径）与首次告警；**严格只读**（不写回、不否决解、不占失败预算；观测本身异常安全，单列读取失败即跳过）（v0.7.7，D9 可观测化） |
 | **阴离子收支记账** | `event_accounting.anion_leach_columns` / `leach_flux_mol`（_COLUMN_FORMATS **单一来源**）+ `DiagnosticOutput.pair_anion_conc` | 逐层逐场**阴离子淋失列**（Cl⁻/SO₄²⁻/`An⁻`，mol/ha；两通道 = 层间下移 + 出系统，取值点 = 溶质扣除**之前**，与 `moved_ions`/`q3_out_ions` 同源）+ **`E_loss` 通道分离**（`export`/`transfer`，`leach_no3_mol` 与 `pending_e_loss` 逐位不变）；`An` **不入 `solution`**（仅只读标量，避免经层间注入改变物理）；**严格只读**（不写回、不否决解、不占失败预算；负值/NaN/单列读取失败 → 0.0）（v0.7.8，D8 可判读化） |
+| **CO₂ 去气通量（碳收支闭合残差）** | `event_accounting.co2_gas_exchange_mol`（_COLUMN_FORMATS **单一来源**） | 逐层逐场 `co2_gas_exchange_Li_mol` = **入流 − 存量增量 − 随水流出 − 冲洗带出**（**正 = 去气**）；本模型无碳酸盐矿物/碳 KINETICS ⇒ 残差即气相交换量；**严格只读**（不写回、不否决解、不占失败预算；NaN/负值 → 0.0）。⚠️ 直接读气相量需 `GAS_PHASE` + `-gases`（`-fixed_pressure` 下 PHREEQC 报 0，不可用）（v0.7.9，D8 可对账化） |
 
 ### 10.3 扩展提示
 
