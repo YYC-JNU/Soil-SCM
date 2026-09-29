@@ -1019,6 +1019,7 @@ class PhreeqcEngine:
         """
         from src.hydrology import RainEvent
         from src.event_accounting import (anion_leach_columns, build_event_row,
+                                          cation_charge_columns,
                                           co2_gas_exchange_mol,
                                           first_flush_peaks)
         n = len(states)
@@ -1222,6 +1223,11 @@ class PhreeqcEngine:
                      'S': new_state.solution.get('S', 0.0),
                      'An': float(getattr(diag, 'pair_anion_conc', 0.0) or 0.0)},
                     drain_water_L, q_out_system_L)
+                # 工单97 (2026-09-29): 阳离子出流**荷电当量** (只读) — 同一取值点
+                # (溶质扣除之前) + 同一来源 (平衡后浓度 × 通道水量) ⇒ 与阴离子列
+                # 可在同一张 ANC 表内对账 (P3-ANC 恒等式的缺列)。绝不写回状态。
+                _cation_leach = cation_charge_columns(
+                    new_state.solution, drain_water_L, q_out_system_L)
                 for ion, conc in list(new_state.solution.items()):
                     if ion in ('temp', 'pH', 'pe', 'units'):
                         continue
@@ -1304,6 +1310,7 @@ class PhreeqcEngine:
                     'leach_no3_export_mol': no3_export_mol,
                     'leach_no3_transfer_mol': no3_transfer_mol,
                     **_anion_leach,
+                    **_cation_leach,
                     # 工单95 (2026-09-29): 碳收支 / CO₂ 去气通量 (只读; 正 = 去气;
                     # 供工单95 §3.3 的 P3 含气相汇闭合判定)
                     'c4_storage_delta_mol': c4_storage_delta_mol,

@@ -21,6 +21,11 @@
   ⚠️ `leach_no3_export_mol + leach_no3_transfer_mol == leach_no3_mol` 仅在
   **浮点级**成立 (三项各自独立累加以保持 `leach_no3_mol` 逐位不变 ⇒
   `pending_e_loss` 注入基准零变化, 见工单94 §5 硬约束)。
+工单97 (2026-09-29): 阳离子出流**荷电当量** (P3-ANC 恒等式闭合的缺列) — 只追加 3 列:
+    leach_cation_eq_molc (两通道和) / leach_cation_transfer_molc (drains) /
+    leach_cation_export_molc (lateral+baseflow)
+  (电荷权重 Ca/Mg ×2、K/Na ×1; 口径源 = `solution` × 通道水量, 取在溶质扣除之前;
+   ⚠️ 与旧列 `leach_base_mmol` 的摩尔和口径不同, 不得互相替代)
 """
 
 import math
@@ -63,6 +68,12 @@ _COLUMN_FORMATS = [
     ('c4_out_system_mol',      'c4_out_system_L{}_mol'),
     ('c4_flush_mol',           'c4_flush_L{}_mol'),
     ('co2_gas_exchange_mol',   'co2_gas_exchange_L{}_mol'),
+    # 工单97 (2026-09-29): 阳离子出流**荷电当量** (P3-ANC 闭合的缺列; 工单94 §E11.5)
+    # — 只追加; 口径源 = `solution` (Ca/Mg/K/Na × 通道水量, 溶质扣除之前)
+    #   ⚠️ 与旧列 `leach_base_mmol` (Ca+Mg+K **摩尔和**) 量纲/口径不同, 不得互相替代
+    ('leach_cation_eq_molc',       'leach_cation_eq_L{}_molc'),
+    ('leach_cation_transfer_molc', 'leach_cation_transfer_L{}_molc'),
+    ('leach_cation_export_molc',   'leach_cation_export_L{}_molc'),
 ]
 
 # 阴离子淋失列 ↔ 观测浓度键 (**单一来源**; 列名即 _COLUMN_FORMATS 左列)
@@ -71,6 +82,12 @@ _COLUMN_FORMATS = [
 ANION_LEACH_IONS = (('leach_cl_mol', 'Cl'),
                     ('leach_s_mol', 'S'),
                     ('leach_an_mol', 'An'))
+
+# 工单97 (2026-09-29): 阳离子出流**荷电当量**列 ↔ (溶质名, 电荷数)
+# 电荷权重与 `solution_base_eq` (工单80) / `exchange_base_ratios` 同约定:
+# Ca/Mg 二价 ×2, K/Na 一价 ×1; Al 不计入 (酸性盐基)。
+# 口径源 = `SoilState.solution` (平衡后浓度 × 通道水量) ⇒ 与阴离子列**同源同取值点**。
+CATION_LEACH_IONS = (('Ca', 2.0), ('Mg', 2.0), ('K', 1.0), ('Na', 1.0))
 
 
 def leach_flux_mol(conc_mol_L, water_L) -> float:
@@ -111,6 +128,38 @@ def anion_leach_columns(conc: dict, drain_L: float, out_system_L: float) -> dict
     return {key: (leach_flux_mol(conc.get(ion, 0.0), drain_L)
                   + leach_flux_mol(conc.get(ion, 0.0), out_system_L))
             for key, ion in ANION_LEACH_IONS}
+
+
+def cation_charge_columns(conc: dict, drain_L: float, out_system_L: float) -> dict:
+    """工单97: 逐层逐场**阳离子出流荷电当量**列 (molc/ha) — 两通道和 + 分离
+
+    口径与排水溶质扣除**同一来源**（`phreeqc_engine` 的 `moved_ions` /
+    `q3_out_ions`: 平衡后浓度 × 该通道水量; 取值点在**溶质扣除之前**）⇒
+    与工单94 的阴离子列**同源同取值点**, 二者可在同一张 ANC 表内相减。
+
+    电荷权重: `CATION_LEACH_IONS` (Ca/Mg ×2, K/Na ×1; Al 不计入)。
+
+    参数:
+        conc: 溶液浓度 dict (mol/L; 只读 Ca/Mg/K/Na 四键, 缺键 → 0.0)
+        drain_L: 层间下移水量 (drains → 下一层, L/ha)
+        out_system_L: 出系统水量 (lateral + baseflow, L/ha)
+    返回:
+        {'leach_cation_eq_molc': 两通道和,
+         'leach_cation_transfer_molc': drains 层间下移,
+         'leach_cation_export_molc': 出系统}
+        ⚠️ 恒等式 `eq == transfer + export` **由构造保证** (同一浓度/水量源)。
+    """
+    conc = conc or {}
+
+    def _eq(water_L):
+        return float(sum(z * leach_flux_mol(conc.get(ion, 0.0), water_L)
+                         for ion, z in CATION_LEACH_IONS))
+
+    transfer = _eq(drain_L)
+    export = _eq(out_system_L)
+    return {'leach_cation_eq_molc': transfer + export,
+            'leach_cation_transfer_molc': transfer,
+            'leach_cation_export_molc': export}
 
 
 def _finite_or_zero(v) -> float:
