@@ -1019,6 +1019,7 @@ class PhreeqcEngine:
         """
         from src.hydrology import RainEvent
         from src.event_accounting import (anion_leach_columns, build_event_row,
+                                          co2_gas_exchange_mol,
                                           first_flush_peaks)
         n = len(states)
         new_states = list(states)
@@ -1111,6 +1112,14 @@ class PhreeqcEngine:
                 out_ev_L = ((ev.get('drains') or [0.0] * n)[i]
                             + (ev.get('lateral') or [0.0] * n)[i]
                             + (ev.get('baseflow') or [0.0] * n)[i])
+                # 工单95 (2026-09-29): 碳收支只读观测 — **步前**层内 C(4) 存量
+                # (mol/ha)。必须在 `run_event_step` 之前取值: 其内部
+                # `_rescale_solution_for_volume` 会就地改 volume/浓度 (质量守恒
+                # 换算 ⇒ 总量不变; 极端浓缩截断时偏差由气相残差显式吸收)。
+                _s_in = new_states[i]
+                c4_before_mol = (float(_s_in.solution.get('C', 0.0) or 0.0)
+                                 * float(_s_in.volume or 0.0))
+                c4_inflow_mol = float(inflow_ions.get('C', 0.0) or 0.0)
                 new_state, diag = self.run_event_step(
                     new_states[i], rain_ev, event_action, soil_profile,
                     forcing=layer_forcing, theta_after=theta_ev,
@@ -1225,6 +1234,7 @@ class PhreeqcEngine:
                 total_lateral_i = lat_out_L
                 total_base_i = base_out_L
                 flush_L = 0.0
+                c4_flush_mol = 0.0        # 工单95: 冲洗带出的 C(4) (mol/ha)
                 # 浓度冲洗 (Q6: C_warn 超限 → 折算额外水量出口 + 同比例扣溶质)
                 sol_conc = {k: v for k, v in new_state.solution.items()
                             if k not in ('temp', 'pH', 'pe', 'units')}
@@ -1234,6 +1244,11 @@ class PhreeqcEngine:
                     flush_L = water_after_L * (excess / max_c)
                     if flush_L > 0:
                         frac_flush = min(flush_L / water_after_L, 1.0)
+                        # 工单95 (2026-09-29): 冲洗带出 C(4) — 必须在下面浓度
+                        # 改写**之前**取值 (只读记账; 本项是碳收支的非水流出口)
+                        c4_flush_mol = (float(new_state.solution.get('C', 0.0)
+                                              or 0.0)
+                                        * water_after_L * frac_flush)
                         for ion, conc in list(new_state.solution.items()):
                             if ion in ('temp', 'pH', 'pe', 'units'):
                                 continue
@@ -1249,6 +1264,18 @@ class PhreeqcEngine:
                     + new_state.solution.get('K', 0.0)) * drain_i * 1000.0
                 # 本场用于分级注入的伴随当量 (记账列 = 注入前的上一场淋失当量)
                 companion_eq_i = pending_e_loss[i]
+                # 工单95 (2026-09-29): **碳收支闭合残差** (只读; 正 = 去气)
+                #   gas = 入流 − 存量增量 − 随水流出(drains + 出系统) − 冲洗带出
+                # 本模型无碳酸盐矿物/碳 KINETICS ⇒ 水相 C(4) 的收支缺项只剩气相
+                # 交换 (WF18 §E8 ③; 旧边界对照见 tools/probe_co2_flux.py)。
+                c4_after_mol = (float(new_state.solution.get('C', 0.0) or 0.0)
+                                * float(new_state.volume or 0.0))
+                c4_drain_out_mol = float(moved_ions.get('C', 0.0) or 0.0)
+                c4_out_system_mol = float(q3_out_ions.get('C', 0.0) or 0.0)
+                c4_storage_delta_mol = c4_after_mol - c4_before_mol
+                co2_gas_i = co2_gas_exchange_mol(
+                    c4_storage_delta_mol, c4_inflow_mol,
+                    c4_drain_out_mol + c4_out_system_mol, c4_flush_mol)
                 ledger = {
                     'n_no3_pool': new_state.n_no3_pool,
                     'leach_no3_mol': leach_no3_i,
@@ -1277,6 +1304,14 @@ class PhreeqcEngine:
                     'leach_no3_export_mol': no3_export_mol,
                     'leach_no3_transfer_mol': no3_transfer_mol,
                     **_anion_leach,
+                    # 工单95 (2026-09-29): 碳收支 / CO₂ 去气通量 (只读; 正 = 去气;
+                    # 供工单95 §3.3 的 P3 含气相汇闭合判定)
+                    'c4_storage_delta_mol': c4_storage_delta_mol,
+                    'c4_inflow_mol': c4_inflow_mol,
+                    'c4_drain_out_mol': c4_drain_out_mol,
+                    'c4_out_system_mol': c4_out_system_mol,
+                    'c4_flush_mol': c4_flush_mol,
+                    'co2_gas_exchange_mol': co2_gas_i,
                 }
                 layer_rows.append(ledger)
                 if i == 0:

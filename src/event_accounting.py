@@ -55,6 +55,14 @@ _COLUMN_FORMATS = [
     ('leach_an_mol',           'leach_an_L{}_mol'),
     ('leach_no3_export_mol',   'leach_no3_export_L{}_mol'),
     ('leach_no3_transfer_mol', 'leach_no3_transfer_L{}_mol'),
+    # 工单95 (2026-09-29): 碳收支 / CO₂ 去气通量 (D8 开体系酸汇显式入账) —
+    # 只追加; 五分量 + 闭合残差 (正 = 去气)
+    ('c4_storage_delta_mol',   'c4_storage_delta_L{}_mol'),
+    ('c4_inflow_mol',          'c4_inflow_L{}_mol'),
+    ('c4_drain_out_mol',       'c4_drain_out_L{}_mol'),
+    ('c4_out_system_mol',      'c4_out_system_L{}_mol'),
+    ('c4_flush_mol',           'c4_flush_L{}_mol'),
+    ('co2_gas_exchange_mol',   'co2_gas_exchange_L{}_mol'),
 ]
 
 # 阴离子淋失列 ↔ 观测浓度键 (**单一来源**; 列名即 _COLUMN_FORMATS 左列)
@@ -103,6 +111,41 @@ def anion_leach_columns(conc: dict, drain_L: float, out_system_L: float) -> dict
     return {key: (leach_flux_mol(conc.get(ion, 0.0), drain_L)
                   + leach_flux_mol(conc.get(ion, 0.0), out_system_L))
             for key, ion in ANION_LEACH_IONS}
+
+
+def _finite_or_zero(v) -> float:
+    """工单95: 只读观测取数护栏 — 不可解析/NaN/Inf → 0.0 (绝不中断模拟)"""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return 0.0
+    return f if math.isfinite(f) else 0.0
+
+
+def co2_gas_exchange_mol(storage_delta_mol, inflow_mol, outflow_mol,
+                         flush_mol) -> float:
+    """工单95: 碳收支闭合残差 (= CO₂ 气相交换量, mol/ha; **正 = 去气/释放**)
+
+    闭合式: `gas = 入流 − 存量增量 − 随水流出 − 冲洗带出`
+    （等价于"水相 C(4) 的收支缺项"）。
+
+    物理依据 (工单95 §2/§3): 本模型**无碳酸盐矿物相、无碳 KINETICS** ⇒ 水相 C(4)
+    的变化只能来自 ① 水/溶质输运 ② **气相交换**（+ 未入账的数值残差）
+    ⇒ 残差即 CO₂ 通量估计。去气 (`H⁺ + HCO₃⁻ → CO₂↑`) 不留态量痕迹，
+    故必须由**恒等式闭合**反解（WF18 §E8 ③）。
+
+    参数:
+        storage_delta_mol: 本层本场**层内** C(4) 存量变化 (后 − 前; 含体积效应)
+        inflow_mol: 层间入流 C(4) (上层 drains 携带; L1 = 0)
+        outflow_mol: 随水流出 (drains 下移 + lateral/baseflow 出系统)
+        flush_mol: 浓度冲洗 (CONC_WARN) 带出的 C(4)
+    返回:
+        float (mol/ha) — 不可解析/非有限输入按 0.0 计 (与 `leach_flux_mol` 同约束)
+    """
+    return (_finite_or_zero(inflow_mol)
+            - _finite_or_zero(storage_delta_mol)
+            - _finite_or_zero(outflow_mol)
+            - _finite_or_zero(flush_mol))
 
 
 def build_event_row(ev_meta: dict, layer_rows: List[dict]) -> dict:
