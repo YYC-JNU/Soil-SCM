@@ -45,10 +45,16 @@ def test_column_formats_appends_anion_and_e_loss_split_columns():
 
 
 def test_column_formats_is_append_only_historical_prefix_unchanged():
-    """**只追加**契约: 历史列名与顺序逐位不变 (下游 CSV/脚本依赖)"""
-    assert [k for k, _ in _COLUMN_FORMATS][:len(_HISTORICAL_KEYS)] \
-        == _HISTORICAL_KEYS
-    assert len(_COLUMN_FORMATS) == len(_HISTORICAL_KEYS) + 5
+    """**只追加**契约: 历史列名与顺序逐位不变 (下游 CSV/脚本依赖)
+
+    ⚠️ 不断言总列数 —— 后续只读票 (工单95 碳账 +6 列等) 会继续追加；
+    改钉「**紧随历史前缀的 5 键块**」⇒ 仍能抓"插队/改名"，但不与后续追加耦合。
+    """
+    keys = [k for k, _ in _COLUMN_FORMATS]
+    assert keys[:len(_HISTORICAL_KEYS)] == _HISTORICAL_KEYS
+    assert keys[len(_HISTORICAL_KEYS):len(_HISTORICAL_KEYS) + 5] == [
+        'leach_cl_mol', 'leach_s_mol', 'leach_an_mol',
+        'leach_no3_export_mol', 'leach_no3_transfer_mol']
 
 
 def test_build_event_row_expands_anion_columns_per_layer():
