@@ -1130,6 +1130,17 @@ class PhreeqcEngine:
                 last_diags[i] = diag
                 # 工单96 (2026-09-28): 交换位点往返漂移只读累计 (逐层; D9)
                 self._observe_site_roundtrip(i, diag)
+                # 工单100 (2026-09-30): 气相自洽性**只读**观测 —
+                # 跳过步（失败/保留前状态）或非 PHREEQC 路径（简化/降级）⇒
+                # 选择输出非本步结果 ⇒ 记"未观测"(0.0)，绝不复用陈旧行
+                _phreeqc_step = (self.mode != 'simplified'
+                                 and self.backend == 'official'
+                                 and self.official is not None
+                                 and not getattr(self, '_permanent_fallback',
+                                                 False))
+                co2_si_i, co2_aq_mol_i = (
+                    (0.0, 0.0) if (diag is None or not _phreeqc_step)
+                    else self._read_co2_gas_columns())
 # ---- v0.7.0 (工单70): NO3- 示踪池水库串联淋失 (池随水移出, pool≥0) ----
                 leach_no3_i = 0.0
                 # 工单94 (2026-09-28): **E_loss 通道分离只读记账** (D8 预算可判读化)
@@ -1319,6 +1330,10 @@ class PhreeqcEngine:
                     'c4_out_system_mol': c4_out_system_mol,
                     'c4_flush_mol': c4_flush_mol,
                     'co2_gas_exchange_mol': co2_gas_i,
+                    # 工单100 (2026-09-30): 气相自洽性 (零假设判据; 只读) —
+                    # `SI(CO2(g))` 相对 1 atm 纯气 ⇒ 边界满足 ⇔ SI == log10(pCO₂)
+                    'co2_si': co2_si_i,
+                    'co2_aq_mol': co2_aq_mol_i,
                 }
                 layer_rows.append(ledger)
                 if i == 0:
@@ -1385,6 +1400,43 @@ class PhreeqcEngine:
         if not raw:
             return ''
         return str(raw).strip().replace('\n', ' | ')
+
+    def _read_co2_gas_columns(self) -> Tuple[float, float]:
+        """工单100 (2026-09-30) **只读**: 气相自洽性两列取值
+
+        返回 `(si, co2_aq_mol)`：
+          · `si`        = `SELECTED_OUTPUT` 的 `si_CO2(g)`（**相对 1 atm 纯气**）
+            ⇒ 固定逸度边界被满足 ⇔ `si == log10(pCO₂_imposed)`
+          · `co2_aq_mol` = `co2_aq_molal`（USER_PUNCH `MOL("CO2")`, mol/kgw）
+            × `mass_H2O`（kg/ha）⇒ **mol/ha**
+
+        缺列/异常 ⇒ `(0.0, 0.0)`（"未观测"口径，与工单94 `pair_anion_conc` 同约定）；
+        **绝不**改状态、不写回、不占失败预算（与工单91 P2 / 93 / 96 同硬约束）。
+        """
+        try:
+            p = self.official
+            ncols = p.GetSelectedOutputColumnCount()
+            idx: Dict[str, int] = {}
+            for c in range(ncols):
+                h = str(p.GetSelectedOutputValue(0, c))
+                if h not in idx:
+                    idx[h] = c
+            last = p.GetSelectedOutputRowCount() - 1
+            si_c = idx.get('si_CO2(g)')
+            aq_c = idx.get('co2_aq_molal')
+            w_c = idx.get('mass_H2O')
+            si = (float(p.GetSelectedOutputValue(last, si_c))
+                  if si_c is not None else 0.0)
+            molal = (float(p.GetSelectedOutputValue(last, aq_c))
+                     if aq_c is not None else 0.0)
+            kgw = (float(p.GetSelectedOutputValue(last, w_c))
+                   if w_c is not None else 0.0)
+            si = si if math.isfinite(si) else 0.0
+            molal = molal if math.isfinite(molal) else 0.0
+            kgw = kgw if math.isfinite(kgw) else 0.0
+            return si, molal * max(kgw, 0.0)
+        except Exception:
+            return 0.0, 0.0
 
     def _read_row_states(self, nrows: int, idx: dict) -> list:
         """只读: SELECTED_OUTPUT 数据行的 `state` 列取值 (按行序)

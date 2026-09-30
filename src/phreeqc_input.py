@@ -268,6 +268,18 @@ def _build_tail(lines, state, forcing, action, cfg, n_reaction, inject_water):
     mineral_names = [m for m, v in state.minerals.items() if v > 0]
     if mineral_names:
         lines.append("  -equilibrium_phases " + " ".join(mineral_names))
+    # 工单100 (2026-09-30): 气相自洽性**只读**观测列 (零假设判据) —
+    #   `si_CO2(g)` 相对 **1 atm 纯气** ⇒ 固定逸度边界被满足 ⇔ `SI == log10(pCO₂)`
+    #   （纯增量输出列: 不参与任何平衡计算, 见 tests/test_co2_gas_consistency.py）
+    lines.append("  -saturation_indices CO2(g)")
+    lines.append("END")
+    # ⚠️ `[CO2]aq` 必须走 USER_PUNCH 自定表头, **禁止**追加到 `-molalities`:
+    #    `src/diagnostics.parse_exchange_molalities` 按「`m_` 前缀 + `(mol/kgw)`」全收,
+    #    会把 `m_CO2` 当交换物种计入 `site_total/site_gap`（工单96 产品列）。
+    lines.append("")
+    lines.append("USER_PUNCH 1")
+    lines.append("  -headings co2_aq_molal")
+    lines.append('  10 PUNCH MOL("CO2")')
     lines.append("END")
 
     return "\n".join(lines)

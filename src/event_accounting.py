@@ -74,6 +74,13 @@ _COLUMN_FORMATS = [
     ('leach_cation_eq_molc',       'leach_cation_eq_L{}_molc'),
     ('leach_cation_transfer_molc', 'leach_cation_transfer_L{}_molc'),
     ('leach_cation_export_molc',   'leach_cation_export_L{}_molc'),
+    # 工单100 (2026-09-30): 气相自洽性**只读**观测 (零假设判据; 工单99 §6.1.3)
+    # — 只追加; 语义见 `src/phreeqc_input.py` 的 SELECTED_OUTPUT/USER_PUNCH 注:
+    #   `co2_si`     = `SI(CO2(g))`（**相对 1 atm 纯气**）⇒ 边界被满足 ⇔
+    #                  `co2_si == log10(pCO₂_imposed)`（0.0 = 未观测/该步被跳过）
+    #   `co2_aq_mol` = 层内 `[CO2]aq` 当量 (mol/ha) = molality × `mass_H2O`
+    ('co2_si',     'co2_si_L{}'),
+    ('co2_aq_mol', 'co2_aq_L{}_mol'),
 ]
 
 # 阴离子淋失列 ↔ 观测浓度键 (**单一来源**; 列名即 _COLUMN_FORMATS 左列)
