@@ -53,10 +53,15 @@ def test_co2_gas_columns_are_appended_with_exact_names():
 
 
 def test_co2_gas_columns_keep_historical_prefix_unchanged():
-    """**只追加**契约: 历史 32 列逐位不变 + 本工单 2 列紧随其后"""
+    """**只追加**契约: 历史 32 列逐位不变 + 本工单 2 列紧随其后
+
+    ⚠️ 2026-10-01 工单101 追加 12 列 ⇒ 本断言按先例（工单97→100）收窄为
+    "工单100 两列**紧随历史块**"；其后追加列由其各自票面的契约测试负责。
+    """
     keys = [k for k, _ in _COLUMN_FORMATS]
     assert keys[:len(_HISTORICAL_KEYS)] == _HISTORICAL_KEYS
-    assert keys[len(_HISTORICAL_KEYS):] == list(_CO2_GAS_COLUMNS)
+    n = len(_HISTORICAL_KEYS)
+    assert keys[n:n + len(_CO2_GAS_COLUMNS)] == list(_CO2_GAS_COLUMNS)
 
 
 def test_build_event_row_expands_co2_gas_columns_per_layer():
