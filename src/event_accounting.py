@@ -81,6 +81,22 @@ _COLUMN_FORMATS = [
     #   `co2_aq_mol` = 层内 `[CO2]aq` 当量 (mol/ha) = molality × `mass_H2O`
     ('co2_si',     'co2_si_L{}'),
     ('co2_aq_mol', 'co2_aq_L{}_mol'),
+    # 工单101 (2026-10-01): P3-ANC 观测面三组只读列 — 只追加; 历史列名/顺序逐位不变
+    #   A 溶液侧 NO₃⁻（与 Cl/S/An 同源同取值点; 与"池口径" leach_no3_* 不可相减）
+    ('n_sol_transfer_mol',         'leach_n_sol_transfer_L{}_mol'),
+    ('n_sol_export_mol',           'leach_n_sol_export_L{}_mol'),
+    ('n_sol_flush_mol',            'leach_n_sol_flush_L{}_mol'),
+    ('n_sol_mol',                  'leach_n_sol_L{}_mol'),
+    #   B Q6 flush 通道（浓度源 = 扣除后/冲洗前; 与 c4_flush_mol 同式）
+    ('cation_flush_molc',          'leach_cation_flush_L{}_molc'),
+    ('cl_flush_mol',               'leach_cl_flush_L{}_mol'),
+    ('s_flush_mol',                'leach_s_flush_L{}_mol'),
+    ('an_flush_mol',               'leach_an_flush_L{}_mol'),
+    #   C 降水 ANC 输入（eq/ha; 面板口径 precip_chem=None ⇒ 恒 0 = "未注入"哨兵）
+    ('rain_bc_in_eq',              'rain_bc_in_L{}_eq'),
+    ('rain_sa_in_eq',              'rain_sa_in_L{}_eq'),
+    ('rain_nh4_in_eq',             'rain_nh4_in_L{}_eq'),
+    ('rain_anc_in_eq',             'rain_anc_in_L{}_eq'),
 ]
 
 # 阴离子淋失列 ↔ 观测浓度键 (**单一来源**; 列名即 _COLUMN_FORMATS 左列)
@@ -176,6 +192,114 @@ def _finite_or_zero(v) -> float:
     except (TypeError, ValueError):
         return 0.0
     return f if math.isfinite(f) else 0.0
+
+
+def _leach_mol(conc, water_L) -> float:
+    """只读取数护栏: 浓度(mol/L) × 水量(L); 负水量/缺失/NaN ⇒ 0.0"""
+    w = _finite_or_zero(water_L)
+    if w <= 0.0:
+        return 0.0
+    return _finite_or_zero(conc) * w
+
+
+# 工单101 (2026-10-01): P3-ANC 观测面三组只读列的离子集合
+N_SOL_SPECIES = 'N'
+FLUSH_CATIONS = (('Ca', 2.0), ('Mg', 2.0), ('K', 1.0), ('Na', 1.0))
+RAIN_SPECIES = ('Ca+2', 'Mg+2', 'K+', 'Na+', 'NH4+', 'H+',
+                'Cl-', 'SO4-2', 'NO3-', 'F-')
+
+
+def solution_n_columns(conc: dict, drain_L: float, out_system_L: float,
+                       flush_L: float = 0.0) -> dict:
+    """工单101 A 组: **溶液侧 NO₃⁻** 三通道出流 (mol/ha) + 恒等列
+
+    口径与工单94 `anion_leach_columns` / 工单97 `cation_charge_columns`
+    **同源同取值点**（平衡后 `SELECTED_OUTPUT` totals，溶质扣除**之前**）⇒
+    可在同一张 ANC 表内与 Cl/S/An 对账。
+
+    ⚠️ 与账本 `leach_no3_mol`（**虚拟池**跟踪）**不可相减**：工单98 §6.1 实测
+    fertilizer L1 池 76,959 vs 溶液侧 **1.54**（比值 2×10⁻⁵）⇒ 池的 NO₃⁻ 质量
+    **未进入溶液**（其电荷效应经 `inert_eq`/`acid_eq` 替代注入）。
+
+    参数:
+        conc: 溶液浓度 dict (mol/L; 只读 'N' 键, 缺键 → 0.0)
+        drain_L / out_system_L / flush_L: 三通道水量 (L/ha)
+    返回:
+        {'n_sol_transfer_mol': drains, 'n_sol_export_mol': lateral+baseflow,
+         'n_sol_flush_mol': 冲洗通道, 'n_sol_mol': 三者之和}
+        ⚠️ 恒等式 `n_sol_mol == transfer + export + flush` **由构造保证**。
+    """
+    conc = conc or {}
+    tr = _leach_mol(conc.get(N_SOL_SPECIES, 0.0), drain_L)
+    ex = _leach_mol(conc.get(N_SOL_SPECIES, 0.0), out_system_L)
+    fl = _leach_mol(conc.get(N_SOL_SPECIES, 0.0), flush_L)
+    return {'n_sol_transfer_mol': tr, 'n_sol_export_mol': ex,
+            'n_sol_flush_mol': fl, 'n_sol_mol': tr + ex + fl}
+
+
+def flush_leach_columns(conc: dict, pair_anion_conc: float,
+                        flush_L: float) -> dict:
+    """工单101 B 组: **Q6 浓度冲洗通道**只读记账 (mol/ha / molc/ha)
+
+    与既有 `c4_flush_mol` (**同式**): 冲洗带出量 = 浓度 × `flush_L`
+    （`flush_L = water_after_L × (max_c − CONC_WARN)/max_c`，引擎 Q6）。
+    ⚠️ 该通道浓度源 = **溶质扣除后 / 冲洗前**（`flush_L` 本身定义于该浓度面）
+    —— 与 A 组/工单94 的"扣除前"口径**不同**（票面 §2 已写明）。
+
+    参数:
+        conc: 冲洗前溶液浓度 dict (mol/L); `pair_anion_conc` = `An` 标量
+              (`DiagnosticOutput.pair_anion_conc`; `An` 不入 `solution`)
+        flush_L: 冲洗水量 (L/ha)
+    返回:
+        {'cation_flush_molc': (2Ca+2Mg+K+Na)×flush_L (荷电当量),
+         'cl_flush_mol' / 's_flush_mol' / 'an_flush_mol': 摩尔}
+        ⇒ `ANC_flush = cation − (cl + 2·s + an)`（供 P3-ANC 表使用）。
+    """
+    conc = conc or {}
+    cat = sum(z * _leach_mol(conc.get(ion, 0.0), flush_L)
+              for ion, z in FLUSH_CATIONS)
+    return {'cation_flush_molc': cat,
+            'cl_flush_mol': _leach_mol(conc.get('Cl', 0.0), flush_L),
+            's_flush_mol': _leach_mol(conc.get('S', 0.0), flush_L),
+            'an_flush_mol': _leach_mol(pair_anion_conc, flush_L)}
+
+
+def rain_anc_columns(precip_chem, water_L: float,
+                     bypass_L: float = 0.0) -> dict:
+    """工单101 C 组: **降水化学注入的 ANC/电荷分量** (eq/ha) — 只读复算
+
+    与 `src/phreeqc_input._collect_reaction_lines` **逐行同式**:
+    `amounts = precip_chem.reaction_amounts(water_L)`（+ 优先流 `bypass_L`）。
+
+    ⚠️ **口径（必须标注）**: `precip_chem is None`（**权威面板 / 基线包 / 全部探针**）
+    ⇒ 引擎**未注入**降水化学 ⇒ 本组**恒 0.0**（"未注入"哨兵，非"未入账"）。
+    只有产品端到端 `main.py` 传 `PrecipChemistry` ⇒ 本组才有值。
+
+    ⚠️ **默认降水化学配置电荷不平衡**（`config/precip_chemistry_default.json`
+    当量占比：阳离子 55.2 + H⁺ 1.0 vs 阴离子 43.8 ⇒ **阳离子过量 12.4%**）
+    ⇒ `rain_anc_in_eq > 0`；**不得**按 gross BC 入账（须按**净 ANC**）。
+
+    返回:
+        {'rain_bc_in_eq': 2Ca+2Mg+K+Na, 'rain_sa_in_eq': Cl+2SO4+NO3+F,
+         'rain_nh4_in_eq': NH4+, 'rain_anc_in_eq': BC+NH4−SA−H+}
+    """
+    out = {'rain_bc_in_eq': 0.0, 'rain_sa_in_eq': 0.0,
+           'rain_nh4_in_eq': 0.0, 'rain_anc_in_eq': 0.0}
+    if precip_chem is None:
+        return out
+    tot = {sp: 0.0 for sp in RAIN_SPECIES}
+    for w in (water_L, bypass_L):
+        if _finite_or_zero(w) <= 0.0:
+            continue
+        amt = precip_chem.reaction_amounts(w)
+        for sp in RAIN_SPECIES:
+            tot[sp] += _finite_or_zero(amt.get(sp, 0.0))
+    bc = 2.0 * tot['Ca+2'] + 2.0 * tot['Mg+2'] + tot['K+'] + tot['Na+']
+    sa = tot['Cl-'] + 2.0 * tot['SO4-2'] + tot['NO3-'] + tot['F-']
+    out.update({'rain_bc_in_eq': bc, 'rain_sa_in_eq': sa,
+                'rain_nh4_in_eq': tot['NH4+'],
+                'rain_anc_in_eq': bc + tot['NH4+'] - sa - tot['H+']})
+    return out
 
 
 def co2_gas_exchange_mol(storage_delta_mol, inflow_mol, outflow_mol,

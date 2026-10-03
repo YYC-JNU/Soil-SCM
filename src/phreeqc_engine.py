@@ -1021,7 +1021,10 @@ class PhreeqcEngine:
         from src.event_accounting import (anion_leach_columns, build_event_row,
                                           cation_charge_columns,
                                           co2_gas_exchange_mol,
-                                          first_flush_peaks)
+                                          first_flush_peaks,
+                                          flush_leach_columns,
+                                          rain_anc_columns,
+                                          solution_n_columns)
         n = len(states)
         new_states = list(states)
         last_diags = [None] * n
@@ -1239,6 +1242,13 @@ class PhreeqcEngine:
                 # 可在同一张 ANC 表内对账 (P3-ANC 恒等式的缺列)。绝不写回状态。
                 _cation_leach = cation_charge_columns(
                     new_state.solution, drain_water_L, q_out_system_L)
+                # 工单101 A 组 (2026-10-01): **溶液侧 NO₃⁻** 只读记账 —
+                # 与工单94 阴离子列 / 工单97 阳离子列**同源同取值点**（溶质扣除之前）
+                # ⚠️ 与账本 `leach_no3_mol`（**虚拟池**跟踪）**不可相减**（工单98 §6.1：
+                # fertilizer L1 池 76,959 vs 溶液侧 1.54 ⇒ 池的 NO₃⁻ 未进入溶液）。
+                _n_sol_pre = solution_n_columns(new_state.solution,
+                                                drain_water_L,
+                                                q_out_system_L, 0.0)
                 for ion, conc in list(new_state.solution.items()):
                     if ion in ('temp', 'pH', 'pe', 'units'):
                         continue
@@ -1252,6 +1262,8 @@ class PhreeqcEngine:
                 total_base_i = base_out_L
                 flush_L = 0.0
                 c4_flush_mol = 0.0        # 工单95: 冲洗带出的 C(4) (mol/ha)
+                # 工单101 B 组 (2026-10-01): Q6 冲洗通道只读记账 (缺省全 0)
+                _flush_cols = flush_leach_columns({}, 0.0, 0.0)
                 # 浓度冲洗 (Q6: C_warn 超限 → 折算额外水量出口 + 同比例扣溶质)
                 sol_conc = {k: v for k, v in new_state.solution.items()
                             if k not in ('temp', 'pH', 'pe', 'units')}
@@ -1266,6 +1278,20 @@ class PhreeqcEngine:
                         c4_flush_mol = (float(new_state.solution.get('C', 0.0)
                                               or 0.0)
                                         * water_after_L * frac_flush)
+                        # 工单101 B 组 (2026-10-01): 与上一条 `c4_flush_mol`
+                        # **同式**（浓度源 = 扣除后 / 冲洗前）× `flush_L`
+                        _flush_cols = flush_leach_columns(
+                            new_state.solution,
+                            float(getattr(diag, 'pair_anion_conc', 0.0) or 0.0),
+                            flush_L)
+                        # A 组恒等: `total = transfer + export + flush`
+                        _n_sol_pre['n_sol_flush_mol'] = solution_n_columns(
+                            new_state.solution, 0.0, 0.0,
+                            flush_L)['n_sol_flush_mol']
+                        _n_sol_pre['n_sol_mol'] = (
+                            _n_sol_pre['n_sol_transfer_mol']
+                            + _n_sol_pre['n_sol_export_mol']
+                            + _n_sol_pre['n_sol_flush_mol'])
                         for ion, conc in list(new_state.solution.items()):
                             if ion in ('temp', 'pH', 'pe', 'units'):
                                 continue
@@ -1293,6 +1319,18 @@ class PhreeqcEngine:
                 co2_gas_i = co2_gas_exchange_mol(
                     c4_storage_delta_mol, c4_inflow_mol,
                     c4_drain_out_mol + c4_out_system_mol, c4_flush_mol)
+                # 工单101 C 组 (2026-10-01): **降水 ANC 输入**只读复算 —
+                # 与 `src.phreeqc_input._collect_reaction_lines` **逐行同式**
+                # （水量 = `inflow_water_L`；缺省回退 precip×1e4×precip_infiltration；
+                #  优先流另加 `bypass_water_L`）。⚠️ 面板/基线包/探针
+                # `precip_chem is None` ⇒ **未注入** ⇒ 本组恒 0（哨兵，非"未入账"）。
+                _rain_w = layer_forcing.get('inflow_water_L')
+                if _rain_w is None:
+                    _rain_w = (float(layer_forcing.get('precip', 0.0) or 0.0)
+                               * 10000.0 * self.precip_infiltration)
+                _rain_cols = rain_anc_columns(
+                    self.precip_chem, float(_rain_w or 0.0),
+                    float(layer_forcing.get('bypass_water_L', 0.0) or 0.0))
                 ledger = {
                     'n_no3_pool': new_state.n_no3_pool,
                     'leach_no3_mol': leach_no3_i,
@@ -1334,6 +1372,13 @@ class PhreeqcEngine:
                     # `SI(CO2(g))` 相对 1 atm 纯气 ⇒ 边界满足 ⇔ SI == log10(pCO₂)
                     'co2_si': co2_si_i,
                     'co2_aq_mol': co2_aq_mol_i,
+                    # 工单101 (2026-10-01): P3-ANC 观测面三组 (只读; 工单98 §6.1 缺口)
+                    #   A 溶液侧 NO₃⁻ (与 Cl/S/An 同源同取值点; 与池口径不可相减)
+                    #   B Q6 flush 通道 (与 c4_flush_mol 同式)
+                    #   C 降水 ANC 输入 (eq/ha; 面板口径 ⇒ 恒 0 哨兵)
+                    **_n_sol_pre,
+                    **_flush_cols,
+                    **_rain_cols,
                 }
                 layer_rows.append(ledger)
                 if i == 0:
