@@ -527,7 +527,9 @@ def run_simulation(config_path: str = "config/config.yaml"):
                            base_leaching_cfg=getattr(cfg.simulation,
                                                       'base_leaching', None),
                            surface_acid_cfg=getattr(cfg.simulation,
-                                                    'surface_acid', None))
+                                                    'surface_acid', None),
+                           amendments_surface_only=getattr(
+                               cfg.simulation, 'amendments_surface_only', True))
 
     # 构建初始状态 (initial_pCO2 已在阶段 4 中计算)
     # WF2/Q1: 多分层时构建 List[SoilState]; L6 (v0.4.0): 支持逐层参数覆盖

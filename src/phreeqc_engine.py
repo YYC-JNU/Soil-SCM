@@ -58,7 +58,7 @@ from src.geochemistry import (advance_nitrification, exchange_base_ratios,
                               weathering_arrhenius_factor)
 from src.phreeqc_input import PhreeqcInputConfig, build_phreeqc_input
 from src.logging_config import get_logger
-from src.scenario_controller import MonthlyAction
+from src.scenario_controller import MonthlyAction, surface_scoped
 
 logger = get_logger("phreeqc_engine")
 
@@ -233,7 +233,8 @@ class PhreeqcEngine:
                  weathering_cfg=None,
                  charge_pairing_cfg=None,
                  base_leaching_cfg=None,
-                 surface_acid_cfg=None):
+                 surface_acid_cfg=None,
+                 amendments_surface_only: bool = True):
         """
         参数:
             database: PHREEQC 热力学数据库
@@ -329,6 +330,11 @@ class PhreeqcEngine:
             (surface_acid_cfg.rate_molc_ha_yr / 12.0)
             if self.surface_acid_enabled else 0.0)
         self.surface_acid_anion_defined = self.surface_acid_enabled
+        # v0.7.13 (工单99·B2′ / 工单98·W4 改写): **表层物理化** — 石灰/施肥是
+        # 表面撒施干预, 只作用于 L1; 多层编排默认把深层 (i>0) 的 action 表层化
+        # (scenario_controller.surface_scoped)。False = 旧「逐层注入」= A/B 对照。
+        # 依据: dev-notes/W4_LAYER_GATING_ROOTCAUSE.md (D7 根因: 4× 剂量 + 直施深层)。
+        self.amendments_surface_only = bool(amendments_surface_only)
         # 配对阴离子名: companion 启用时与其 inert_anion 共享 (单一定义);
         # 否则用 charge_pairing.anion (默认 An); 否则 base_leaching.anion
         if companion_cfg is not None and companion_cfg.enable:
@@ -913,8 +919,13 @@ class PhreeqcEngine:
                 layer_forcing['inflow_ions'] = inflow_ions
             # 工单86 (2026-08-31): 分层 KNOBS 迭代透传 (深层 L3/L4 用
             # KNOBS_ITERATIONS_DEEP, 当前=500; 探针证伪 1000 负收益)
+            # v0.7.13 (工单99·B2′ / 工单98·W4 改写): **表层物理化门控** —
+            # 月级路径同式补门控 (深层 i>0 用表层化 action; 新对象, 不就地改)。
+            layer_action = action
+            if i > 0 and self.amendments_surface_only:
+                layer_action = surface_scoped(action)
             new_state, diag = self.run_monthly_step(
-                states[i], layer_forcing, action, soil_profile,
+                states[i], layer_forcing, layer_action, soil_profile,
                 layer_index=i, n_layers=n)
             new_states.append(new_state)
             diags.append(diag)
@@ -1124,8 +1135,15 @@ class PhreeqcEngine:
                 c4_before_mol = (float(_s_in.solution.get('C', 0.0) or 0.0)
                                  * float(_s_in.volume or 0.0))
                 c4_inflow_mol = float(inflow_ions.get('C', 0.0) or 0.0)
+                # v0.7.13 (工单99·B2′ / 工单98·W4 改写): **表层物理化门控** —
+                # 石灰/施肥仅表层 L1; 深层 (i>0) 用表层化 action (新对象, 绝不
+                # 就地改共享 event_action ⇒ 不污染后续层/后续月份)。
+                # `amendments_surface_only=False` 时保持旧「逐层注入」(A/B)。
+                layer_action = event_action
+                if i > 0 and self.amendments_surface_only:
+                    layer_action = surface_scoped(event_action)
                 new_state, diag = self.run_event_step(
-                    new_states[i], rain_ev, event_action, soil_profile,
+                    new_states[i], rain_ev, layer_action, soil_profile,
                     forcing=layer_forcing, theta_after=theta_ev,
                     event_out_water_L=out_ev_L,
                     layer_index=i, n_layers=n)

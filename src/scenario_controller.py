@@ -12,6 +12,8 @@
 from dataclasses import dataclass
 from typing import List
 
+import copy
+
 
 @dataclass
 class MonthlyAction:
@@ -26,6 +28,45 @@ class MonthlyAction:
 
     apply_lime: bool = False
     lime_amount: float = 0.0             # kg CaO/ha/次
+
+
+def surface_scoped(action):
+    """v0.7.13 (工单99·B2′ / 工单98·W4 改写): 表层化操作指令 — 石灰/施肥仅表层 L1
+
+    【为什么】石灰与施肥是**表面撒施**干预（USERGUIDE §4.4「生石灰（CaO）
+    施入中和酸性」「石灰月份 3/6/9」），只作用于表层。但多层编排
+    （`phreeqc_engine._run_multi_layer_events`）把**同一个** `MonthlyAction`
+    传给每一层的 `run_event_step`，而 `build_phreeqc_input` 对
+    `apply_lime`/`apply_fertilizer` **无 layer 门控** ⇒ 实际注入了全部 4 层
+    = **4× 剂量 + 直施深层 L2~L4**。
+    对照：`surface_acid_eq`（引擎 :1064，`i == 0`）与 `skip_nitrification`
+    （:1060，`i > 0`）**均已显式层门控** ⇒ 石灰/施肥属**漏加门控**。
+
+    【后果（dev 只读归因，证据级）】深层获得本地碱/盐基源 ⇒ 深层溶液
+    Ca 顶到 0.5 mol/L（盐水态）⇒ Q6 浓度钳制（`CONC_WARN`）→ `E_base`
+    腔回路 ⇒ L4 交换相一年内翻转、pH 崩到 ~2.1（D7）。
+    全文：`.scratch/soil-scm-overview/dev-notes/W4_LAYER_GATING_ROOTCAUSE.md`。
+
+    【语义】返回**新对象**（`copy.copy`；**绝不就地改共享 action**，否则会污染
+    同一月的后续层、以及后续月份复用同一对象的调用方）：
+      - `apply_lime`/`apply_fertilizer` → False
+      - `lime_amount` 及各肥料量 → 0.0（防未来新增路径绕过 `apply_*` 门控读取）
+    其余字段原样保留。
+
+    【A/B】`PhreeqcEngine(amendments_surface_only=False)`（或配置
+    `simulation.amendments_surface_only: false`）= 旧「逐层注入」行为（对照）。
+    """
+    if action is None:
+        return None
+    scoped = copy.copy(action)
+    for flag in ('apply_lime', 'apply_fertilizer'):
+        if hasattr(scoped, flag):
+            setattr(scoped, flag, False)
+    for fld in ('lime_amount', 'n_amount', 'p2o5_amount', 'k2o_amount',
+                'mgo_amount', 'znso4_amount'):
+        if hasattr(scoped, fld):
+            setattr(scoped, fld, 0.0)
+    return scoped
 
 
 class ScenarioController:

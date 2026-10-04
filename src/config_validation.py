@@ -96,6 +96,8 @@ def validate_config(cfg) -> None:
     _validate_weathering(cfg)
     # ---- v0.7.x (工单80): 盐基淋失强化配置校验 ----
     _validate_base_leaching(cfg)
+    # ---- v0.7.13 (工单99·B2′): 石灰/施肥表层化开关校验 ----
+    _validate_amendments_surface_only(cfg)
 
     # ---- v0.5.3: 初始基质势校验 (负值吸力) ----
     psi = cfg.simulation.initial_psi_cm
@@ -221,6 +223,19 @@ def _validate_base_leaching(cfg) -> None:
             raise ValueError(
                 "['simulation.base_leaching.anion' 参数存在问题: "
                 "保守惰性阴离子元素名不能为空 (默认 An), 请确认后再输入]")
+def _validate_amendments_surface_only(cfg) -> None:
+    """v0.7.13 (工单99·B2′ / 工单98·W4 改写): amendments_surface_only 必须为布尔
+
+    语义: True (默认) = 石灰/施肥仅注入表层 L1 (表面撒施物理性);
+    False = 旧「逐层注入」行为 (A/B 对照, 见 dev-notes/W4_LAYER_GATING_ROOTCAUSE.md)。
+    """
+    v = getattr(cfg.simulation, 'amendments_surface_only', True)
+    if not isinstance(v, bool):
+        raise ValueError(
+            "['simulation.amendments_surface_only' 参数存在问题: "
+            f"必须为布尔 (true/false), 当前为 {v!r}, 请确认后再输入]")
+
+
 def _validate_climate(cfg) -> None:
     """v0.5.3: PET 通道校验 (D5)"""
     clim = cfg.climate

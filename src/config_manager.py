@@ -211,6 +211,9 @@ class SimulationConfig:
     charge_pairing: ChargePairingConfig = field(default_factory=ChargePairingConfig)  # v0.7.x: REACTION 电荷平衡
     base_leaching: BaseLeachingConfig = field(default_factory=BaseLeachingConfig)  # v0.7.x (工单80): 盐基淋失强化
     surface_acid: SurfaceAcidConfig = field(default_factory=SurfaceAcidConfig)  # 工单88 (4c): L1 表层产酸源
+    # v0.7.13 (工单99·B2′ / 工单98·W4 改写): 石灰/施肥仅表层 L1 (表面撒施物理性)。
+    # True = 修复后口径 (深层不再被 4× 过施/直施); False = 旧「逐层注入」(A/B 对照)。
+    amendments_surface_only: bool = True
 
 
 @dataclass
@@ -543,7 +546,9 @@ class ConfigManager:
                 weathering=_parse_weathering(s.get('weathering')),
                 charge_pairing=_parse_charge_pairing(s.get('charge_pairing')),
                 base_leaching=_parse_base_leaching(s.get('base_leaching')),
-                surface_acid=_parse_surface_acid(s.get('surface_acid'))
+                surface_acid=_parse_surface_acid(s.get('surface_acid')),
+                # v0.7.13 (工单99·B2′ / 工单98·W4 改写): 石灰/施肥仅表层 L1
+                amendments_surface_only=s.get('amendments_surface_only', True)
             )
             # v0.5.2: surface_infiltration_coeff 已废弃 (Green-Ampt 入渗替代
             # Horton), 残留配置显式报错 (breaking change 明示, 不静默忽略)
