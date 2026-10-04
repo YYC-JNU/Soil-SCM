@@ -128,6 +128,7 @@ python main.py --config /path/to/your_config.yaml   # 任意自定义配置文�
 | `companion` | 启用 | v0.7.0: NO₃⁻ 伴随淋失（D3：`n_no3_pool` 水库串联 + 惰性阴离子 `An⁻` 分级注入拽盐基）+ NH₄⁺ 等效置换；示例见 4.8 |
 | `weathering` | 启用* | v0.7.0: 原生矿物风化集总碱度注入（Arrhenius 温度依赖 + `degrade_minerals` 降级防"矿物闪蒸"）；*`config.yaml` 默认 `enable: true`，引擎层 `SimulationConfig` 构造器默认关闭——以 `config.yaml` 为准 |
 | `charge_pairing` | 启用 | **REACTION 电荷平衡**：净电荷注入（硝化产酸/置换盐基/钾镁肥）按等当量伴随保守惰性阴离子 `An⁻`，消除裸注入的电荷伪碱化；`enable: false` 回退裸注入（仅对照实验） |
+| `amendments_surface_only` | `true` | v0.7.13: **石灰/施肥表层物理化**——石灰与施肥是表面撒施干预，只作用于表层；旧实现把同一 `MonthlyAction` 传给每一层 ⇒ `n_layers=4` 时注入了全部 4 层（**4× 剂量 + 直施深层 L2~L4**）⇒ 深层溶液 Ca 顶到 0.5 mol/L → Q6 浓度钳制 → `E_base` 腔回路 → 深层交换相翻转、pH 崩到 ~2.1（**D7**，工单 99·B2′ 归因）。`true`（默认）= 仅注入 L1；`false` = 旧「逐层注入」（仅 A/B 对照） |
 | `base_leaching` | 启用 | **盐基淋失强化**：对每层每场，出系统出口水（`lateral+baseflow`）携带的溶液盐基当量在下一场平衡前注入等当量保守 `An⁻` → 平衡自洽拽出交换相盐基 → 盐基被持续追赶带走（lime 回落 + fertilizer 盐基枯竭酸化）；BS 分级降权（`bs_high` 全量 / 中间线性衰减 / `bs_low` 以下归零不注酸）；`enable: false` 为关闭态（A/B 对照）；**`c_floor_mmol_L`**：溶液盐基保底浓度下限（mmol/L 当量），`E_base` 不把溶液盐基逼到该浓度以下（护栏，防深层极端酸化；`0`=关闭护栏） |
 
 ### 4.2 `soil_data`：土壤数据
